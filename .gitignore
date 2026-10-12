@@ -1,0 +1,11 @@
+/target/
+/tmp/
+/.dev/
+/AGENTS.md
+/CLAUDE.md
+/HANDOVER.md
+/DESIGN.md
+/OWNERSHIP.md
+/prompts
+/dev
+/pito-app.toml

@@ -1,0 +1,53 @@
+app = "demo"
+bin = "demo"
+grid = [60, 16]
+frame = "window"
+typing = "35ms"
+
+[build]
+bin_dir = "{app}/render/terminal/bin"
+
+[env]
+DEMO_DATA = "{scratch}/data"
+
+[theme]
+name = "demo"
+background = "#1e1e2e"
+foreground = "#cdd6f4"
+selection = "#45475a"
+cursor = "#f5e0dc"
+black = "#45475a"
+red = "#f38ba8"
+green = "#a6e3a1"
+yellow = "#f9e2af"
+blue = "#89b4fa"
+magenta = "#f5c2e7"
+cyan = "#94e2d5"
+white = "#bac2de"
+brightBlack = "#585b70"
+brightRed = "#f38ba8"
+brightGreen = "#a6e3a1"
+brightYellow = "#f9e2af"
+brightBlue = "#89b4fa"
+brightMagenta = "#f5c2e7"
+brightCyan = "#94e2d5"
+brightWhite = "#a6adc8"
+
+[shots.palette]
+kind = "still"
+line = "Truecolor gradient, box drawing and the CJK 三"
+tape = "render/terminal/palette.tape"
+status = "SHIPPED"
+
+[shots.typing]
+kind = "clip"
+line = "A command typed, a progress bar, then the palette"
+tape = "render/terminal/typing.tape"
+closure = { crossfade = 0.4 }
+status = "SHIPPED"
+
+[shots.tour]
+kind = "clip"
+line = "Ten seconds of typing, progress bars and the palette, for timing the engines"
+tape = "render/terminal/tour.tape"
+status = "SHIPPED"

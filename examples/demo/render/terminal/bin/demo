@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+case "${1:-show}" in
+  show)
+    printf '\e[1m demo \e[0m\e[2m· a truecolor, box-drawing and CJK check\e[0m\n\n'
+    for r in 0 1 2 3; do
+      for c in $(seq 0 47); do
+        red=$(( c * 255 / 47 )); green=$(( r * 70 )); blue=$(( 255 - c * 255 / 47 ))
+        printf '\e[48;2;%d;%d;%dm \e[0m' "$red" "$green" "$blue"
+      done
+      printf '\n'
+    done
+    printf '\n┌─────────────────────────────────────┐\n'
+    printf '│ \e[38;2;243;139;168m三\e[0m  wide CJK · \e[38;2;137;180;250m⇉\e[0m arrow · \e[38;2;166;227;161m[▬]\e[0m blocks │\n'
+    printf '└─────────────────────────────────────┘\n'
+    for i in 0 1 2 3 4 5 6 7; do printf '\e[3%dm■\e[0m\e[9%dm■\e[0m ' "$i" "$i"; done
+    printf '\n'
+    ;;
+  tick)
+    for i in $(seq 1 24); do
+      bar=""; for _ in $(seq 1 "$i"); do bar="$bar▇"; done
+      printf '\r\e[38;2;%d;%d;255m%s\e[0m' $(( i * 10 )) $(( 255 - i * 10 )) "$bar"
+      sleep 0.05
+    done
+    printf '\n'
+    ;;
+esac
