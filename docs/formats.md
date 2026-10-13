@@ -97,7 +97,7 @@ The same object is stored as the manifest's `archive.catalog`.
 
 ## 4. The cache reports
 
-`prec cache --json` prints one JSON object and nothing else on stdout, in a shape shared by every PITO tool's cache report. It never waits on a lock.
+`prec cache --json` prints one JSON object and nothing else on stdout, in a shape shared by every PITO MD tool's cache report. It never waits on a lock.
 
 | field | meaning |
 |---|---|

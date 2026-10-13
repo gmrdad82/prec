@@ -5,7 +5,7 @@
 
 [![CI](https://github.com/gmrdad82/prec/actions/workflows/ci.yml/badge.svg)](https://github.com/gmrdad82/prec/actions/workflows/ci.yml) [![Version](https://img.shields.io/github/v/tag/gmrdad82/prec)](https://github.com/gmrdad82/prec/tags)
 
-prec records terminal apps into exact videos and stills, part of [PITO](https://pitomd.com). It is an alternative to [VHS](https://github.com/charmbracelet/vhs): you write a tape of keystrokes, and prec runs your app in a real pty, records the session once, then replays it frame by frame in headless Chromium at exactly 30, 60 or 120 fps, at any size up to 4K. The same recording always replays to the same bytes. In PITO it is the terminal half of the renders: pfx and Manfred render the 3D and app scenes, and prec renders the TUIs and CLIs.
+prec records terminal apps into exact videos and stills, part of [PITO MD](https://pitomd.com). It is an alternative to [VHS](https://github.com/charmbracelet/vhs): you write a tape of keystrokes, and prec runs your app in a real pty, records the session once, then replays it frame by frame in headless Chromium at exactly 30, 60 or 120 fps, at any size up to 4K. The same recording always replays to the same bytes. In PITO MD it is the terminal half of the renders: pfx and Manfred render the 3D and app scenes, and prec renders the TUIs and CLIs.
 
 ## What it is
 
@@ -241,4 +241,4 @@ bin/gate --render
 
 ## Licence
 
-The code is MIT licensed ([LICENSE](LICENSE)), © Catalin Ilinca. The prec and PITO names and their logos are © Catalin Ilinca, all rights reserved, and are not covered by the MIT licence ([TRADEMARKS.md](TRADEMARKS.md)). The vendored xterm.js and VHS themes keep their own MIT licences ([NOTICE](NOTICE)).
+The code is MIT licensed ([LICENSE](LICENSE)), © Catalin Ilinca. The prec and PITO MD names and their logos are © Catalin Ilinca, all rights reserved, and are not covered by the MIT licence ([TRADEMARKS.md](TRADEMARKS.md)). The vendored xterm.js and VHS themes keep their own MIT licences ([NOTICE](NOTICE)).
