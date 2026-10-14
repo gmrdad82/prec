@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.0.1 — 2026-10-14
+
+### Added
+
+- Each release carries the docs as docs-vX.Y.Z.tar.gz: an overview, install, fourteen guides with real commands and outputs, the full command line reference and the formats prec writes.
+
 ## v1.0.0 — 2026-10-14
 
 ### Changed
