@@ -595,7 +595,7 @@ dependencies = [
 
 [[package]]
 name = "prec"
-version = "0.22.0"
+version = "1.0.0"
 dependencies = [
  "base64",
  "chrono",

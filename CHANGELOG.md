@@ -1,9 +1,11 @@
 # Changelog
 
-## Unreleased
+## v1.0.0 — 2026-10-14
 
 ### Changed
 
+- prec is 1.0.0: the same code as 0.22.0, now its first stable release.
+- The README shows every feature with a picture and measured numbers, frame counts against VHS v0.11.0 on the same tape included.
 - The brand now reads PITO MD in the README, the notices and the docs.
 
 ## v0.22.0 — 2026-10-12
