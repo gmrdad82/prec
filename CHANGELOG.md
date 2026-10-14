@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.0.2 — 2026-10-14
+
+### Fixed
+
+- The docs bundle's pages now load on the docs site: every title and description is a quoted string.
+
 ## v1.0.1 — 2026-10-14
 
 ### Added
