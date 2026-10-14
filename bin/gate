@@ -17,7 +17,7 @@ if [ "$mode" = render ]; then
   exit 0
 fi
 
-shellcheck bin/gate bin/docs-bundle
+shellcheck bin/gate bin/docs-bundle bin/marks
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked --bins

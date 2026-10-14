@@ -326,4 +326,6 @@ bin/gate --render
 
 ## Licence
 
+<img src="docs/images/pitomd-wordmark.svg" width="320" alt="PITO MD">
+
 The code is MIT licensed ([LICENSE](LICENSE)), © Catalin Ilinca. The prec and PITO MD names and their logos are © Catalin Ilinca, all rights reserved, and are not covered by the MIT licence ([TRADEMARKS.md](TRADEMARKS.md)). The vendored xterm.js and VHS themes keep their own MIT licences ([NOTICE](NOTICE)).
