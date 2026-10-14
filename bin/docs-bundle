@@ -53,6 +53,22 @@ front() {
   printf -- '---\ntitle: %s\ndescription: %s\nsidebar:\n  order: %s\n---\n\n' "$1" "$2" "$3"
 }
 
+quote_front() {
+  awk '
+    NR == 1 && /^---$/ { inside = 1; print; next }
+    inside && /^---$/ { inside = 0; print; next }
+    inside && match($0, /^(title|description|  label): /) && substr($0, RLENGTH + 1, 1) != "\"" {
+      key = substr($0, 1, RLENGTH)
+      value = substr($0, RLENGTH + 1)
+      gsub(/\\/, "\\\\", value)
+      gsub(/"/, "\\\"", value)
+      print key "\"" value "\""
+      next
+    }
+    { print }
+  '
+}
+
 stage=$(mktemp -d "${TMPDIR:-/tmp}/prec-docs.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
 docs=$stage/docs
@@ -123,6 +139,8 @@ for page in $(cd "$docs" && find . -name '*.md'); do
     echo "bin/docs-bundle: $page has no frontmatter" >&2
     exit 1
   }
+  quote_front < "$docs/$page" > "$stage/page.md"
+  mv "$stage/page.md" "$docs/$page"
 done
 if grep -rnE '/home/|/Users/|/mnt/|github\.com/gmrdad82/[a-z-]+-dev' "$docs"; then
   echo "bin/docs-bundle: a page names a local or private path" >&2
