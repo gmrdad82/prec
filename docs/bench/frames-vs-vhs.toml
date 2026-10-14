@@ -1,0 +1,17 @@
+title = "FRAMES IN THE CLIP"
+unit = "FRAMES IN 10 S, 1280X720"
+better = "higher"
+subtitle = "RYZEN 9 9950X, 24 THREADS"
+date = "2026-10-14"
+notes = ["PREC 0.22.0 AND VHS 0.11.0, SAME TAPE (EXAMPLES/DEMO TOUR.TAPE).", "VHS WROTE A 25 FPS FILE OF 8.8, 8.0 AND 3.8 SECONDS."]
+words = { better = "MORE FRAMES", worse = "FEWER FRAMES", same = "SAME" }
+decimals = 0
+parties = [{ name = "PREC" }, { name = "VHS" }]
+
+[[groups]]
+name = "ASKED FOR"
+rows = [
+  { label = "30 FPS", values = [301, 221] },
+  { label = "60 FPS", values = [599, 199] },
+  { label = "120 FPS", values = [1197, 95] },
+]

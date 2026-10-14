@@ -1,20 +1,101 @@
 <p align="center"><img src="docs/images/record.gif" width="800" alt="A terminal: cat render/terminal/typing.tape shows a short tape (Sleep, Type &quot;demo tick&quot;, Enter, Type &quot;demo show&quot;, Enter); then prec clip demo typing --size 720p --fps 30 records the demo in a 60x16 pty, replays 114 frames at 1280x720 and prints its manifest, and ls lists the cast, the manifest, the master MP4 and the poster PNG."></p>
-<p align="center"><img src="docs/images/typing.gif" width="800" alt="The clip that run made: in a window on a dark ground, demo tick draws a progress bar, then demo show prints a truecolor gradient, a box with a wide CJK character, an arrow and blocks, and the 16 ANSI colours, before the clip crossfades back to its first frame."></p>
 
 # prec
 
 [![CI](https://github.com/gmrdad82/prec/actions/workflows/ci.yml/badge.svg)](https://github.com/gmrdad82/prec/actions/workflows/ci.yml) [![Version](https://img.shields.io/github/v/tag/gmrdad82/prec)](https://github.com/gmrdad82/prec/tags)
 
-prec records terminal apps into exact videos and stills, part of [PITO MD](https://pitomd.com). It is an alternative to [VHS](https://github.com/charmbracelet/vhs): you write a tape of keystrokes, and prec runs your app in a real pty, records the session once, then replays it frame by frame in headless Chromium at exactly 30, 60 or 120 fps, at any size up to 4K. The same recording always replays to the same bytes. In PITO MD it is the terminal half of the renders: pfx and Manfred render the 3D and app scenes, and prec renders the TUIs and CLIs.
+prec records terminal apps into exact videos and stills, part of [PITO MD](https://pitomd.com). It is an alternative to [VHS](https://github.com/charmbracelet/vhs): you write a tape of keystrokes, and prec runs your app in a real pty, records the session once, then replays it frame by frame in headless Chromium at exactly 30, 60 or 120 fps, at any size up to 4K. The same recording always replays to the same bytes.
 
-## What it is
+| | |
+|---|---|
+| Frames in a 10-second clip at 120 fps | **1,197**, every one (VHS v0.11.0 on the same tape: 95) |
+| Re-render a 10-second cast at 1080p 60 fps | **27.4 s**, without running the app again |
+| Two renders of one cast | **byte-identical** masters, same sha256 |
+| Sizes and rates | any size up to **3840x2160**, at **30, 60 or 120 fps** |
+| Binary | **4.9 MB**, stripped, fat LTO (2.0 MB as the release `.tar.gz`) |
+| Code | **9,798 lines** of Rust in `src/`, unit tests included; **17** direct dependencies |
+| Cold release build | **71.9 s** with 4 build jobs |
+| Network | none: prec downloads nothing |
 
-- **Record once, render many.** The session is kept as an asciicast v2 cast. `prec render` replays a cast at another size, rate or theme without running the app again, so one recording gives a 1080p clip, a 4K still and a light and a dark version.
-- **Exact frames.** The frame count is the shown time times the fps. Each size renders natively at its own pixels (the grid is fixed and the font is fitted), so 4K shows exactly what 1080p shows, only sharper, and a cast replays to byte-identical frames and masters on every run.
-- **Masters, not deliveries.** A clip is one silent H.264 master (x264 CRF 14, BT.709 limited range, tagged), a poster PNG and a JSON manifest with each file's sha256. A still is a 16-bit sRGB master PNG with 8-bit PNG deliveries, extra sizes and `@2x` web copies. Turn a master into a GIF, WebP or a web MP4 with [pconv](https://github.com/gmrdad82/pconv) or ffmpeg.
-- **Your app, your repository.** Each app keeps its own `render/terminal.toml` and tapes. prec builds the app (a cached build per commit), runs its fixture setup and teardown in a clean environment, and renders the working tree or any tag or commit with `--rev`.
-- **Real terminal.** xterm.js 5.5 with Unicode 11 widths draws truecolor, box drawing, wide CJK and Nerd Font glyphs; a window frame, its bar and shadow are drawn around it, or `--frame bare` leaves the app's own ground to the edges.
-- **Themes.** The app's own palette, any of VHS's 348 built-in schemes, curated light and dark pairs, and your installed Omarchy themes.
+Measured on 2026-10-14 on an AMD Ryzen 9 9950X (prec and VHS pinned to the same 24 threads), with prec 0.22.0 and VHS v0.11.0, from [docs/bench/bench.sh](docs/bench/bench.sh); see [Speed](#speed) for every number and how it was taken.
+
+## Start in 30 seconds
+
+On Linux or WSL (macOS: swap `linux-x86_64` for `macos-arm64`), with Chromium and ffmpeg installed ([Prerequisites](#prerequisites)):
+
+```sh
+v=$(basename "$(curl -fsSLo /dev/null -w '%{url_effective}' https://github.com/gmrdad82/prec/releases/latest)")
+mkdir -p ~/.local/bin && curl -fsSL "https://github.com/gmrdad82/prec/releases/download/$v/prec-$v-linux-x86_64.tar.gz" | tar -xz -C ~/.local/bin prec
+git clone https://github.com/gmrdad82/prec && cd prec
+prec doctor
+prec clip demo typing --app-dir examples/demo --size 720p --fps 30
+```
+
+That records this repository's sample app from its tape and writes `tmp/renders/demo/clip/demo-clip-typing-1280x720-30fps.master.mp4`, its poster PNG, the cast and a JSON manifest. Turn the master into a GIF with [pconv](https://github.com/gmrdad82/pconv) (`pconv <master> demo.gif --size 1280 --fps 15`): that is how the clip below was made.
+
+<p align="center"><img src="docs/images/typing.gif" width="800" alt="The clip that run makes: in a window on a dark ground, demo tick draws a progress bar, then demo show prints a truecolor gradient, a box with a wide CJK character, an arrow and blocks, and the 16 ANSI colours, before the clip crossfades back to its first frame."></p>
+
+## Features
+
+### Every frame, at the rate you ask for
+
+prec doesn't capture the screen while the app runs. It records the app's output bytes with their timestamps, then steps a virtual clock at exactly 1/fps and draws each frame, so a clip has the shown time times the fps in frames, however heavy the frame or the rate. Here is one 10-second tape recorded by both tools at 1280x720:
+
+<p align="center"><img src="docs/images/frames-vs-vhs.png" width="640" alt="Paired bars, higher is better: frames in the clip for one 10-second tape at 1280x720. Asked for 30 fps, prec 301 and VHS 221; at 60 fps, 599 and 199; at 120 fps, 1197 and 95. VHS wrote a 25 fps file of 8.8, 8.0 and 3.8 seconds."></p>
+
+VHS v0.11.0 captured in real time and wrote a 25 fps file at every setting, shorter than the tape the higher the rate. prec's clips are 10.0 seconds at 30, 60 and 120 fps.
+
+### Record once, render many
+
+The session is kept as an [asciicast v2](docs/formats.md) cast. `prec render` replays a cast at another size, rate or theme without running the app again, and the same cast always gives the same bytes: in the benchmark, two 720p 30 fps renders of one cast wrote the same master, sha256 `25c4543804fb3357…`.
+
+<p align="center"><img src="docs/images/rerender.png" width="640" alt="Bars, lower is better: seconds to replay and encode a 10-second cast with prec 0.22.0: 720p 30 fps 28.5 s, 1080p 60 fps 27.4 s, 2160p 30 fps 55.5 s, 2160p 120 fps 135 s."></p>
+
+### Native pixels at every size
+
+The grid is fixed and the font is fitted to each size, so 4K shows exactly what 720p shows, drawn at its own pixels rather than scaled. Top: a crop of a 1280x720 still, enlarged three times; bottom: the same crop of the 3840x2160 still from the same tape.
+
+<p align="center"><img src="docs/images/sizes.png" width="640" alt="Two crops of the same box: the upper one, from the 720p still and enlarged three times, shows blocky pixels on the CJK character, the text and the arrow; the lower one, from the 4K still at its own pixels, shows the same glyphs smooth."></p>
+
+### 348 themes, light and dark from one recording
+
+The app's own palette, any of VHS's 348 built-in schemes, curated light and dark pairs, and your installed [Omarchy](https://omarchy.org) themes. `--themes` renders one recording in several at once; these six came from one run of `prec still demo palette --themes "Catppuccin Latte,Catppuccin Mocha,TokyoNightLight,TokyoNight,Gruvbox Light,GruvboxDark"`.
+
+<p align="center"><img src="docs/images/themes.png" width="800" alt="Six stills of the demo palette in a grid, light on the left and dark on the right: Catppuccin Latte and Mocha, Tokyo Night Light and Tokyo Night, Gruvbox Light and Gruvbox Dark."></p>
+
+### A window, or the app to the edges
+
+`--frame window` draws a window with its bar and shadow on a ground; `--frame bare` leaves the app's own ground to the edges, for a TUI that fills its terminal.
+
+<p align="center"><img src="docs/images/frame.png" width="800" alt="The same still twice: on the left in a window with three dots on a darker ground, on the right bare, the terminal filling the frame."></p>
+
+### A real terminal
+
+xterm.js 5.5 with Unicode 11 widths draws truecolor, box drawing, wide CJK and Nerd Font glyphs. Before the recording shows, prec types the shot's `launch` hidden and waits `settle`; a tape can `Wait /regex/` for the screen instead of guessing a sleep.
+
+### Masters, not deliveries
+
+A clip is one silent H.264 master (x264 CRF 14, BT.709 limited range, tagged), a poster PNG and a JSON manifest with each file's sha256. A still is a 16-bit sRGB master PNG with 8-bit PNG deliveries, extra sizes and `@2x` web copies. Turn a master into a GIF, WebP or a web MP4 with [pconv](https://github.com/gmrdad82/pconv) or ffmpeg.
+
+### Your app, your repository
+
+Each app keeps its own `render/terminal.toml` and tapes. prec builds the app (a cached build per commit), runs its fixture setup and teardown in a clean environment, and renders the working tree or any tag or commit with `--rev`.
+
+## Speed
+
+All numbers come from one run of [docs/bench/bench.sh](docs/bench/bench.sh) on 2026-10-14: an AMD Ryzen 9 9950X on Linux, both tools pinned to the same 24 threads (`CPUS=4-15,20-31`) at nice 10, prec 0.22.0 with `PREC_DIRECT=1` and VHS v0.11.0, recording [examples/demo](examples/demo)'s `tour.tape` (about 10 seconds of typing, progress bars and the palette) at 1280x720. The charts are drawn by [pito-compare](https://github.com/gmrdad82/pito-compare) from [docs/bench/](docs/bench).
+
+| asked for | prec frames | prec clip | prec wall time | VHS frames | VHS file | VHS wall time |
+|---|---|---|---|---|---|---|
+| 30 fps | 301 | 30 fps, 10.03 s | 30.4 s | 221 | 25 fps, 8.84 s | 19.9 s |
+| 60 fps | 599 | 60 fps, 9.98 s | 34.8 s | 199 | 25 fps, 7.96 s | 29.9 s |
+| 120 fps | 1,197 | 120 fps, 9.98 s | 54.9 s | 95 | 25 fps, 3.80 s | 35.7 s |
+
+VHS finishes sooner, because it keeps what it can capture in real time; prec records in real time, then replays and encodes every frame at x264's `slow` preset, CRF 14. A frame's moment that brings no new bytes reuses the previous frame, so a mostly still terminal replays faster than a busy one.
+
+Re-rendering the 30 fps recording's cast, with no app run: 720p 30 fps in 28.5 s (301 frames; the same render again took 15.4 s and wrote the same bytes), 1080p 60 fps in 27.4 s (601 frames), 2160p 30 fps in 55.5 s (301 frames) and 2160p 120 fps in 135.2 s (1,203 frames).
+
+Size and build: the Linux x86_64 binary is 5,123,704 bytes (4.9 MB; 2,092,292 bytes as the release's `.tar.gz`), built with fat LTO, one codegen unit and stripped; a cold `cargo build --release --locked` took 71.9 s with 4 build jobs. `src/` is 9,798 lines of Rust with its unit tests. prec has 17 direct dependencies and 88 crates in its Linux build; the xterm.js files and the VHS themes are compiled in, so it reads nothing from the network. Renders on a Mac are untested.
 
 ## Install
 
@@ -225,6 +306,10 @@ An archive is optional and off unless `archive` (or `PITO_ARCHIVE`) names a root
 
 Every `clip`, `still`, `record` and `render` publishes a live job record through [pito-jobs](https://github.com/gmrdad82/pito-jobs), in RAM only, in `$XDG_RUNTIME_DIR/pito-jobs/` (or `PITO_JOBS_DIR`), with its stages (`build`, `record`, `replay`, `master` or `derive`, `archive`) and progress, for a dashboard to show. Without `XDG_RUNTIME_DIR` there is none, and `PITO_JOBS=off` turns it off.
 
+## Part of PITO MD
+
+prec is one of the open tools of [PITO MD](https://pitomd.com), made for its apps and games and free for yours. It is the terminal half of the renders: [pfx](https://github.com/gmrdad82/pfx) and [Manfred](https://github.com/gmrdad82/manfred) render the 3D and app scenes, prec renders the TUIs and CLIs. [pconv](https://github.com/gmrdad82/pconv) turns prec's masters into GIFs, WebP and web MP4s, and [pito-compare](https://github.com/gmrdad82/pito-compare) draws the charts on this page. [pito-jobs](https://github.com/gmrdad82/pito-jobs) carries its live job records.
+
 ## Contributing
 
 Issues are welcome at [github.com/gmrdad82/prec/issues](https://github.com/gmrdad82/prec/issues): a bug with the command line, your `terminal.toml` and tape, and what `prec doctor` says, or an idea for something prec should record. Pull requests aren't taken. Please read the [code of conduct](CODE_OF_CONDUCT.md) first, and report a security issue privately as [SECURITY.md](SECURITY.md) says.
@@ -237,7 +322,7 @@ bin/gate
 bin/gate --render
 ```
 
-`bin/gate` runs what CI runs on Linux and macOS on every push and nightly: ShellCheck, rustfmt, clippy with warnings as errors, and the unit tests. `bin/gate --render` runs the integration tests, which drive the prec binary through Chromium and ffmpeg on Linux (they need the prerequisites above and a systemd user session for the confinement tests). A tag builds the Linux and macOS release binaries. The README's GIFs are prec's own shot in `render/terminal.toml` and the clip it records, made GIFs by pconv ([NOTICE](NOTICE)).
+`bin/gate` runs what CI runs on Linux and macOS on every push and nightly: ShellCheck, rustfmt, clippy with warnings as errors, and the unit tests. `bin/gate --render` runs the integration tests, which drive the prec binary through Chromium and ffmpeg on Linux (they need the prerequisites above and a systemd user session for the confinement tests). A tag builds the Linux and macOS release binaries. The README's GIFs are prec's own shot in `render/terminal.toml` and the clip it records, made GIFs by pconv; its stills are prec renders of `examples/demo`'s palette, laid side by side with ImageMagick, and its charts are pito-compare's from `docs/bench/` ([NOTICE](NOTICE)).
 
 ## Licence
 

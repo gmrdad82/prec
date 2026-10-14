@@ -12,7 +12,13 @@ these third-party files, compiled in, each under its own MIT licence below:
 
 The README GIFs in docs/images/ are recorded by prec from this repository's
 own shots (render/terminal.toml and examples/demo) and made GIFs by pconv,
-under the MIT licence like the code.
+under the MIT licence like the code. The README stills in docs/images/ are
+prec renders of examples/demo's palette shot: themes.png (six themes from one
+recording), frame.png (window and bare) and sizes.png (a crop of the 720p and
+2160p stills), laid out with ImageMagick. The charts frames-vs-vhs.png and
+rerender.png are drawn by pito-compare (pcmp) from docs/bench/*.toml, with
+numbers measured by docs/bench/bench.sh against VHS v0.11.0. All are under the
+MIT licence like the code.
 
 The prec and PITO MD names and their logos are © Catalin Ilinca, all rights
 reserved and not covered by the MIT licence (TRADEMARKS.md).
