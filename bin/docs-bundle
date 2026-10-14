@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+usage() {
+  echo "usage: bin/docs-bundle [--bin PATH] [--out DIR]" >&2
+  exit 2
+}
+
+bin=
+out=tmp/docs-bundle
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --bin)
+      [ $# -ge 2 ] || usage
+      bin=$2
+      shift 2
+      ;;
+    --out)
+      [ $# -ge 2 ] || usage
+      out=$2
+      shift 2
+      ;;
+    *) usage ;;
+  esac
+done
+
+version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+[ -n "$version" ] || {
+  echo "bin/docs-bundle: no version in Cargo.toml" >&2
+  exit 1
+}
+
+if [ -z "$bin" ]; then
+  cargo build --release --locked --bin prec
+  bin=target/release/prec
+fi
+[ -x "$bin" ] || {
+  echo "bin/docs-bundle: $bin is not an executable" >&2
+  exit 1
+}
+got=$("$bin" --version)
+[ "$got" = "prec $version" ] || {
+  echo "bin/docs-bundle: $bin is $got, Cargo.toml says $version" >&2
+  exit 1
+}
+
+estate_links() {
+  sed -E 's#\(https://github\.com/gmrdad82/(pfx|manfred|pconv|pito-compare|pito-jobs)\)#(https://docs.pitomd.com/\1/)#g'
+}
+
+front() {
+  printf -- '---\ntitle: %s\ndescription: %s\nsidebar:\n  order: %s\n---\n\n' "$1" "$2" "$3"
+}
+
+stage=$(mktemp -d "${TMPDIR:-/tmp}/prec-docs.XXXXXX")
+trap 'rm -rf "$stage"' EXIT
+docs=$stage/docs
+mkdir -p "$docs/reference" "$docs/images"
+
+(cd docs/site && find . -name '*.md' -print) | while read -r page; do
+  mkdir -p "$docs/$(dirname "$page")"
+  estate_links < "docs/site/$page" > "$docs/$page"
+done
+
+tick='`'
+fence='```'
+
+cli_section() {
+  local depth=$1
+  shift
+  local help name
+  help=$("$bin" "$@" --help)
+  name="prec${*:+ $*}"
+  printf '%s %s%s%s\n\n' "$(printf '#%.0s' $(seq "$depth"))" "$tick" "$name" "$tick"
+  printf '%s\n\n' "$(head -1 <<< "$help")"
+  printf '%stext\n%s\n%s\n\n' "$fence" "$(tail -n +3 <<< "$help")" "$fence"
+  awk '/^Commands:/ { on = 1; next } on && /^$/ { exit } on { print $1 }' <<< "$help" |
+    while read -r sub; do
+      [ "$sub" = help ] && continue
+      cli_section $((depth + 1)) "$@" "$sub"
+    done
+}
+
+{
+  front "Command line" "Every prec command and flag, generated from its clap definitions." 1
+  cat << EOF
+Generated from ${tick}prec $version --help${tick} and each subcommand's help. Input prec can't parse gets clap's short answer on stderr with exit 2; a refusal after parsing is one line, ${tick}prec: …${tick}, with exit 1.
+
+EOF
+  cli_section 2
+} > "$docs/reference/cli.md"
+
+{
+  front "Formats" "The manifest, the cast, the archive catalog line and the cache reports prec writes for others to read." 2
+  tail -n +3 docs/formats.md |
+    sed -e 's#^This file specifies#This page specifies#' \
+      -e's#README'"'"'s Archive section#[Archive renders](../guides/archive.md)#' \
+      -e 's#README'"'"'s Job records section#[Job records](../guides/job-records.md)#' |
+    estate_links
+} > "$docs/reference/formats.md"
+
+{
+  front "Changelog" "What changed in each prec release." 100
+  tail -n +2 CHANGELOG.md
+} > "$docs/changelog.md"
+
+grep -ohE '\(([./]*)images/[^)]+\)' -r "$docs" | sed -E 's#^\([./]*images/##; s#\)$##' | sort -u |
+  while read -r image; do
+    [ -f "docs/images/$image" ] || {
+      echo "bin/docs-bundle: a page uses images/$image, which docs/images/ lacks" >&2
+      exit 1
+    }
+    grep -q "$image" NOTICE || {
+      echo "bin/docs-bundle: NOTICE does not name $image" >&2
+      exit 1
+    }
+    cp "docs/images/$image" "$docs/images/"
+  done
+
+for page in $(cd "$docs" && find . -name '*.md'); do
+  head -1 "$docs/$page" | grep -qx -- '---' || {
+    echo "bin/docs-bundle: $page has no frontmatter" >&2
+    exit 1
+  }
+done
+if grep -rnE '/home/|/Users/|/mnt/|github\.com/gmrdad82/[a-z-]+-dev' "$docs"; then
+  echo "bin/docs-bundle: a page names a local or private path" >&2
+  exit 1
+fi
+
+mkdir -p "$out"
+tarball=$out/docs-v$version.tar.gz
+tar -czf "$tarball" -C "$stage" --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 docs
+echo "$tarball"

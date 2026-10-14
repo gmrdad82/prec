@@ -10,9 +10,10 @@ these third-party files, compiled in, each under its own MIT licence below:
 - assets/vhs-themes.json: the built-in theme set of VHS v0.11.0
   (https://github.com/charmbracelet/vhs), extracted verbatim.
 
-The README GIFs in docs/images/ are recorded by prec from this repository's
-own shots (render/terminal.toml and examples/demo) and made GIFs by pconv,
-under the MIT licence like the code. The README stills in docs/images/ are
+The images in docs/images/ illustrate the README and the docs bundle. The
+GIFs record.gif and typing.gif are recorded by prec from this repository's own
+shots (render/terminal.toml's record and examples/demo's typing) and made GIFs
+by pconv, under the MIT licence like the code. The stills are
 prec renders of examples/demo's palette shot: themes.png (six themes from one
 recording), frame.png (window and bare) and sizes.png (a crop of the 720p and
 2160p stills), laid out with ImageMagick. The charts frames-vs-vhs.png and

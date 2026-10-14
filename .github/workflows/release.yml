@@ -52,10 +52,13 @@ jobs:
           mkdir -p dist/pack
           cp "target/$TARGET/release/prec" LICENSE NOTICE README.md dist/pack/
           tar -czf "dist/$NAME" -C dist/pack prec LICENSE NOTICE README.md
+      - name: docs bundle
+        if: matrix.asset == 'linux-x86_64'
+        run: bin/docs-bundle --bin "target/$TARGET/release/prec" --out dist
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ${{ matrix.asset }}
-          path: dist/${{ env.NAME }}
+          path: dist/*.tar.gz
           if-no-files-found: error
           retention-days: 1
 
@@ -80,7 +83,9 @@ jobs:
           merge-multiple: true
       - name: checksums
         working-directory: dist
-        run: sha256sum prec-* > SHA256SUMS && cat SHA256SUMS
+        run: |
+          [ -f "docs-$TAG.tar.gz" ] || { echo "no docs-$TAG.tar.gz" >&2; exit 1; }
+          sha256sum prec-* > SHA256SUMS && cat SHA256SUMS
       - name: notes from the changelog
         run: |
           awk -v version="${TAG#v}" '

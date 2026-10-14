@@ -48,3 +48,5 @@ jobs:
           restore-keys: ${{ matrix.os }}-gate-rust-1.97.1-
       - run: bin/gate
       - run: cargo build --release --locked
+      - if: runner.os == 'Linux'
+        run: bin/docs-bundle --bin target/release/prec

@@ -322,7 +322,7 @@ bin/gate
 bin/gate --render
 ```
 
-`bin/gate` runs what CI runs on Linux and macOS on every push and nightly: ShellCheck, rustfmt, clippy with warnings as errors, and the unit tests. `bin/gate --render` runs the integration tests, which drive the prec binary through Chromium and ffmpeg on Linux (they need the prerequisites above and a systemd user session for the confinement tests). A tag builds the Linux and macOS release binaries. The README's GIFs are prec's own shot in `render/terminal.toml` and the clip it records, made GIFs by pconv; its stills are prec renders of `examples/demo`'s palette, laid side by side with ImageMagick, and its charts are pito-compare's from `docs/bench/` ([NOTICE](NOTICE)).
+`bin/gate` runs what CI runs on Linux and macOS on every push and nightly: ShellCheck, rustfmt, clippy with warnings as errors, and the unit tests. `bin/gate --render` runs the integration tests, which drive the prec binary through Chromium and ffmpeg on Linux (they need the prerequisites above and a systemd user session for the confinement tests). A tag builds the Linux and macOS release binaries and the docs bundle, `docs-vX.Y.Z.tar.gz`, which `bin/docs-bundle` makes from `docs/site/`, the binary's `--help`, `docs/formats.md` and `CHANGELOG.md`. The README's GIFs are prec's own shot in `render/terminal.toml` and the clip it records, made GIFs by pconv; its stills are prec renders of `examples/demo`'s palette, laid side by side with ImageMagick, and its charts are pito-compare's from `docs/bench/` ([NOTICE](NOTICE)).
 
 ## Licence
 
