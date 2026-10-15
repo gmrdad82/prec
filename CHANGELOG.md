@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.0.3 — 2026-10-16
+
+### Changed
+
+- The README shows the PITO MD wordmark at its Licence section.
+- prec builds on pito-jobs 1.0.2, the 1.0 line of the job records it writes; nothing changes in use.
+
 ## v1.0.2 — 2026-10-14
 
 ### Fixed
