@@ -538,8 +538,8 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pito-jobs"
-version = "0.5.0"
-source = "git+https://github.com/gmrdad82/pito-jobs?tag=v0.5.0#9d118d692973c69b8fc7206c6895d30580bbd7cc"
+version = "1.0.2"
+source = "git+https://github.com/gmrdad82/pito-jobs?tag=v1.0.2#a84beb7aea30447ab7ecfe20ff3723f7b9518c2c"
 dependencies = [
  "libc",
  "serde",
