@@ -1,6 +1,6 @@
 ---
 title: Configure prec
-description: The optional config.toml, confining Chromium and ffmpeg, and the environment variables prec reads.
+description: The optional config.toml, confining Chromium and the encode, and the environment variables prec reads.
 sidebar:
   order: 10
 ---
@@ -22,21 +22,21 @@ cpus = "4-15"
 | `theme` | `Catppuccin Mocha` | the theme for an app whose `terminal.toml` has no `[theme]` |
 | `chromium` | found on the `PATH` | the Chromium or Chrome binary (`PREC_CHROMIUM` overrides it) |
 | `archive` | none | an archive root; without one nothing is archived (`PITO_ARCHIVE` overrides it); see [Archive renders](archive.md) |
-| `[confine]` | absent | on Linux with systemd, run Chromium and ffmpeg in memory-capped `systemd-run --user` scopes at nice 10 |
+| `[confine]` | absent | on Linux with systemd, run Chromium in a memory-capped `systemd-run --user` scope at nice 10, and prec's own encode at nice 10 |
 | `[confine] slice` | `build.slice` | the systemd slice for those scopes |
-| `[confine] cpus` | unpinned | pin them with `taskset -c` to this CPU list |
+| `[confine] cpus` | unpinned | pin Chromium (with `taskset -c`) and the encode to this CPU list |
 | `[confine] cpus_from`, `cpus_key` | | or read the CPU list from a shell env file's key (`cpus_key`, default `BUILD_CPUS`) |
 
 ## Keep renders off your other work
 
-A 4K or 120 fps render keeps Chromium and x264 busy for a minute or more. On a machine you are working on, `[confine]` runs them at nice 10 in a capped systemd scope, and `cpus` pins them to cores you can spare:
+A 4K or 120 fps render keeps Chromium and the encoder busy for a minute or more. On a machine you are working on, `[confine]` runs them at nice 10 in a capped systemd scope, and `cpus` pins them to cores you can spare:
 
 ```toml
 [confine]
 cpus = "8-15"
 ```
 
-`prec doctor` then also checks `systemd-run`, `prlimit` and `taskset`. The output doesn't change: x264's and zscale's thread counts are fixed, so a confined render writes the same bytes as an unconfined one.
+`prec doctor` then also checks `systemd-run`, `prlimit` and `taskset`. The output doesn't change: the encoder's thread count is fixed, so a confined render writes the same bytes as an unconfined one.
 
 ## Environment variables
 

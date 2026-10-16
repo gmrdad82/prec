@@ -28,6 +28,7 @@ Sleep 1.2s
 | `Sleep <duration>` | waits |
 | `Wait /regex/` | waits until the screen's last non-blank row matches |
 | `Wait+Screen /regex/` | waits until anywhere on the screen matches |
+| `Idle <duration>` | waits until the screen hasn't changed for that long; default `2s` |
 | `Hide`, `Show` | cut the steps between them from the recording |
 | `Screenshot` | keeps a marker in the cast |
 | `# …` | a comment |
@@ -36,7 +37,7 @@ A duration is `500ms`, `1.5s`, `2m`, or a bare number of seconds.
 
 ## Speed and repeats
 
-`Type` and key steps take `@<duration>`, the delay after each character or key: `Type@0ms "…"` types the text at once, `Down@200ms` waits 200 ms after the key. On `Wait` it is the timeout. A key step takes a repeat count: `Down@200ms 3` presses Down three times.
+`Type` and key steps take `@<duration>`, the delay after each character or key: `Type@0ms "…"` types the text at once, `Down@200ms` waits 200 ms after the key. On `Wait` and `Idle` it is the timeout. A key step takes a repeat count: `Down@200ms 3` presses Down three times.
 
 ```text
 Type@0ms "myapp tui"
@@ -50,6 +51,8 @@ Ctrl+C
 ## Wait for the screen, not the clock
 
 A `Sleep` guesses how long the app takes; a `Wait` watches the screen. `Wait /ready/` returns as soon as the last non-blank row matches the regex, and `Wait+Screen@5s /Loaded \d+ items/` searches the whole screen for up to 5 seconds. The default timeout is 15 seconds; on a timeout the recording stops with the rows it saw, so a tape that waits for the wrong text says what was there.
+
+When nothing on the screen marks the end, wait for it to go still: `Idle 3s` returns once the screen, colours and cursor included, has stayed the same for 3 seconds, and `Idle@20m 3s` gives it up to 20 minutes (the default is 5). Output that redraws the same picture doesn't count as a change; a spinner or a running timer does, so an app that animates while it works is waited out.
 
 ## Hide setup steps
 
@@ -70,17 +73,19 @@ Type "Add a --json flag to the list command"
 Enter
 Wait+Screen@600s /tests pass/
 Hide
-Wait+Screen@600s /Done/
+Idle@20m 5s
 Show
 Sleep 3s
 ```
 
 - `Hide` from the launch to the first prompt keeps the agent's start-up banner, with its account or plan, out of the picture; what is still on the screen at `Show` is in it, so clear the screen first, as `Ctrl+L` does here, when the banner stays drawn.
 - `Wait+Screen@600s` gives a step up to ten minutes; the recording keeps going while it waits, and a `Hide` around a long wait cuts it from the clip.
+- `Idle@20m 5s` waits for the session to finish: the agent's spinner and timer change the screen while it works, so the step returns once it has stopped drawing for 5 seconds.
+- A label that stays on the screen, such as the plan or organisation in a banner, is hidden with a `mask` in [render/terminal.toml](set-up-your-app.md#mask-a-region): `mask = [{ match = "Claude (Max|Pro)" }]` fills each match with the theme's background in every frame.
 - A token the agent needs goes in `pass_env` in [render/terminal.toml](set-up-your-app.md#a-session-with-no-private-data), never in the tape or `[env]`: prec hands it from its own environment to the pty and never writes its value.
 - `home`, `hostname` and `cwd = "{home}/…"` give the session a neutral home, host and folder, so a banner or a tool line that prints them shows nothing of yours.
 
-prec refuses to replay a cast whose picture shows your home path, hostname, user name, an email or a passed value ([Render a cast again](render-a-cast-again.md#a-picture-with-private-data)); `prec record` keeps the take and prints what it found and when.
+prec refuses to replay a cast whose picture shows your home path, hostname, user name, an email, a passed value, or a plan or organisation label that no mask hides ([Render a cast again](render-a-cast-again.md#a-picture-with-private-data)); `prec record` keeps the take and prints what it found and when.
 
 ## Stills
 

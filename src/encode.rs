@@ -1,73 +1,247 @@
+use pito_codecs::filter::{ColorSpec, Order, Packed, packed_to_yuv};
+use pito_codecs::h264::{Encoder, EncoderConfig, Preset, Profile};
+use pito_codecs::media::{Bitstream, Frame, Packet, PixelFormat, Rate, Rgba, TimeBase};
+use pito_codecs::mp4::{AvcConfig, Reader, SampleEntry, TrackConfig, TrackKind, Writer};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Condvar, Mutex};
 
-pub const LIFT: &str = "format=gbrp,zscale,format=gbrp16le";
-const TO_709: &str = "format=rgb48le,zscale=matrix=709:range=limited:filter=bicubic:chromal=left,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv";
 pub const COLOR_709: &str = "BT.709 primaries, transfer and matrix, limited range (SDR)";
 pub const LANCZOS: &str = "Lanczos3 in linear light";
-pub const X264_THREADS: &str = "24";
+pub const CODECS: &str = "1.10.0";
+const THREADS: usize = 16;
+const CRF: u8 = 14;
+const B_FRAMES: u8 = 0;
 
-pub fn ffmpeg(args: &[String], cwd: &Path) -> Result<(), String> {
-    let out = crate::paths::output(
-        crate::paths::confined("ffmpeg", "16G")
-            .current_dir(cwd)
-            .args(["-hide_banner", "-v", "error", "-y"])
-            .args(args),
+pub fn master_what() -> String {
+    format!(
+        "master: H.264 High by pito-codecs {CODECS}, CRF {CRF}, 8-bit 4:2:0 BT.709 limited range"
     )
-    .map_err(|e| format!("ffmpeg: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "ffmpeg failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    Ok(())
 }
 
-pub fn x264_args(fps: u32) -> Vec<String> {
-    let mut args = vec!["-vf".to_string(), format!("{LIFT},{TO_709}")];
-    args.extend(x264(fps));
-    args
-}
-
-fn x264(fps: u32) -> Vec<String> {
-    [
-        "-c:v",
-        "libx264",
-        "-threads",
-        X264_THREADS,
-        "-preset",
-        "slow",
-        "-profile:v",
-        "high",
-        "-tune",
-        "animation",
-        "-pix_fmt",
-        "yuv420p",
-        "-crf",
-        "14",
-        "-g",
-        &format!("{}", 2 * fps),
-        "-keyint_min",
-        &format!("{}", 2 * fps),
-        "-sc_threshold",
-        "0",
-        "-color_primaries",
-        "bt709",
-        "-color_trc",
-        "bt709",
-        "-colorspace",
-        "bt709",
-        "-color_range",
-        "tv",
-        "-movflags",
-        "+faststart+write_colr",
-        "-an",
+pub fn settings(fps: u32) -> Vec<String> {
+    vec![
+        format!("pito-codecs {CODECS}"),
+        "h264 High, preset quality".to_string(),
+        format!("crf {CRF}"),
+        format!("gop {}", 2 * fps),
+        format!("bframes {B_FRAMES}"),
+        format!("threads {THREADS}"),
+        "BT.709 limited range, left-sited 4:2:0 chroma".to_string(),
+        "mp4 faststart, no audio".to_string(),
     ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Pic<'a> {
+    One(&'a Path),
+    Blend(&'a Path, &'a Path, f32),
+}
+
+struct Decoded {
+    png: pito_codecs::png::Decoder,
+    rgba: Rgba,
+    other: Rgba,
+    bytes: Vec<u8>,
+}
+
+impl Decoded {
+    fn load(&mut self, path: &Path, other: bool) -> Result<(), String> {
+        self.bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let out = if other {
+            &mut self.other
+        } else {
+            &mut self.rgba
+        };
+        self.png
+            .decode_into(&self.bytes, out)
+            .map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    fn frame(&mut self, pic: Pic, size: [u32; 2]) -> Result<Frame, String> {
+        match pic {
+            Pic::One(p) => self.load(p, false)?,
+            Pic::Blend(a, b, w) => {
+                self.load(a, false)?;
+                self.load(b, true)?;
+                if self.other.data.len() != self.rgba.data.len() {
+                    return Err(format!("{}: not the size of {}", b.display(), a.display()));
+                }
+                for (x, y) in self.rgba.data.iter_mut().zip(&self.other.data) {
+                    *x = (*x as f32 * (1.0 - w) + *y as f32 * w).round() as u8;
+                }
+            }
+        }
+        if [self.rgba.width, self.rgba.height] != size {
+            return Err(format!(
+                "a frame is {}x{}, the master is {}x{}",
+                self.rgba.width, self.rgba.height, size[0], size[1]
+            ));
+        }
+        let mut frame = Frame::new(
+            PixelFormat::Yuv420p8,
+            size[0],
+            size[1],
+            0,
+            TimeBase::new(1, 1),
+        );
+        let src = Packed::new(size[0], size[1], Order::Rgbx, &self.rgba.data);
+        packed_to_yuv(src, ColorSpec::BT709, PixelFormat::Yuv420p8, &mut frame)
+            .map_err(|e| e.to_string())?;
+        Ok(frame)
+    }
+}
+
+struct Line {
+    next: usize,
+    wanted: usize,
+    ready: BTreeMap<usize, Result<Frame, String>>,
+    stop: bool,
+}
+
+pub fn master(
+    pics: &[Pic],
+    size: [u32; 2],
+    fps: u32,
+    output: &Path,
+) -> Result<Vec<String>, String> {
+    if pics.is_empty() {
+        return Err("the clip has no frames".into());
+    }
+    let fresh: Vec<usize> = (0..pics.len())
+        .filter(|&i| i == 0 || pics[i] != pics[i - 1])
+        .collect();
+    crate::paths::confine_here();
+    let workers = std::thread::available_parallelism()
+        .map_or(4, |n| n.get())
+        .clamp(2, 8);
+    let line = Mutex::new(Line {
+        next: 0,
+        wanted: 0,
+        ready: BTreeMap::new(),
+        stop: false,
+    });
+    let moved = Condvar::new();
+    let lock = || line.lock().unwrap_or_else(|e| e.into_inner());
+    let work = || {
+        let mut d = Decoded {
+            png: pito_codecs::png::Decoder::new(),
+            rgba: Rgba::new(0, 0),
+            other: Rgba::new(0, 0),
+            bytes: Vec::new(),
+        };
+        loop {
+            let k = {
+                let mut q = lock();
+                while !q.stop && q.next < fresh.len() && q.next >= q.wanted + 2 * workers {
+                    q = moved.wait(q).unwrap_or_else(|e| e.into_inner());
+                }
+                if q.stop || q.next >= fresh.len() {
+                    return;
+                }
+                q.next += 1;
+                q.next - 1
+            };
+            let made = d.frame(pics[fresh[k]], size);
+            lock().ready.insert(k, made);
+            moved.notify_all();
+        }
+    };
+    let take = |k: usize| -> Result<Frame, String> {
+        let mut q = lock();
+        q.wanted = k;
+        moved.notify_all();
+        loop {
+            if let Some(made) = q.ready.remove(&k) {
+                q.wanted = k + 1;
+                moved.notify_all();
+                return made;
+            }
+            q = moved.wait(q).unwrap_or_else(|e| e.into_inner());
+        }
+    };
+    let encode = || -> Result<(), String> {
+        let named = |e: &dyn std::fmt::Display| format!("{}: {e}", output.display());
+        let mut enc = Encoder::new(EncoderConfig {
+            width: size[0],
+            height: size[1],
+            fps: (fps, 1),
+            profile: Profile::High,
+            preset: Preset::Quality,
+            rate: Rate::Crf(CRF),
+            gop: 2 * fps,
+            b_frames: B_FRAMES,
+            threads: THREADS,
+            bitstream: Bitstream::LengthPrefixed,
+        })
+        .map_err(|e| named(&e))?;
+        let avc = AvcConfig::parse(&enc.avcc()).map_err(|e| named(&e))?;
+        let mut mux = Writer::create(output).map_err(|e| named(&e))?;
+        let track = mux
+            .add_track(TrackConfig::new(
+                SampleEntry::h264(avc, size[0] as u16, size[1] as u16),
+                fps,
+            ))
+            .map_err(|e| named(&e))?;
+        let mut held: Option<Packet> = None;
+        let mut write = |next: Option<Packet>| -> Result<(), String> {
+            if let Some(h) = held.take() {
+                let duration = next
+                    .as_ref()
+                    .map_or(1, |n| u32::try_from((n.dts - h.dts).max(1)).unwrap_or(1));
+                mux.push_sample(track, &h.data, h.pts, h.dts, duration, h.keyframe)
+                    .map_err(|e| named(&e))?;
+            }
+            held = next;
+            Ok(())
+        };
+        let mut current: Option<Frame> = None;
+        let mut k = 0;
+        for n in 0..pics.len() {
+            if fresh.get(k) == Some(&n) {
+                current = Some(take(k)?);
+                k += 1;
+            }
+            let f = current.as_mut().ok_or("the first frame is missing")?;
+            f.pts = n as i64;
+            f.time_base = TimeBase::new(1, fps);
+            for p in enc.encode(f).map_err(|e| named(&e))? {
+                write(Some(p))?;
+            }
+            crate::jobs::progress(n + 1);
+        }
+        for p in enc.flush().map_err(|e| named(&e))? {
+            write(Some(p))?;
+        }
+        write(None)?;
+        mux.finish_faststart().map_err(|e| named(&e))?;
+        Ok(())
+    };
+    let done = std::thread::scope(|s| {
+        for _ in 0..workers {
+            s.spawn(work);
+        }
+        let done = encode();
+        lock().stop = true;
+        moved.notify_all();
+        done
+    });
+    if done.is_err() {
+        let _ = std::fs::remove_file(output);
+    }
+    done.map(|()| settings(fps))
+}
+
+pub fn probe(video: &Path) -> Result<([u32; 2], usize), String> {
+    let r = Reader::open(video).map_err(|e| format!("{}: {e}", video.display()))?;
+    let t = r
+        .tracks
+        .iter()
+        .find(|t| t.kind == TrackKind::Video)
+        .ok_or_else(|| format!("{}: no video track", video.display()))?;
+    Ok(([t.width, t.height], t.samples.len()))
 }
 
 pub fn temp_of(path: &Path) -> PathBuf {
@@ -99,42 +273,6 @@ pub fn atomic_file(
         let file = buffered.into_inner().map_err(|e| named(e.into_error()))?;
         file.sync_all().map_err(named)
     })
-}
-
-pub fn master(
-    work: &Path,
-    inputs: &[String],
-    graph: Option<&str>,
-    fps: u32,
-    output: &Path,
-) -> Result<Vec<String>, String> {
-    let used = x264_args(fps);
-    let mut args: Vec<String> = ["-filter_threads", "1", "-filter_complex_threads", "1"]
-        .map(String::from)
-        .to_vec();
-    for input in inputs {
-        args.extend(["-f", "image2", "-framerate"].map(String::from));
-        args.push(fps.to_string());
-        args.extend(["-start_number", "0", "-i"].map(String::from));
-        args.push(input.clone());
-    }
-    match graph {
-        None => args.extend(used.iter().cloned()),
-        Some(g) => {
-            args.extend([
-                "-filter_complex".to_string(),
-                format!("{g},{TO_709}[out]"),
-                "-map".to_string(),
-                "[out]".to_string(),
-            ]);
-            args.extend(x264(fps));
-        }
-    }
-    args.push(output.display().to_string());
-    ffmpeg(&args, work).inspect_err(|_| {
-        let _ = std::fs::remove_file(output);
-    })?;
-    Ok(used)
 }
 
 pub fn poster(frame: &Path, output: &Path) -> Result<(), String> {
@@ -238,14 +376,6 @@ pub fn file_entry(dir: &Path, path: &Path, what: &str, extra: Value) -> Result<V
 mod tests {
     use super::*;
 
-    #[test]
-    fn x264_master_args_match_the_convention() {
-        assert_eq!(
-            x264_args(60).join(" "),
-            "-vf format=gbrp,zscale,format=gbrp16le,format=rgb48le,zscale=matrix=709:range=limited:filter=bicubic:chromal=left,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv -c:v libx264 -threads 24 -preset slow -profile:v high -tune animation -pix_fmt yuv420p -crf 14 -g 120 -keyint_min 120 -sc_threshold 0 -color_primaries bt709 -color_trc bt709 -colorspace bt709 -color_range tv -movflags +faststart+write_colr -an"
-        );
-    }
-
     fn work(name: &str) -> PathBuf {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tmp/unit-encode")
@@ -319,7 +449,8 @@ mod tests {
         let dir = work("master");
         let target = dir.join("a.master.mp4");
         std::fs::write(&target, b"half").unwrap();
-        master(&dir, &["missing/%06d.png".into()], None, 30, &target).unwrap_err();
+        let missing = dir.join("missing.png");
+        master(&[Pic::One(&missing)], [64, 64], 30, &target).unwrap_err();
         assert!(names(&dir).is_empty());
     }
 

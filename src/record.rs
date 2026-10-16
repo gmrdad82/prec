@@ -107,6 +107,10 @@ impl Screen {
             .join("\n")
     }
 
+    fn picture(&self) -> Vec<u8> {
+        self.parser.screen().contents_formatted()
+    }
+
     fn matches(&self, re: &regex::Regex, screen: bool) -> bool {
         let text = self.parser.screen().contents();
         if screen {
@@ -372,6 +376,34 @@ fn drive(s: &mut Session, spec: &Spec) -> Result<(), String> {
                         ));
                     }
                     due = s.await_output((until - now).min(Duration::from_millis(5)));
+                }
+            }
+            Step::Idle { quiet, timeout } => {
+                let until = Instant::now() + *timeout;
+                s.pump();
+                let mut picture = s.screen.picture();
+                let mut since = Instant::now();
+                loop {
+                    let now = Instant::now();
+                    if now.duration_since(since) >= *quiet {
+                        break;
+                    }
+                    if now >= until {
+                        return Err(format!(
+                            "Idle {:.1}s timed out after {:.1}s; the screen kept changing:\n{}",
+                            quiet.as_secs_f64(),
+                            timeout.as_secs_f64(),
+                            s.screen.shown()
+                        ));
+                    }
+                    let wait = (*quiet - now.duration_since(since)).min(until - now);
+                    if s.await_output(wait.min(Duration::from_millis(20))) {
+                        let next = s.screen.picture();
+                        if next != picture {
+                            picture = next;
+                            since = Instant::now();
+                        }
+                    }
                 }
             }
         }

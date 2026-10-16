@@ -46,6 +46,8 @@ pub struct Terminal {
     #[serde(default)]
     pub camera: Option<Value>,
     #[serde(default)]
+    pub mask: Vec<crate::mask::Mask>,
+    #[serde(default)]
     pub shots: BTreeMap<String, Shot>,
 }
 
@@ -86,6 +88,8 @@ pub struct Shot {
     pub camera: Option<Value>,
     #[serde(default)]
     pub keys: Option<Value>,
+    #[serde(default)]
+    pub mask: Vec<crate::mask::Mask>,
 }
 
 pub const NO_CAMERA: &str = "prec has no camera: a terminal is drawn flat at its own grid, with no zoom, move, turn or keyframes, so camera and keys are refused";
@@ -291,6 +295,10 @@ impl Terminal {
             return Err("home and [env] HOME both set the session's home; keep one".into());
         }
         Ok(())
+    }
+
+    pub fn masks(&self, shot: &Shot) -> Vec<crate::mask::Mask> {
+        self.mask.iter().chain(&shot.mask).cloned().collect()
     }
 
     pub fn hostname(&self) -> Option<&str> {

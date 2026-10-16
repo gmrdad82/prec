@@ -44,6 +44,10 @@ pub enum Step {
         timeout: Duration,
         screen: bool,
     },
+    Idle {
+        quiet: Duration,
+        timeout: Duration,
+    },
 }
 
 pub fn duration(s: &str) -> Result<Duration, String> {
@@ -166,6 +170,14 @@ pub fn parse_line(line: &str) -> Result<Option<Step>, String> {
         "Hide" => Ok(Some(Step::Hide)),
         "Show" => Ok(Some(Step::Show)),
         "Screenshot" => Ok(Some(Step::Screenshot)),
+        "Idle" => Ok(Some(Step::Idle {
+            quiet: if rest.is_empty() {
+                Duration::from_secs(2)
+            } else {
+                duration(rest)?
+            },
+            timeout: speed.unwrap_or(Duration::from_secs(300)),
+        })),
         "Copy" | "Paste" => Err(format!(
             "{name}: the clipboard has no replay; type the text"
         )),
@@ -273,8 +285,22 @@ mod tests {
 
     #[test]
     fn steps_read_like_vhs() {
-        let s = parse("Type \"demo tui\"\nEnter\nSleep 2s\nDown@200ms 3\nCtrl+C\nType@0ms `a \"b\"`\n# note\nHide\nShow\nScreenshot\nWait+Screen@5s /ready/\nShift+Tab\nAlt+Enter\n").unwrap();
-        assert_eq!(s.len(), 12);
+        let s = parse("Type \"demo tui\"\nEnter\nSleep 2s\nDown@200ms 3\nCtrl+C\nType@0ms `a \"b\"`\n# note\nHide\nShow\nScreenshot\nWait+Screen@5s /ready/\nShift+Tab\nAlt+Enter\nIdle@10m 3s\nIdle\n").unwrap();
+        assert_eq!(s.len(), 14);
+        assert_eq!(
+            s[12],
+            Step::Idle {
+                quiet: Duration::from_secs(3),
+                timeout: Duration::from_secs(600)
+            }
+        );
+        assert_eq!(
+            s[13],
+            Step::Idle {
+                quiet: Duration::from_secs(2),
+                timeout: Duration::from_secs(300)
+            }
+        );
         assert_eq!(
             s[0],
             Step::Type {

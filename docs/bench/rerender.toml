@@ -1,17 +1,17 @@
 title = "RE-RENDER FROM THE CAST"
 unit = "SECONDS FOR A 10-SECOND CAST"
 better = "lower"
-subtitle = "RYZEN 9 9950X, 24 THREADS, PREC 0.22.0"
-date = "2026-10-14"
+subtitle = "RYZEN 9 9950X, 24 THREADS, PREC 1.2.0"
+date = "2026-10-16"
 suffix = " S"
-notes = ["NO APP RUN: XTERM.JS IN HEADLESS CHROMIUM, THEN X264 CRF 14."]
+notes = ["NO APP RUN: XTERM.JS IN HEADLESS CHROMIUM, THEN PITO-CODECS H.264 CRF 14."]
 parties = [{ name = "PREC" }]
 
 [[groups]]
 name = "MASTER"
 rows = [
-  { label = "720P 30 FPS", values = [28.5] },
-  { label = "1080P 60 FPS", values = [27.4] },
-  { label = "2160P 30 FPS", values = [55.5] },
-  { label = "2160P 120 FPS", values = [135.2] },
+  { label = "720P 30 FPS", values = [9.2] },
+  { label = "1080P 60 FPS", values = [16.9] },
+  { label = "2160P 30 FPS", values = [27.8] },
+  { label = "2160P 120 FPS", values = [48.6] },
 ]

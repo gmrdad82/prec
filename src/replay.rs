@@ -91,11 +91,30 @@ window.place = async (x, y, src) => {
   await frame2();
   return true;
 };
-window.feed = (b64) => new Promise(res => {
+const cover = (rects) => {
+  const screen = term.element.querySelector('.xterm-screen');
+  let box = document.getElementById('masks');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'masks';
+    box.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;z-index:10;pointer-events:none';
+    screen.appendChild(box);
+  }
+  box.replaceChildren();
+  const r = screen.getBoundingClientRect();
+  const cw = r.width / term.cols, ch = r.height / term.rows;
+  const fill = (term.options.theme && term.options.theme.background) || '#000';
+  for (const [c, w0, n, h] of rects) {
+    const d = document.createElement('div');
+    d.style.cssText = 'position:absolute;background:' + fill + ';left:' + (c * cw) + 'px;top:' + (w0 * ch) + 'px;width:' + (n * cw) + 'px;height:' + (h * ch) + 'px';
+    box.appendChild(d);
+  }
+};
+window.feed = (b64, rects) => new Promise(res => {
   const bin = atob(b64);
   const a = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
-  term.write(a, () => frame2().then(res));
+  term.write(a, () => { if (rects) cover(rects); frame2().then(res); });
 });
 </script></body></html>
 "#;
@@ -106,6 +125,7 @@ pub struct Look {
     pub font: String,
     pub window: bool,
     pub ground: Option<[u8; 3]>,
+    pub masks: crate::mask::Masks,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -181,12 +201,15 @@ fn outputs(events: &[Event]) -> Vec<(f64, Vec<u8>)> {
         .collect()
 }
 
-struct Feeder {
+struct Feeder<'a> {
     out: Vec<(f64, Vec<u8>)>,
     next: usize,
+    masks: &'a crate::mask::Masks,
+    screen: vt100::Parser,
+    covered: Vec<[u32; 4]>,
 }
 
-impl Feeder {
+impl Feeder<'_> {
     fn until(&mut self, b: &mut Browser, t: f64) -> Result<bool, String> {
         let mut chunk = vec![];
         while self.next < self.out.len() && self.out[self.next].0 <= t + 1e-9 {
@@ -196,7 +219,16 @@ impl Feeder {
         if chunk.is_empty() {
             return Ok(false);
         }
-        b.eval(&format!("window.feed({:?})", b64(&chunk)))?;
+        let mut rects = "null".to_string();
+        if !self.masks.is_empty() {
+            self.screen.process(&chunk);
+            let now = self.masks.cells(self.screen.screen());
+            if now != self.covered {
+                rects = serde_json::to_string(&now).map_err(|e| e.to_string())?;
+                self.covered = now;
+            }
+        }
+        b.eval(&format!("window.feed({:?}, {rects})", b64(&chunk)))?;
         Ok(true)
     }
 }
@@ -339,6 +371,9 @@ pub fn render(
     let mut feeder = Feeder {
         out: outputs(&cast.events),
         next: 0,
+        masks: &look.masks,
+        screen: vt100::Parser::new(grid[1] as u16, grid[0] as u16, 0),
+        covered: vec![],
     };
     let first = match take {
         Take::Still(at) => at,

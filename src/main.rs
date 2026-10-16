@@ -9,6 +9,7 @@ mod encode;
 mod font;
 mod home;
 mod jobs;
+mod mask;
 mod paths;
 mod private;
 mod record;
@@ -242,7 +243,7 @@ enum Kind {
         #[command(flatten)]
         source: Source,
     },
-    #[command(about = "Render a clip: x264 master, poster and manifest")]
+    #[command(about = "Render a clip: H.264 master, poster and manifest")]
     Clip(Shot),
     #[command(about = "Render a still: a 16-bit master and 8-bit PNG deliveries")]
     Still(Shot),

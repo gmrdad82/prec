@@ -302,6 +302,41 @@ fn wrapped(bin: &str, memory_max: &str, tail: &[&str]) -> Command {
     c
 }
 
+pub fn confine_here() {
+    if crate::config::get().confine.is_none() || direct() {
+        return;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        unsafe {
+            nix::libc::setpriority(nix::libc::PRIO_PROCESS, 0, 10);
+        }
+        if let Some(set) = build_cpus().as_deref().and_then(cpu_set) {
+            let _ = nix::sched::sched_setaffinity(nix::unistd::Pid::from_raw(0), &set);
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn cpu_set(list: &str) -> Option<nix::sched::CpuSet> {
+    let mut set = nix::sched::CpuSet::new();
+    let mut any = false;
+    for part in list.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+        let (a, b) = match part.split_once('-') {
+            Some((a, b)) => (a.trim().parse().ok()?, b.trim().parse().ok()?),
+            None => {
+                let v: usize = part.parse().ok()?;
+                (v, v)
+            }
+        };
+        for cpu in a..=b {
+            set.set(cpu).ok()?;
+            any = true;
+        }
+    }
+    any.then_some(set)
+}
+
 static BUILD_CPUS: OnceLock<Option<String>> = OnceLock::new();
 
 fn build_cpus() -> Option<String> {

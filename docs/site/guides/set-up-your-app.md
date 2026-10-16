@@ -65,6 +65,7 @@ prec clip myapp tour --size 1080p --fps 60
 | `pass_env` | names of variables whose values come from prec's own environment, such as a token; see [A session with no private data](#a-session-with-no-private-data) |
 | `home` | an absolute neutral home for the session, such as `/srv/demo`, in its own user and mount namespace; Linux only |
 | `hostname` | the session's hostname when `home` is set; default `prec` |
+| `mask` | regions hidden in every shot's picture; see [Mask a region](#mask-a-region) |
 | `[theme]` | the app's own palette ([Choose a theme](choose-a-theme.md)) |
 
 An unknown key is refused, so a typo never passes silently.
@@ -85,6 +86,7 @@ Each `[shots.<name>]` is one render:
 | `size`, `fps` | the defaults for `--size` and `--fps` (otherwise 1080p and 120 fps) |
 | `grid` | this shot's own grid |
 | `status` | a free word shown by `prec shots` |
+| `mask` | this shot's own masks, added to the top-level ones |
 | `fixtures` | the name of the fixture set this shot needs; prec refuses to record it without `--fixtures` naming that set ([Render a tag or commit](render-a-revision.md)) |
 
 ## Placeholders
@@ -112,7 +114,28 @@ pass_env = ["MYAPP_TOKEN"]
 
 Placeholders other than `{home}` keep their real paths, since only hidden steps (`launch`, the hooks) type them.
 
-Before any replay, prec reads the screen the cast shows and refuses a picture that shows your home path, your hostname or user name as a whole word, an email address, or a value the record passed through `pass_env`: [Render a cast again](render-a-cast-again.md#a-picture-with-private-data).
+Before any replay, prec reads the screen the cast shows and refuses a picture that shows your home path, your hostname or user name as a whole word, an email address, a value the record passed through `pass_env`, or a plan or organisation label (such as `Claude Max` or `someone's Organization`): [Render a cast again](render-a-cast-again.md#a-picture-with-private-data).
+
+## Mask a region
+
+Some text can't be kept off the screen: a banner that names the plan, an account line. A `mask` hides it in the picture by filling its cells with the theme's background:
+
+```toml
+mask = [
+  { match = "Claude (Max|Pro|Team)" },
+  { rect = [0, 0, 40, 2] },
+]
+
+[shots.agent]
+kind = "clip"
+tape = "render/terminal/agent.tape"
+mask = [{ match = "[\\w.]+'s Organization" }]
+```
+
+- `match` is a regex tried on every row of the screen as it is at each frame; each match is covered, wherever and whenever it shows, and the cover follows the text as it scrolls.
+- `rect = [col, row, cols, rows]` covers a fixed block of cells, counted from 0 at the top left; it must lie inside the grid.
+- Top-level masks apply to every shot and a shot's own are added to them. They are written into the cast, so `prec render` covers the same regions at any size, rate or theme.
+- The scan for private data reads the screen with the masks applied, so a masked label passes.
 
 ## A working example
 

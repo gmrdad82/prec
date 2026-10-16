@@ -242,48 +242,34 @@ fn master_slot(order: &[usize], fade: usize, src: usize) -> Result<usize, String
     Ok(body + (pos - master_len))
 }
 
-fn sequence(dir: &Path, files: &[&Path]) -> Result<(), String> {
-    crate::paths::fresh(dir)?;
-    for (i, f) in files.iter().enumerate() {
-        let link = dir.join(format!("{i:06}.png"));
-        std::os::unix::fs::symlink(f, &link).map_err(|e| format!("{}: {e}", link.display()))?;
-    }
-    Ok(())
+fn fade_weight(i: usize, k: usize) -> f32 {
+    let t = (i as f32 + 0.5) / k as f32;
+    t * t * (3.0 - 2.0 * t)
 }
 
-fn crossfade(k: usize, fps: u32) -> String {
-    let expr = format!("st(0,(T*{fps}+0.5)/{k});st(1,ld(0)*ld(0)*(3-2*ld(0)));A*(1-ld(1))+B*ld(1)");
-    format!(
-        "[0:v]{lift}[body];[1:v]{lift}[tail];[2:v]{lift}[head];[tail][head]blend=all_expr='{expr}'[x];[body][x]concat=n=2:v=1:a=0",
-        lift = encode::LIFT
-    )
-}
-
-pub fn master(
-    work: &Path,
-    files: &[&Path],
-    fade: Option<usize>,
-    fps: u32,
-    output: &Path,
-) -> Result<(usize, Vec<String>), String> {
-    let parts: Vec<&[&Path]> = match fade {
-        None => vec![files],
+pub fn pictures<'a>(files: &[&'a Path], fade: Option<usize>) -> Vec<encode::Pic<'a>> {
+    match fade {
+        None => files.iter().map(|f| encode::Pic::One(f)).collect(),
         Some(k) => {
             let (body, ends) = files.split_at(files.len() - 2 * k);
             let (tail, head) = ends.split_at(k);
-            vec![body, tail, head]
+            let mut out: Vec<encode::Pic> = body.iter().map(|f| encode::Pic::One(f)).collect();
+            out.extend((0..k).map(|i| encode::Pic::Blend(tail[i], head[i], fade_weight(i, k))));
+            out
         }
-    };
-    let seq = work.join("seq");
-    let mut inputs = vec![];
-    for (i, part) in parts.iter().enumerate() {
-        sequence(&seq.join(i.to_string()), part)?;
-        inputs.push(format!("seq/{i}/%06d.png"));
     }
-    let graph = fade.map(|k| crossfade(k, fps));
-    let used = encode::master(work, &inputs, graph.as_deref(), fps, output);
-    let _ = std::fs::remove_dir_all(&seq);
-    Ok((files.len() - fade.unwrap_or(0), used?))
+}
+
+pub fn master(
+    files: &[&Path],
+    fade: Option<usize>,
+    size: [u32; 2],
+    fps: u32,
+    output: &Path,
+) -> Result<(usize, Vec<String>), String> {
+    let pics = pictures(files, fade);
+    let used = encode::master(&pics, size, fps, output)?;
+    Ok((pics.len(), used))
 }
 
 #[cfg(test)]

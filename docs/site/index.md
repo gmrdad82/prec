@@ -11,14 +11,14 @@ prec records terminal apps into exact videos and stills, part of [PITO MD](https
 
 | | |
 |---|---|
-| Frames in a 10-second clip at 120 fps | **1,197**, every one (VHS v0.11.0 on the same tape: 95) |
-| Re-render a 10-second cast at 1080p 60 fps | **27.4 s**, without running the app again |
+| Frames in a 10-second clip at 120 fps | **1,196**, every one (VHS v0.11.0 on the same tape: 214) |
+| Re-render a 10-second cast at 1080p 60 fps | **16.9 s**, without running the app again |
 | Two renders of one cast | **byte-identical** masters, same sha256 |
 | Sizes and rates | any size up to **3840x2160**, at **30, 60 or 120 fps** |
-| Binary | **4.9 MB**, stripped, fat LTO (2.0 MB as the release `.tar.gz`) |
+| Binary | **5.7 MB**, stripped, fat LTO, its H.264 encoder built in (2.4 MB as the release `.tar.gz`) |
 | Network | none: prec downloads nothing |
 
-Measured on 2026-10-14 on an AMD Ryzen 9 9950X (prec and VHS pinned to the same 24 threads), with prec 0.22.0 and VHS v0.11.0; [How prec renders](guides/how-it-renders.md) gives every number and how it was taken.
+Measured on 2026-10-16 on an AMD Ryzen 9 9950X (prec and VHS pinned to the same 24 threads), with prec 1.2.0 and VHS v0.11.0; [How prec renders](guides/how-it-renders.md) gives every number and how it was taken.
 
 ## Where to start
 

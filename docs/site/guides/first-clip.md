@@ -49,7 +49,7 @@ tmp/renders/demo/clip/
   demo-clip-typing-1280x720-30fps.poster.png    7,916 bytes
 ```
 
-- **`.master.mp4`** is one silent x264 master at the render's size and rate: CRF 14, 8-bit 4:2:0, BT.709 limited range, tagged. It is a master to make deliveries from, not a file to post as is; [Make a GIF](make-a-gif.md) turns it into one.
+- **`.master.mp4`** is one silent H.264 master at the render's size and rate, encoded by pito-codecs: CRF 14, 8-bit 4:2:0, BT.709 limited range, tagged. It is a master to make deliveries from, not a file to post as is; [Make a GIF](make-a-gif.md) turns it into one.
 - **`.poster.png`** is the clip's first frame by default ([Frame, closure and poster](frame-closure-poster.md)).
 - **`.cast`** is the recording, an asciicast v2 file. [Render a cast again](render-a-cast-again.md) replays it at another size, rate or theme without the app.
 - **`.json`** is the manifest: what was rendered, from what, with which flags, and every file's sha256.

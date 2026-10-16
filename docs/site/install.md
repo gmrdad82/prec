@@ -38,26 +38,25 @@ cargo install --locked --git https://github.com/gmrdad82/prec --tag vX.Y.Z prec
 prec drives tools you install yourself:
 
 - **Chromium** or Google Chrome, run headless (`chromium`, `chromium-browser`, `google-chrome-stable` or `google-chrome` on the `PATH`, or `chromium` in the [config](guides/configure-prec.md)).
-- **ffmpeg and ffprobe** with the `libx264` encoder and the `zscale` filter (libzimg).
 - **fontconfig** (`fc-match`, `fc-list`), the default font **JetBrainsMono Nerd Font** (or pass `--font`), and a CJK font for wide characters.
 - **git** and **bash**.
 
 On Debian or Ubuntu:
 
 ```sh
-sudo apt install chromium ffmpeg fontconfig fonts-noto-cjk git
+sudo apt install chromium fontconfig fonts-noto-cjk git
 ```
 
 On Arch:
 
 ```sh
-sudo pacman -S chromium ffmpeg fontconfig noto-fonts-cjk ttf-jetbrains-mono-nerd git
+sudo pacman -S chromium fontconfig noto-fonts-cjk ttf-jetbrains-mono-nerd git
 ```
 
 On macOS with Homebrew, then point `chromium` in the config at `/Applications/Chromium.app/Contents/MacOS/Chromium`:
 
 ```sh
-brew install ffmpeg fontconfig git
+brew install fontconfig git
 brew install --cask chromium font-jetbrains-mono-nerd-font
 ```
 
@@ -70,20 +69,13 @@ The JetBrainsMono Nerd Font is also at [nerdfonts.com](https://www.nerdfonts.com
 ```text
 $ prec doctor
 ok   config                       ~/.config/prec/config.toml (absent; the defaults apply)
-ok   ffmpeg                       /usr/bin/ffmpeg
-ok   ffprobe                      /usr/bin/ffprobe
 ok   fc-match                     /usr/bin/fc-match
 ok   git                          /usr/bin/git
 ok   chromium                     /usr/bin/chromium: Chromium 152.0.7977.82 Arch Linux
 ok   xterm.js                     xterm.js 5.5.0, addon-canvas 0.7.0, addon-unicode11 0.8.0, embedded
 ok   themes                       348 vendored from VHS v0.11.0
-ok   ffmpeg encoder libx264       present
+ok   encoder                      pito-codecs 1.10.0, H.264 built in
 ok   archive root                 none configured; renders are never archived
-ok   ffmpeg filter format         present
-ok   ffmpeg filter blend          present
-ok   ffmpeg filter concat         present
-ok   ffmpeg filter zscale         present
-ok   ffmpeg filter setparams      present
 ok   default font                 JetBrainsMono Nerd Font (/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf)
 ok   CJK fallback                 WDXL Lubrifont TC,WDXL 滑油字 TC
 opt  libfaketime (optional)       absent; apps pin their own clock through [env]

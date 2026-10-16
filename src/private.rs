@@ -3,6 +3,8 @@ use std::path::Path;
 use std::process::Command;
 
 const EMAIL: &str = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}";
+const PLAN: &str = r"\b(?:Claude (?:Max|Pro|Team|Enterprise)|ChatGPT (?:Plus|Pro|Team|Business|Enterprise)|Copilot (?:Pro\+?|Business|Enterprise)|Gemini (?:Advanced|Pro|Ultra) plan)\b";
+const ORG: &str = r"\S(?:'s|’s) (?:Organi[sz]ation|Workspace)\b|\bOrgani[sz]ation(?: name)?: *\S";
 const SHORTEST_PASSED: usize = 4;
 const GRID: f64 = 120.0;
 
@@ -11,6 +13,8 @@ pub struct Needles {
     hostname: Option<String>,
     user: Option<String>,
     email: regex::Regex,
+    plan: regex::Regex,
+    org: regex::Regex,
     passed: Vec<(String, String)>,
 }
 
@@ -70,6 +74,8 @@ impl Needles {
             hostname,
             user: user.filter(|u| u.chars().count() >= 3),
             email: regex::Regex::new(EMAIL).expect("the email pattern"),
+            plan: regex::Regex::new(PLAN).expect("the plan pattern"),
+            org: regex::Regex::new(ORG).expect("the org pattern"),
             passed: passed
                 .iter()
                 .filter(|(_, v)| v.chars().count() >= SHORTEST_PASSED)
@@ -95,6 +101,12 @@ impl Needles {
         }
         if self.email.is_match(text) {
             out.push("an email".to_string());
+        }
+        if self.plan.is_match(text) {
+            out.push("a plan label".to_string());
+        }
+        if self.org.is_match(text) {
+            out.push("an organisation label".to_string());
         }
         for (name, value) in &self.passed {
             if text.contains(value.as_str()) {
@@ -144,6 +156,8 @@ pub fn scan(cast: &Cast, needles: &Needles) -> Vec<Finding> {
         .iter()
         .filter(|e| e.kind == Kind::Output)
         .collect();
+    let masks = crate::mask::Masks::of_meta(&cast.meta, [cast.cols, cast.rows])
+        .unwrap_or_else(|_| crate::mask::Masks::new(&[], [0, 0]).expect("no masks"));
     let mut parser = vt100::Parser::new(cast.rows.max(1) as u16, cast.cols.max(1) as u16, 0);
     let mut findings: Vec<Finding> = Vec::new();
     let mut next = 0;
@@ -158,7 +172,12 @@ pub fn scan(cast: &Cast, needles: &Needles) -> Vec<Finding> {
             continue;
         }
         fresh = false;
-        for what in needles.found(&parser.screen().contents()) {
+        let text = if masks.is_empty() {
+            parser.screen().contents()
+        } else {
+            masks.text(parser.screen())
+        };
+        for what in needles.found(&text) {
             if !findings.iter().any(|f| f.what == what) {
                 findings.push(Finding { what, at });
             }
@@ -173,7 +192,7 @@ pub fn lines(cast: &Path, findings: &[Finding]) -> Vec<String> {
         .iter()
         .map(|f| {
             format!(
-                "{}: the picture shows {} at {:.2}s; hide it in the tape or re-record",
+                "{}: the picture shows {} at {:.2}s; hide it in the tape, mask it in terminal.toml or re-record",
                 crate::paths::shown(cast),
                 f.what,
                 f.at
@@ -272,6 +291,27 @@ mod tests {
                 ("a passed variable TOKEN".to_string(), 0.0)
             ]
         );
+    }
+
+    #[test]
+    fn a_plan_or_organisation_label_is_found_unless_a_mask_hides_it() {
+        let n = needles();
+        assert_eq!(
+            n.found("Opus 5.5 · Claude Max · someone's Organization"),
+            ["a plan label", "an organisation label"]
+        );
+        assert_eq!(n.found("Organization: Acme"), ["an organisation label"]);
+        assert!(
+            n.found("the project's workspace on a Claude plan")
+                .is_empty()
+        );
+        let mut banner = cast(
+            &[(0.1, "Opus 5.5 · Claude Max\r\n")],
+            &[(0.0, "show"), (1.0, "end")],
+        );
+        assert_eq!(whats(&banner), [("a plan label".to_string(), 0.1)]);
+        banner.meta = json!({"mask": [{"match": "Claude \\w+"}]});
+        assert!(whats(&banner).is_empty());
     }
 
     #[test]

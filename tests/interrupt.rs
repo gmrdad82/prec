@@ -212,7 +212,7 @@ fn hooks_see_only_the_ptys_environment() {
 }
 
 #[test]
-fn int_during_the_encode_leaves_no_ffmpeg_and_no_chromium() {
+fn int_during_the_encode_stops_it_and_leaves_no_chromium() {
     let dir = case("int");
     let cast = dir.join("cast/long.cast");
     common::write_cast(
@@ -237,11 +237,19 @@ fn int_during_the_encode_leaves_no_ffmpeg_and_no_chromium() {
         ],
     );
     common::confined(&mut c, &dir);
+    with_jobs(&mut c, &dir);
     let mut child = common::spawn(c, &dir);
-    common::wait_for("an ffmpeg of the run", &dir, 240, || {
-        of_run(&dir)
-            .iter()
-            .any(|p| p.args.first().is_some_and(|b| b.ends_with("ffmpeg")))
+    let pid = child.id();
+    common::wait_for("the run's encode", &dir, 240, || {
+        std::fs::read_dir(dir.join("jobs")).is_ok_and(|mut d| {
+            d.any(|e| {
+                e.is_ok_and(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    name.starts_with(&format!("{pid}-"))
+                        && std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains("\"master\""))
+                })
+            })
+        })
     });
     assert!(common::signal(child.id(), "INT"));
     let status = common::exits(&mut child, &dir);

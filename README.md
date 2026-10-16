@@ -8,20 +8,20 @@ prec records terminal apps into exact videos and stills, part of [PITO MD](https
 
 | | |
 |---|---|
-| Frames in a 10-second clip at 120 fps | **1,197**, every one (VHS v0.11.0 on the same tape: 95) |
-| Re-render a 10-second cast at 1080p 60 fps | **27.4 s**, without running the app again |
+| Frames in a 10-second clip at 120 fps | **1,196**, every one (VHS v0.11.0 on the same tape: 214) |
+| Re-render a 10-second cast at 1080p 60 fps | **16.9 s**, without running the app again |
 | Two renders of one cast | **byte-identical** masters, same sha256 |
 | Sizes and rates | any size up to **3840x2160**, at **30, 60 or 120 fps** |
-| Binary | **4.9 MB**, stripped, fat LTO (2.0 MB as the release `.tar.gz`) |
-| Code | **9,798 lines** of Rust in `src/`, unit tests included; **17** direct dependencies |
-| Cold release build | **71.9 s** with 4 build jobs |
+| Binary | **5.7 MB**, stripped, fat LTO, its H.264 encoder built in (2.4 MB as the release `.tar.gz`) |
+| Code | **10,912 lines** of Rust in `src/`, unit tests included; **18** direct dependencies |
+| Cold release build | **70.4 s** with 4 build jobs |
 | Network | none: prec downloads nothing |
 
-Measured on 2026-10-14 on an AMD Ryzen 9 9950X (prec and VHS pinned to the same 24 threads), with prec 0.22.0 and VHS v0.11.0, from [docs/bench/bench.sh](docs/bench/bench.sh); see [Speed](#speed) for every number and how it was taken.
+Measured on 2026-10-16 on an AMD Ryzen 9 9950X (prec and VHS pinned to the same 24 threads), with prec 1.2.0 and VHS v0.11.0, from [docs/bench/bench.sh](docs/bench/bench.sh); see [Speed](#speed) for every number and how it was taken.
 
 ## Start in 30 seconds
 
-On Linux or WSL (macOS: swap `linux-x86_64` for `macos-arm64`), with Chromium and ffmpeg installed ([Prerequisites](#prerequisites)):
+On Linux or WSL (macOS: swap `linux-x86_64` for `macos-arm64`), with Chromium installed ([Prerequisites](#prerequisites)):
 
 ```sh
 v=$(basename "$(curl -fsSLo /dev/null -w '%{url_effective}' https://github.com/gmrdad82/prec/releases/latest)")
@@ -41,15 +41,15 @@ That records this repository's sample app from its tape and writes `tmp/renders/
 
 prec doesn't capture the screen while the app runs. It records the app's output bytes with their timestamps, then steps a virtual clock at exactly 1/fps and draws each frame, so a clip has the shown time times the fps in frames, however heavy the frame or the rate. Here is one 10-second tape recorded by both tools at 1280x720:
 
-<p align="center"><img src="docs/images/frames-vs-vhs.png" width="640" alt="Paired bars, higher is better: frames in the clip for one 10-second tape at 1280x720. Asked for 30 fps, prec 301 and VHS 221; at 60 fps, 599 and 199; at 120 fps, 1197 and 95. VHS wrote a 25 fps file of 8.8, 8.0 and 3.8 seconds."></p>
+<p align="center"><img src="docs/images/frames-vs-vhs.png" width="640" alt="Paired bars, higher is better: frames in the clip for one 10-second tape at 1280x720. Asked for 30 fps, prec 299 and VHS 239; at 60 fps, 598 and 228; at 120 fps, 1196 and 214. VHS wrote a 25 fps file of 9.6, 9.1 and 8.6 seconds."></p>
 
-VHS v0.11.0 captured in real time and wrote a 25 fps file at every setting, shorter than the tape the higher the rate. prec's clips are 10.0 seconds at 30, 60 and 120 fps.
+VHS v0.11.0 captured in real time and wrote a 25 fps file at every setting, shorter than the tape. prec's clips are 10.0 seconds at 30, 60 and 120 fps.
 
 ### Record once, render many
 
-The session is kept as an [asciicast v2](docs/formats.md) cast. `prec render` replays a cast at another size, rate or theme without running the app again, and the same cast always gives the same bytes: in the benchmark, two 720p 30 fps renders of one cast wrote the same master, sha256 `25c4543804fb3357…`.
+The session is kept as an [asciicast v2](docs/formats.md) cast. `prec render` replays a cast at another size, rate or theme without running the app again, and the same cast always gives the same bytes: in the benchmark, two 720p 30 fps renders of one cast wrote the same master, sha256 `4fab0be36a0ac519…`.
 
-<p align="center"><img src="docs/images/rerender.png" width="640" alt="Bars, lower is better: seconds to replay and encode a 10-second cast with prec 0.22.0: 720p 30 fps 28.5 s, 1080p 60 fps 27.4 s, 2160p 30 fps 55.5 s, 2160p 120 fps 135 s."></p>
+<p align="center"><img src="docs/images/rerender.png" width="640" alt="Bars, lower is better: seconds to replay and encode a 10-second cast with prec 1.2.0: 720p 30 fps 9.2 s, 1080p 60 fps 16.9 s, 2160p 30 fps 27.8 s, 2160p 120 fps 48.6 s."></p>
 
 ### Native pixels at every size
 
@@ -71,11 +71,11 @@ The app's own palette, any of VHS's 348 built-in schemes, curated light and dark
 
 ### A real terminal
 
-xterm.js 5.5 with Unicode 11 widths draws truecolor, box drawing, wide CJK and Nerd Font glyphs. Before the recording shows, prec types the shot's `launch` hidden and waits `settle`; a tape can `Wait /regex/` for the screen instead of guessing a sleep.
+xterm.js 5.5 with Unicode 11 widths draws truecolor, box drawing, wide CJK and Nerd Font glyphs. Before the recording shows, prec types the shot's `launch` hidden and waits `settle`; a tape can `Wait /regex/` for the screen instead of guessing a sleep, or `Idle 3s` until the screen stops changing, as when an agent session finishes.
 
 ### Masters, not deliveries
 
-A clip is one silent H.264 master (x264 CRF 14, BT.709 limited range, tagged), a poster PNG and a JSON manifest with each file's sha256. A still is a 16-bit sRGB master PNG with 8-bit PNG deliveries, extra sizes and `@2x` web copies. Turn a master into a GIF, WebP or a web MP4 with [pconv](https://github.com/gmrdad82/pconv) or ffmpeg.
+A clip is one silent H.264 master (CRF 14, BT.709 limited range, tagged), encoded inside prec by [pito-codecs](https://github.com/gmrdad82/pito-codecs) with no ffmpeg, a poster PNG and a JSON manifest with each file's sha256. A still is a 16-bit sRGB master PNG with 8-bit PNG deliveries, extra sizes and `@2x` web copies. Turn a master into a GIF, WebP or a web MP4 with [pconv](https://github.com/gmrdad82/pconv) or ffmpeg.
 
 ### Your app, your repository
 
@@ -83,19 +83,19 @@ Each app keeps its own `render/terminal.toml` and tapes. prec builds the app (a 
 
 ## Speed
 
-All numbers come from one run of [docs/bench/bench.sh](docs/bench/bench.sh) on 2026-10-14: an AMD Ryzen 9 9950X on Linux, both tools pinned to the same 24 threads (`CPUS=4-15,20-31`) at nice 10, prec 0.22.0 with `PREC_DIRECT=1` and VHS v0.11.0, recording [examples/demo](examples/demo)'s `tour.tape` (about 10 seconds of typing, progress bars and the palette) at 1280x720. The charts are drawn by [pito-compare](https://github.com/gmrdad82/pito-compare) from [docs/bench/](docs/bench).
+All numbers come from one run of [docs/bench/bench.sh](docs/bench/bench.sh) on 2026-10-16: an AMD Ryzen 9 9950X on Linux, both tools pinned to the same 24 threads (`CPUS=4-15,20-31`) at nice 10, prec 1.2.0 with `PREC_DIRECT=1` and VHS v0.11.0, recording [examples/demo](examples/demo)'s `tour.tape` (about 10 seconds of typing, progress bars and the palette) at 1280x720. The charts are drawn by [pito-compare](https://github.com/gmrdad82/pito-compare) from [docs/bench/](docs/bench).
 
 | asked for | prec frames | prec clip | prec wall time | VHS frames | VHS file | VHS wall time |
 |---|---|---|---|---|---|---|
-| 30 fps | 301 | 30 fps, 10.03 s | 30.4 s | 221 | 25 fps, 8.84 s | 19.9 s |
-| 60 fps | 599 | 60 fps, 9.98 s | 34.8 s | 199 | 25 fps, 7.96 s | 29.9 s |
-| 120 fps | 1,197 | 120 fps, 9.98 s | 54.9 s | 95 | 25 fps, 3.80 s | 35.7 s |
+| 30 fps | 299 | 30 fps, 9.97 s | 20.5 s | 239 | 25 fps, 9.56 s | 13.9 s |
+| 60 fps | 598 | 60 fps, 9.97 s | 21.7 s | 228 | 25 fps, 9.12 s | 14.3 s |
+| 120 fps | 1,196 | 120 fps, 9.97 s | 23.4 s | 214 | 25 fps, 8.56 s | 15.2 s |
 
-VHS finishes sooner, because it keeps what it can capture in real time; prec records in real time, then replays and encodes every frame at x264's `slow` preset, CRF 14. A frame's moment that brings no new bytes reuses the previous frame, so a mostly still terminal replays faster than a busy one.
+VHS finishes sooner, because it keeps what it can capture in real time; prec records in real time, then replays and encodes every frame at CRF 14 with pito-codecs' H.264 encoder. A frame's moment that brings no new bytes reuses the previous frame, so a mostly still terminal replays faster than a busy one.
 
-Re-rendering the 30 fps recording's cast, with no app run: 720p 30 fps in 28.5 s (301 frames; the same render again took 15.4 s and wrote the same bytes), 1080p 60 fps in 27.4 s (601 frames), 2160p 30 fps in 55.5 s (301 frames) and 2160p 120 fps in 135.2 s (1,203 frames).
+Re-rendering the 30 fps recording's cast, with no app run: 720p 30 fps in 9.2 s (299 frames; the same render again took 9.8 s and wrote the same bytes), 1080p 60 fps in 16.9 s (598 frames), 2160p 30 fps in 27.8 s (299 frames) and 2160p 120 fps in 48.6 s (1,196 frames).
 
-Size and build: the Linux x86_64 binary is 5,123,704 bytes (4.9 MB; 2,092,292 bytes as the release's `.tar.gz`), built with fat LTO, one codegen unit and stripped; a cold `cargo build --release --locked` took 71.9 s with 4 build jobs. `src/` is 9,798 lines of Rust with its unit tests. prec has 17 direct dependencies and 88 crates in its Linux build; the xterm.js files and the VHS themes are compiled in, so it reads nothing from the network. Renders on a Mac are untested.
+Size and build: the Linux x86_64 binary is 5,935,688 bytes (5.7 MB; 2,508,494 bytes packed as the release's `.tar.gz`), built with fat LTO, one codegen unit and stripped; a cold `cargo build --release --locked` took 70.4 s with 4 build jobs. `src/` is 10,912 lines of Rust with its unit tests. prec has 18 direct dependencies and 95 crates in its Linux build; the xterm.js files, the VHS themes and pito-codecs' H.264 encoder are compiled in, so it runs no encoder of yours and reads nothing from the network. Renders on a Mac are untested.
 
 ## Install
 
@@ -128,11 +128,10 @@ cargo install --locked --git https://github.com/gmrdad82/prec --tag vX.Y.Z prec
 prec drives tools you install yourself:
 
 - **Chromium** or Google Chrome, run headless (`chromium`, `chromium-browser`, `google-chrome-stable` or `google-chrome` on the `PATH`, or `chromium` in the config).
-- **ffmpeg and ffprobe** with the `libx264` encoder and the `zscale` filter (libzimg).
 - **fontconfig** (`fc-match`, `fc-list`), the default font **JetBrainsMono Nerd Font** (or pass `--font`), and a CJK font for wide characters.
 - **git** and **bash**.
 
-On Debian or Ubuntu: `sudo apt install chromium ffmpeg fontconfig fonts-noto-cjk git`. On Arch: `sudo pacman -S chromium ffmpeg fontconfig noto-fonts-cjk ttf-jetbrains-mono-nerd git`. On macOS with Homebrew: `brew install ffmpeg fontconfig git` and `brew install --cask chromium font-jetbrains-mono-nerd-font`, then point `chromium` in the config at `/Applications/Chromium.app/Contents/MacOS/Chromium`. The JetBrainsMono Nerd Font is also at [nerdfonts.com](https://www.nerdfonts.com/font-downloads).
+On Debian or Ubuntu: `sudo apt install chromium fontconfig fonts-noto-cjk git`. On Arch: `sudo pacman -S chromium fontconfig noto-fonts-cjk ttf-jetbrains-mono-nerd git`. On macOS with Homebrew: `brew install fontconfig git` and `brew install --cask chromium font-jetbrains-mono-nerd-font`, then point `chromium` in the config at `/Applications/Chromium.app/Contents/MacOS/Chromium`. The JetBrainsMono Nerd Font is also at [nerdfonts.com](https://www.nerdfonts.com/font-downloads).
 
 `prec doctor` checks all of it and says what is missing.
 
@@ -188,9 +187,10 @@ closure = "palindrome"
 The placeholders are `{tmp}` (the repository's `tmp/`), `{scratch}` (this run's scratch), `{app}` (the checkout), `{bin}` (the cached build of this commit), `{target}` (the repository's shared cargo target dir in the cache) and `{fixtures}`. They expand the same way in `setup`, `teardown`, `launch`, `cwd`, every `[env]` value and the `[build]` command, and `bin_dir` takes `{tmp}`, `{app}` and `{target}`. `bin_dir` alone, with no `command`, uses prebuilt binaries in the tree, and `--bin DIR` skips the build.
 
 - **Environment.** The pty starts from a clean environment: `TZ=UTC`, `LANG=C.UTF-8`, `TERM=xterm-256color`, `COLORTERM=truecolor`, a scratch `HOME`, `USER`, `LOGNAME`, `[env]` as written, every `pass_env` variable, and `PATH=<bin>:<system PATH>`. `setup` runs before the recording and `teardown` after it, even when the recording fails or prec is cancelled.
-- **No private data.** `pass_env = ["NAME", …]` hands each named variable from prec's own environment to the pty and the hooks; the cast and manifest list the names, never the values, and an unset name refuses the record. `home = "/home/<name>"` (Linux only) runs the session under `unshare` in a user, mount and UTS namespace with that absolute home (bound to the scratch `HOME`, `USER` and `LOGNAME` its last part), `hostname` (default `prec`) as its host, and every path of yours still reachable; `{home}` expands to it in `cwd` and `launch`, so `cwd = "{home}/work"` starts the shell there. Before a replay, `clip`, `still` and `render` read the screen the cast shows and refuse a picture with your home path, hostname, user name, an email or a passed value, one line per finding at its shown second; `record` keeps the cast and prints them as warnings.
+- **No private data.** `pass_env = ["NAME", …]` hands each named variable from prec's own environment to the pty and the hooks; the cast and manifest list the names, never the values, and an unset name refuses the record. `home = "/home/<name>"` (Linux only) runs the session under `unshare` in a user, mount and UTS namespace with that absolute home (bound to the scratch `HOME`, `USER` and `LOGNAME` its last part), `hostname` (default `prec`) as its host, and every path of yours still reachable; `{home}` expands to it in `cwd` and `launch`, so `cwd = "{home}/work"` starts the shell there. Before a replay, `clip`, `still` and `render` read the screen the cast shows and refuse a picture with your home path, hostname, user name, an email, a passed value, or a plan or organisation label (`Claude Max`, `someone's Organization`), one line per finding at its shown second; `record` keeps the cast and prints them as warnings.
+- **Masks.** `mask = [{ match = "<regex>" }, { rect = [col, row, cols, rows] }]`, at the top of `terminal.toml` for every shot or in a shot for its own, fills each match on the screen, wherever and whenever it shows, and each block of cells with the theme's background in every frame. The masks are written into the cast, so every replay covers them, and the scan for private data reads the screen with them applied.
 - **Launch.** `launch` is typed hidden, then prec waits `settle` before the recording shows.
-- **Tapes** hold only steps: `Type[@speed] "…"`, `Enter`, `Backspace`, `Delete`, `Tab`, `Shift+Tab`, `Escape`, `Space`, `Up`/`Down`/`Left`/`Right`, `Home`/`End`, `PageUp`/`PageDown`, `Ctrl+<key>`, `Alt+<key>`, each with an optional `@speed` and repeat count, plus `Sleep`, `Hide`, `Show`, `Screenshot` and `Wait[+Screen][@timeout] /regex/`. `Wait` matches the last non-blank row of the screen and `Wait+Screen` the whole screen; a timeout prints the rows it saw. The settings live in `terminal.toml`, so a tape that sets `Output`, `Set`, `Require`, `Env` or `Source` is refused. A still is taken at the tape's last `Screenshot`.
+- **Tapes** hold only steps: `Type[@speed] "…"`, `Enter`, `Backspace`, `Delete`, `Tab`, `Shift+Tab`, `Escape`, `Space`, `Up`/`Down`/`Left`/`Right`, `Home`/`End`, `PageUp`/`PageDown`, `Ctrl+<key>`, `Alt+<key>`, each with an optional `@speed` and repeat count, plus `Sleep`, `Hide`, `Show`, `Screenshot`, `Wait[+Screen][@timeout] /regex/` and `Idle[@timeout] [duration]`. `Wait` matches the last non-blank row of the screen and `Wait+Screen` the whole screen; `Idle 3s` waits until the screen, colours and cursor included, has not changed for 3 seconds (default 2 s, timeout 5 minutes); a timeout prints the rows it saw. The settings live in `terminal.toml`, so a tape that sets `Output`, `Set`, `Require`, `Env` or `Source` is refused. A still is taken at the tape's last `Screenshot`.
 - **Closure.** `closure = "palindrome"` plays the clip forward then back, `closure = { crossfade = 0.5 }` blends its end into its start, and no closure leaves an open clip.
 - **Poster.** `poster` is `"first"` (the default), `"before-closure"` (the last frame shown in full before the closure) or a number of seconds; `--poster` overrides it for one render.
 - **Cancel.** TERM, INT and HUP stop everything prec started, process groups and all, run `teardown`, and exit 128 plus the signal. Recording one shot is exclusive in a tree; replays of it at different sizes, rates or themes run at once.
@@ -205,7 +205,7 @@ The placeholders are `{tmp}` (the repository's `tmp/`), `{scratch}` (this run's 
 | `record <app> <shot>` | records only, into an asciicast v2 cast |
 | `render <cast>` | replays a cast at a chosen size, fps and theme |
 | `themes [--all]` | the curated pairs, your installed Omarchy themes, and with `--all` every built-in scheme |
-| `doctor` | checks Chromium, ffmpeg and its encoder and filters, the fonts, git, the config, the cache and the archive |
+| `doctor` | checks Chromium, the fonts, git, the config, the cache and the archive, and names the built-in encoder |
 | `cache [--json]` | the machine cache: where it is, its size, and every entry with its size and last use |
 | `cache prune [--older-than 30d] [--all] [--json] [--dry-run]` | removes entries unused for 30 days (or `--older-than`), or all of them; entries in use stay |
 | `archive --retry`, `archive --reindex` | retries queued archive copies, or rebuilds the archive's catalog (see Archive) |
@@ -271,9 +271,9 @@ cpus = "4-15"
 | `theme` | `Catppuccin Mocha` | the theme for an app whose `terminal.toml` has no `[theme]` |
 | `chromium` | found on the `PATH` | the Chromium or Chrome binary (`PREC_CHROMIUM` overrides it) |
 | `archive` | none | an archive root; without one nothing is archived (`PITO_ARCHIVE` overrides it) |
-| `[confine]` | absent | on Linux with systemd, run Chromium and ffmpeg in memory-capped `systemd-run --user` scopes at nice 10 |
+| `[confine]` | absent | on Linux with systemd, run Chromium in a memory-capped `systemd-run --user` scope at nice 10, and prec's own encode at nice 10 |
 | `[confine] slice` | `build.slice` | the systemd slice for those scopes |
-| `[confine] cpus` | unpinned | pin them with `taskset -c` to this CPU list |
+| `[confine] cpus` | unpinned | pin Chromium (with `taskset -c`) and the encode to this CPU list |
 | `[confine] cpus_from`, `cpus_key` | | or read the CPU list from a shell env file's key (`cpus_key`, default `BUILD_CPUS`) |
 
 Other environment variables: `PREC_CACHE` moves the machine cache, `PREC_DIRECT=1` runs everything unconfined and never archives (for tests), and `PITO_JOBS=off` turns off the live job record (below).
@@ -297,7 +297,7 @@ A `<repo>` key is the repository's name and a hash of its origin URL, so every c
 
 - **Record.** The app runs in a pty of exactly the grid, driven by the tape at real speed. Its output bytes are kept with monotonic timestamps as an asciicast v2 cast, with the input events and `hide`, `show`, `screenshot` and `end` markers.
 - **Replay.** A vendored xterm.js 5.5.0 (canvas renderer, Unicode 11 widths) runs in headless Chromium (`--disable-gpu`, sRGB), started through `env -i` with a scratch `HOME`, `TZ=UTC` and `C.UTF-8`, so your locale and fontconfig never reach it. prec steps a virtual clock at exactly 1/fps, writes every cast byte up to that moment, waits for xterm to paint and screenshots the page at the target size. Hidden stretches are cut; a frame whose moment brings no new bytes reuses the previous one.
-- **Encode.** A clip is one silent x264 High master at the render's size and fps: `slow`, `tune animation`, CRF 14, 8-bit 4:2:0, a keyframe every two seconds, BT.709 limited range tagged in the stream and the MP4. Chromium's 8-bit frames rise to 16 bits through zscale (each level v to exactly v×257), then go to YUV through `zscale=matrix=709:range=limited`, so every channel lands on its nearest limited-range code. zscale's filter threads and x264's 24 threads are fixed, because their output follows their thread count; that keeps a master byte-identical on any machine. ffprobe checks the master's frame count and size before the manifest claims them.
+- **Encode.** A clip is one silent H.264 High master at the render's size and fps, encoded inside prec by pito-codecs 1.10.0 with no ffmpeg: its `quality` preset, CRF 14, no B-frames, 8-bit 4:2:0, a keyframe every two seconds, BT.709 limited range tagged in the stream. Chromium's 8-bit frames go to YUV with the BT.709 limited-range matrix and left-sited chroma; a crossfade is blended from the two frames before that. The encoder's 16 threads are fixed, because its output follows its thread count; that keeps a master byte-identical on any machine. prec reads the MP4 back and checks its frame count and size before the manifest claims them.
 - **Atomic.** A render builds its files in its scratch folder, then moves them into the output folder and writes the manifest last, so a failed or cancelled re-render never leaves new files beside an old manifest.
 
 ## Archive
@@ -324,7 +324,7 @@ bin/gate
 bin/gate --render
 ```
 
-`bin/gate` runs what CI runs on Linux and macOS on every push and nightly: ShellCheck, rustfmt, clippy with warnings as errors, and the unit tests. `bin/gate --render` runs the integration tests, which drive the prec binary through Chromium and ffmpeg on Linux (they need the prerequisites above and a systemd user session for the confinement tests). A tag builds the Linux and macOS release binaries and the docs bundle, `docs-vX.Y.Z.tar.gz`, which `bin/docs-bundle` makes from `docs/site/`, the binary's `--help`, `docs/formats.md` and `CHANGELOG.md`. The README's GIFs are prec's own shot in `render/terminal.toml` and the clip it records, made GIFs by pconv; its stills are prec renders of `examples/demo`'s palette, laid side by side with ImageMagick, and its charts are pito-compare's from `docs/bench/` ([NOTICE](NOTICE)).
+`bin/gate` runs what CI runs on Linux and macOS on every push and nightly: ShellCheck, rustfmt, clippy with warnings as errors, and the unit tests. `bin/gate --render` runs the integration tests, which drive the prec binary through Chromium on Linux, and decode its masters with ffmpeg to check them (they need the prerequisites above and a systemd user session for the confinement tests). A tag builds the Linux and macOS release binaries and the docs bundle, `docs-vX.Y.Z.tar.gz`, which `bin/docs-bundle` makes from `docs/site/`, the binary's `--help`, `docs/formats.md` and `CHANGELOG.md`. The README's GIFs are prec's own shot in `render/terminal.toml` and the clip it records, made GIFs by pconv; its stills are prec renders of `examples/demo`'s palette, laid side by side with ImageMagick, and its charts are pito-compare's from `docs/bench/` ([NOTICE](NOTICE)).
 
 ## Licence
 

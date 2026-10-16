@@ -50,7 +50,7 @@ The terminal renderer's own keys:
 | `grid` | `cols`, `rows`, `cell` (one cell's size in pixels) and `canvas` ([w, h]) |
 | `xterm` | `version`, `renderer`, `unicode` and `browser`, as text |
 | `frames` | for a still, `still_at` (seconds of shown time) and `exact`; for a clip, `master` (frames in the master, `null` with `--no-encode`), `seconds`, `exact`, `shown_seconds`, `rendered`, `captured`, `reused`, `late` and `dropped` (always 0), `closure` and `render_seconds` |
-| `encodes[]` | one per encode: `file`, `role`, `device`, `fps`, `size` and `args`, ffmpeg's arguments |
+| `encodes[]` | one per encode: `file`, `role`, `device`, `fps`, `size` and `args`, the encoder and its settings as words (until 1.1.0, ffmpeg's arguments) |
 
 `archive` says what happened to the render, and README's Archive section says when each applies:
 
@@ -70,7 +70,7 @@ Every `leaf` is relative to the archive's `Masters/` folder (since 0.21.0; befor
 
 - **Header:** `{"version": 2, "width": <cols>, "height": <rows>, "env": {"TERM": "xterm-256color", "SHELL": "/bin/bash"}, "x_terminal_renderer": {…}}`.
 - **Events:** `[<seconds since the start, to the microsecond>, <code>, <data>]`, where the code is `o` for output, `i` for input, and `m` for a marker: `hide`, `show`, `screenshot` or `end`.
-- **`x_terminal_renderer`** holds what a later `prec render <cast>` needs: `tool`, `product`, `shot`, `kind`, `grid`, `app_theme`, `frame`, `ground`, `font`, `closure`, `size`, `fps`, `poster`, `typing`, `settle`, `launch`, `prompt`, `shown_seconds`, `app` (as in the manifest), `shot_sha256`, `tape_sha256`, `fixtures`, `env`, the pty's environment as `[name, value]` pairs without `HOME` and without the `pass_env` variables, `pass_env`, the names of the variables passed from prec's environment (never their values), and `home` and `hostname`, the session's neutral home and hostname, or `null` when `terminal.toml` sets no `home`.
+- **`x_terminal_renderer`** holds what a later `prec render <cast>` needs: `tool`, `product`, `shot`, `kind`, `grid`, `app_theme`, `frame`, `ground`, `font`, `closure`, `size`, `fps`, `poster`, `typing`, `settle`, `launch`, `prompt`, `shown_seconds`, `app` (as in the manifest), `shot_sha256`, `tape_sha256`, `fixtures`, `env`, the pty's environment as `[name, value]` pairs without `HOME` and without the `pass_env` variables, `pass_env`, the names of the variables passed from prec's environment (never their values), `home` and `hostname`, the session's neutral home and hostname, or `null` when `terminal.toml` sets no `home`, and `mask`, the masks of `terminal.toml` and the shot as `{"match": "<regex>"}` or `{"rect": [col, row, cols, rows]}`, which every replay of the cast covers (`[]` when none; absent before 1.2.0).
 
 ## 3. The archive catalog line
 

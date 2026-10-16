@@ -502,6 +502,7 @@ fn prepare(resolved: Resolved, kind: &str, opts: &Opts, run_name: &str) -> Resul
         }
         None => shot.grid.unwrap_or(terminal.grid),
     };
+    crate::mask::Masks::new(&terminal.masks(&shot), grid)?;
     let work = paths::scratch(&["run", run_name])?;
     paths::fresh(&work)?;
     let scratch_dir = work.join("scratch");
@@ -805,6 +806,7 @@ fn cast_meta(
         "pass_env": p.passed.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
         "home": p.ns.as_ref().map(|n| n.home.display().to_string()),
         "hostname": p.ns.as_ref().map(|n| n.hostname.as_str()),
+        "mask": p.terminal.masks(&p.shot),
     })
 }
 
@@ -896,6 +898,7 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
         font: family.clone(),
         window: frame == "window",
         ground,
+        masks: crate::mask::Masks::of_meta(&meta, [cast.cols, cast.rows])?,
     };
     let timeline = Timeline::of(&cast.events);
     let shown = timeline.shown();
@@ -1023,11 +1026,12 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
                 paths_in.len()
             } else {
                 let output = stage.join(format!("{manifest_stem}.master.mp4"));
-                let (count, used) = compose::master(work, &paths_in, fade, pl.fps, &output)?;
-                let (size, frames) = probe(&output)?;
+                let (count, used) =
+                    compose::master(&paths_in, fade, pl.master_size, pl.fps, &output)?;
+                let (size, frames) = encode::probe(&output)?;
                 if size != pl.master_size || frames != count {
                     return Err(format!(
-                        "{}: ffprobe reads {frames} frames at {}x{}, not the {count} at {}x{} prec encoded",
+                        "{}: the file holds {frames} frames at {}x{}, not the {count} at {}x{} prec encoded",
                         output.display(),
                         size[0],
                         size[1],
@@ -1050,7 +1054,7 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
                 files.push(encode::file_entry(
                     &stage,
                     &output,
-                    "master: x264 High, CRF 14, 8-bit 4:2:0 BT.709 limited range",
+                    &encode::master_what(),
                     json!({"role": "master", "fps": pl.fps, "size": pl.master_size}),
                 )?);
                 files.push(encode::file_entry(
@@ -1135,8 +1139,8 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
             "terminal": "24-bit truecolor (TERM=xterm-256color, COLORTERM=truecolor), painted by xterm.js with --force-color-profile=srgb",
         },
         "outputs": {
-            "delivery": if kind == "clip" { "pconv makes delivery formats from the x264 master" } else { "8-bit sRGB PNG with an sRGB chunk" },
-            "master": if kind == "clip" { if opts.no_encode { "none: frames only" } else { "x264 High, CRF 14, 8-bit 4:2:0 BT.709 limited range in MP4" } } else { "16-bit sRGB PNG, lossless" },
+            "delivery": if kind == "clip" { "pconv makes delivery formats from the H.264 master" } else { "8-bit sRGB PNG with an sRGB chunk" },
+            "master": if kind == "clip" { if opts.no_encode { "none: frames only" } else { "H.264 High by pito-codecs, CRF 14, 8-bit 4:2:0 BT.709 limited range in MP4" } } else { "16-bit sRGB PNG, lossless" },
             "poster": poster_out,
             "resampling": format!("{} (the master is drawn at its own size, never scaled)", encode::LANCZOS),
         },
@@ -1228,42 +1232,6 @@ fn move_into(from: &Path, to: &Path) -> Result<(), String> {
             Ok(())
         }
         Err(e) => Err(format!("{}: {e}", to.display())),
-    }
-}
-
-fn probe(video: &Path) -> Result<([u32; 2], usize), String> {
-    let out = paths::output(
-        Command::new("ffprobe")
-            .args([
-                "-v",
-                "error",
-                "-select_streams",
-                "v:0",
-                "-show_entries",
-                "stream=width,height,nb_frames",
-                "-of",
-                "csv=p=0",
-            ])
-            .arg(video),
-    )
-    .map_err(|e| format!("ffprobe: {e}"))?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    let fields: Vec<usize> = text
-        .trim()
-        .split(',')
-        .map(|f| f.parse())
-        .collect::<Result<_, _>>()
-        .map_err(|_| {
-            format!(
-                "ffprobe {}: {} {}",
-                video.display(),
-                text.trim(),
-                String::from_utf8_lossy(&out.stderr).trim()
-            )
-        })?;
-    match fields[..] {
-        [w, h, n] if out.status.success() => Ok(([w as u32, h as u32], n)),
-        _ => Err(format!("ffprobe {}: {}", video.display(), text.trim())),
     }
 }
 

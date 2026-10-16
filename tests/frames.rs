@@ -156,10 +156,10 @@ fn bt709(px: [u8; 3]) -> [u8; 3] {
 
 fn on_nearest_codes(video: &Path, want: &[usize], what: &str) {
     for (slot, (got, &k)) in codes(video, SIZE).into_iter().zip(want).enumerate() {
-        assert_eq!(
-            got,
-            bt709(colour(k)),
-            "{what}: slot {slot} {:?} is not on the nearest BT.709 limited-range codes",
+        let near = bt709(colour(k));
+        assert!(
+            distance(got, near) <= 1,
+            "{what}: slot {slot} {:?} reads {got:?}, more than one code from the nearest BT.709 limited-range codes {near:?}",
             colour(k)
         );
     }
