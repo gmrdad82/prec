@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.2.3 — 2026-10-16
+
+### Changed
+
+- prec encodes with pito-codecs 1.14.1.
+
 ## v1.2.2 — 2026-10-16
 
 ### Changed
