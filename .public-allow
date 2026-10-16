@@ -1,2 +1,8 @@
 assets/xterm/xterm.js:1 vendored xterm.js 5.5.0 as published (sha256 in assets/xterm/VERSIONS); gitleaks' generic-api-key rule matches a minified identifier, not a secret
 assets/xterm/addon-canvas.js:1 vendored @xterm/addon-canvas 0.7.0 as published (sha256 in assets/xterm/VERSIONS); gitleaks' generic-api-key rule matches a minified identifier, not a secret
+docs/site/guides/set-up-your-app.md:66 an example of the neutral home key, a made-up path the session shows instead of the caller's own
+docs/site/guides/set-up-your-app.md:103 an example of the neutral home key, a made-up path the session shows instead of the caller's own
+src/private.rs:233 a made-up home path the private-data scan's unit test must find
+src/private.rs:251 a made-up home path and email the private-data scan's unit test must find
+src/private.rs:284 a made-up email the private-data scan's unit test must match
+tests/environment.rs:272 the made-up neutral home the integration test runs its session under
