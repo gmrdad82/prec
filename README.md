@@ -187,7 +187,8 @@ closure = "palindrome"
 
 The placeholders are `{tmp}` (the repository's `tmp/`), `{scratch}` (this run's scratch), `{app}` (the checkout), `{bin}` (the cached build of this commit), `{target}` (the repository's shared cargo target dir in the cache) and `{fixtures}`. They expand the same way in `setup`, `teardown`, `launch`, `cwd`, every `[env]` value and the `[build]` command, and `bin_dir` takes `{tmp}`, `{app}` and `{target}`. `bin_dir` alone, with no `command`, uses prebuilt binaries in the tree, and `--bin DIR` skips the build.
 
-- **Environment.** The pty starts from a clean environment: `TZ=UTC`, `LANG=C.UTF-8`, `TERM=xterm-256color`, `COLORTERM=truecolor`, a scratch `HOME`, `USER`, `LOGNAME`, `[env]` as written, and `PATH=<bin>:<system PATH>`. `setup` runs before the recording and `teardown` after it, even when the recording fails or prec is cancelled.
+- **Environment.** The pty starts from a clean environment: `TZ=UTC`, `LANG=C.UTF-8`, `TERM=xterm-256color`, `COLORTERM=truecolor`, a scratch `HOME`, `USER`, `LOGNAME`, `[env]` as written, every `pass_env` variable, and `PATH=<bin>:<system PATH>`. `setup` runs before the recording and `teardown` after it, even when the recording fails or prec is cancelled.
+- **No private data.** `pass_env = ["NAME", …]` hands each named variable from prec's own environment to the pty and the hooks; the cast and manifest list the names, never the values, and an unset name refuses the record. `home = "/home/<name>"` (Linux only) runs the session under `unshare` in a user, mount and UTS namespace with that absolute home (bound to the scratch `HOME`, `USER` and `LOGNAME` its last part), `hostname` (default `prec`) as its host, and every path of yours still reachable; `{home}` expands to it in `cwd` and `launch`, so `cwd = "{home}/work"` starts the shell there. Before a replay, `clip`, `still` and `render` read the screen the cast shows and refuse a picture with your home path, hostname, user name, an email or a passed value, one line per finding at its shown second; `record` keeps the cast and prints them as warnings.
 - **Launch.** `launch` is typed hidden, then prec waits `settle` before the recording shows.
 - **Tapes** hold only steps: `Type[@speed] "…"`, `Enter`, `Backspace`, `Delete`, `Tab`, `Shift+Tab`, `Escape`, `Space`, `Up`/`Down`/`Left`/`Right`, `Home`/`End`, `PageUp`/`PageDown`, `Ctrl+<key>`, `Alt+<key>`, each with an optional `@speed` and repeat count, plus `Sleep`, `Hide`, `Show`, `Screenshot` and `Wait[+Screen][@timeout] /regex/`. `Wait` matches the last non-blank row of the screen and `Wait+Screen` the whole screen; a timeout prints the rows it saw. The settings live in `terminal.toml`, so a tape that sets `Output`, `Set`, `Require`, `Env` or `Source` is refused. A still is taken at the tape's last `Screenshot`.
 - **Closure.** `closure = "palindrome"` plays the clip forward then back, `closure = { crossfade = 0.5 }` blends its end into its start, and no closure leaves an open clip.
@@ -231,8 +232,9 @@ Flags for `clip`, `still` and `record`:
 | `--keep-frames` | keep the raw frames under `tmp/prec/run/` until the next run of that shot |
 | `--no-encode` | write a clip's frames only, with no master |
 | `--no-archive` | never archive this render |
+| `--allow-private` | skip the scan for private data in the picture, for a render that stays private; the manifest records `"private_allowed": true` |
 
-`render <cast>` takes the delivery flags (`--size`, `--derive`, `--fps`, `--poster`, `--web`, `--theme`, `--themes`, `--font`, `--frame`, `--set closure…|ground=…`, `--out`, `--keep-frames`, `--no-encode`, `--no-archive`); the grid and the session come from the cast.
+`render <cast>` takes the delivery flags (`--size`, `--derive`, `--fps`, `--poster`, `--web`, `--theme`, `--themes`, `--font`, `--frame`, `--set closure…|ground=…`, `--out`, `--keep-frames`, `--no-encode`, `--no-archive`, `--allow-private`); the grid and the session come from the cast.
 
 Input prec can't parse gets clap's short answer on stderr with exit 2; `--help` prints the full help. Refusals after parsing are one line, `prec: …`, with exit 1.
 

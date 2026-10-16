@@ -248,3 +248,128 @@ fn chromium_gets_only_the_built_environment() {
         "chromium kept {extras:?}; full environment {got:?}"
     );
 }
+
+fn shown_output(cast: &str) -> String {
+    let mut shown = None;
+    let mut out = String::new();
+    for line in cast.lines().skip(1) {
+        let e: serde_json::Value = serde_json::from_str(line).unwrap();
+        let t = e[0].as_f64().unwrap();
+        if shown.is_none() && e[1] == "m" && e[2] == "show" {
+            shown = Some(t);
+        }
+        if shown.is_some_and(|s| t >= s) && e[1] == "o" {
+            out.push_str(e[2].as_str().unwrap());
+        }
+    }
+    out
+}
+
+#[test]
+fn a_neutral_home_hides_the_callers_paths_and_a_passed_value_is_never_written() {
+    use std::hash::{BuildHasher, Hasher};
+    let dir = common::caller("environment", "neutral-home");
+    let home = "/home/prec-neutral-home";
+    let host = "prec-neutral-host";
+    let secret = format!(
+        "s{:016x}{}",
+        std::hash::RandomState::new().build_hasher().finish(),
+        std::process::id()
+    );
+    let app = common::demo_app(
+        &dir,
+        &format!(
+            "home = \"{home}\"\nhostname = \"{host}\"\ncwd = \"{{home}}/work\"\npass_env = [\"PREC_TEST_SECRET\"]\n"
+        ),
+    );
+    common::add_shot(
+        &app,
+        "neutral",
+        "Type@5ms \"pwd; echo $HOME; hostname; id -un\"\nEnter\nSleep 1s\nType@5ms 'test -n \"$PREC_TEST_SECRET\" && echo passed'\nEnter\nSleep 1s\n",
+        "",
+    );
+    let archive = dir.join("archive");
+    let shot = |verb: &str, extra: &[&str]| {
+        let mut args = vec![verb, "demo", "neutral", "--app-dir", app.to_str().unwrap()];
+        args.extend_from_slice(extra);
+        let mut c = common::prec(&dir, &archive, &args);
+        c.env("PREC_TEST_SECRET", &secret);
+        c.output().unwrap()
+    };
+    let recorded = shot("record", &["--out", "tmp/out"]);
+    common::expect_ok(&recorded, "prec record");
+    let warned = String::from_utf8_lossy(&recorded.stderr).to_string();
+    let cast_path = dir.join("tmp/out/demo/clip/demo-clip-neutral.cast");
+    let cast = std::fs::read_to_string(&cast_path).unwrap();
+    let shown = shown_output(&cast);
+    let lines: Vec<&str> = shown
+        .split("\r\n")
+        .map(|l| l.rsplit('\r').next().unwrap_or(l))
+        .collect();
+    for want in [
+        format!("{home}/work"),
+        home.to_string(),
+        host.to_string(),
+        "passed".into(),
+    ] {
+        assert!(
+            lines.contains(&want.as_str()),
+            "{want:?} not shown in {shown:?}"
+        );
+    }
+    let caller_home = std::env::var("HOME").unwrap();
+    assert!(
+        !shown.contains(&caller_home),
+        "the caller's home is shown: {shown:?}"
+    );
+    assert!(!cast.contains(&secret), "the passed value is in the cast");
+    assert!(!warned.contains(&secret), "the passed value was printed");
+    let header: serde_json::Value = serde_json::from_str(cast.lines().next().unwrap()).unwrap();
+    let meta = &header["x_terminal_renderer"];
+    assert_eq!(meta["pass_env"], serde_json::json!(["PREC_TEST_SECRET"]));
+    assert_eq!(meta["home"], home);
+    assert_eq!(meta["hostname"], host);
+    let user = std::env::var("USER").unwrap_or_default();
+    let shows_user = user.len() >= 3 && lines.contains(&user.as_str());
+    let draft = [
+        "--size",
+        "320x180",
+        "--fps",
+        "30",
+        "--no-encode",
+        "--out",
+        "tmp/clip",
+    ];
+    let manifest = if shows_user {
+        assert!(
+            warned.contains("the picture shows the user name"),
+            "record printed no warning: {warned}"
+        );
+        let refused = shot("clip", &draft);
+        let said = String::from_utf8_lossy(&refused.stderr).to_string();
+        assert_eq!(refused.status.code(), Some(1), "{said}");
+        assert!(said.contains("the picture shows the user name"), "{said}");
+        assert!(!said.contains(&secret), "the passed value was printed");
+        assert!(
+            !dir.join("tmp/clip").exists(),
+            "a refused clip wrote {said}"
+        );
+        let mut allowed = draft.to_vec();
+        allowed.push("--allow-private");
+        let o = shot("clip", &allowed);
+        common::expect_ok(&o, "prec clip --allow-private");
+        common::last_path(&o)
+    } else {
+        let o = shot("clip", &draft);
+        common::expect_ok(&o, "prec clip");
+        common::last_path(&o)
+    };
+    let manifest = std::fs::read_to_string(dir.join(manifest)).unwrap();
+    assert!(
+        !manifest.contains(&secret),
+        "the passed value is in the manifest"
+    );
+    let m: serde_json::Value = serde_json::from_str(&manifest).unwrap();
+    assert_eq!(m["pass_env"], serde_json::json!(["PREC_TEST_SECRET"]));
+    assert_eq!(m["private_allowed"], shows_user);
+}

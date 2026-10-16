@@ -38,6 +38,12 @@ pub struct Terminal {
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     #[serde(default)]
+    pub pass_env: Vec<String>,
+    #[serde(default)]
+    pub home: Option<String>,
+    #[serde(default)]
+    pub hostname: Option<String>,
+    #[serde(default)]
     pub camera: Option<Value>,
     #[serde(default)]
     pub shots: BTreeMap<String, Shot>,
@@ -219,6 +225,81 @@ impl Shot {
     }
 }
 
+pub const OWN_ENV: [&str; 9] = [
+    "HOME",
+    "PATH",
+    "TERM",
+    "PS1",
+    "SHELL",
+    "TZ",
+    "LANG",
+    "LC_ALL",
+    "COLORTERM",
+];
+
+pub const DEFAULT_HOSTNAME: &str = "prec";
+
+fn env_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+impl Terminal {
+    fn private(&self) -> Result<(), String> {
+        for (i, name) in self.pass_env.iter().enumerate() {
+            if !env_name(name) {
+                return Err(format!(
+                    "pass_env {name:?}: letters, digits and '_', not starting with a digit"
+                ));
+            }
+            if OWN_ENV.contains(&name.as_str()) {
+                return Err(format!("pass_env {name}: prec sets {name} itself"));
+            }
+            if self.env.contains_key(name) {
+                return Err(format!("pass_env {name} is also in [env]"));
+            }
+            if self.pass_env[..i].contains(name) {
+                return Err(format!("pass_env {name} is named twice"));
+            }
+        }
+        if let Some(h) = &self.hostname {
+            if self.home.is_none() {
+                return Err("hostname needs home".into());
+            }
+            if !paths::safe_name(h) || h.contains('_') || h.len() > 63 {
+                return Err(format!(
+                    "hostname {h:?}: letters, digits, '-' and '.', 63 at most"
+                ));
+            }
+        }
+        let Some(home) = &self.home else {
+            return Ok(());
+        };
+        let parts: Vec<&str> = home
+            .strip_prefix('/')
+            .map(|h| h.split('/').collect())
+            .unwrap_or_default();
+        if parts.len() < 2 || !parts.iter().all(|p| paths::safe_name(p)) {
+            return Err(format!(
+                "home {home:?}: an absolute path of two or more parts, each of letters, digits, '-', '_' and '.'"
+            ));
+        }
+        if self.env.contains_key("HOME") {
+            return Err("home and [env] HOME both set the session's home; keep one".into());
+        }
+        Ok(())
+    }
+
+    pub fn hostname(&self) -> Option<&str> {
+        self.home
+            .as_ref()
+            .map(|_| self.hostname.as_deref().unwrap_or(DEFAULT_HOSTNAME))
+    }
+}
+
 fn window() -> String {
     "window".into()
 }
@@ -246,6 +327,8 @@ pub fn load(dir: &Path) -> Result<(Terminal, String), String> {
     if t.camera.is_some() {
         return Err(format!("{}: {NO_CAMERA}", path.display()));
     }
+    t.private()
+        .map_err(|e| format!("{}: {e}", path.display()))?;
     for (name, shot) in &t.shots {
         if shot.camera.is_some() || shot.keys.is_some() {
             return Err(format!("{}: shot {name}: {NO_CAMERA}", path.display()));

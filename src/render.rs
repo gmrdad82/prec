@@ -3,8 +3,10 @@ use crate::archive;
 use crate::compose;
 use crate::encode;
 use crate::font;
+use crate::home::Ns;
 use crate::jobs;
 use crate::paths;
+use crate::private;
 use crate::record::{self, Cast, Timeline};
 use crate::replay::{self, Look, Take};
 use crate::tape;
@@ -45,6 +47,7 @@ pub struct Opts {
     pub web: Vec<u32>,
     pub profile: Vec<String>,
     pub no_archive: bool,
+    pub allow_private: bool,
 }
 
 pub fn stages(
@@ -399,6 +402,9 @@ struct Prep {
     frame: String,
     grid: [u32; 2],
     env: Vec<(String, String)>,
+    session_env: Vec<(String, String)>,
+    passed: Vec<(String, String)>,
+    ns: Option<Ns>,
     fixture_record: Value,
     path: String,
     cwd: PathBuf,
@@ -425,6 +431,20 @@ fn prepare(resolved: Resolved, kind: &str, opts: &Opts, run_name: &str) -> Resul
     checked_name("shot", &opts.shot)?;
     let sets = sets(opts)?;
     let terminal = resolved.terminal.clone();
+    let passed = terminal
+        .pass_env
+        .iter()
+        .map(|name| match std::env::var(name) {
+            Ok(v) => Ok((name.clone(), v)),
+            Err(std::env::VarError::NotPresent) => Err(format!("pass_env {name} is not set")),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                Err(format!("pass_env {name} is not valid UTF-8"))
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if terminal.home.is_some() && !cfg!(target_os = "linux") {
+        return Err("home needs Linux user namespaces".into());
+    }
     let shot = terminal
         .shots
         .get(&opts.shot)
@@ -557,16 +577,47 @@ fn prepare(resolved: Resolved, kind: &str, opts: &Opts, run_name: &str) -> Resul
     };
     let system_path = std::env::var("PATH").unwrap_or_default();
     let path = format!("{}:{system_path}", bin_dir.display());
-    let cwd = terminal
+    let mut ns = match (&terminal.home, terminal.hostname()) {
+        (Some(h), Some(name)) => Some(Ns::new(h, name, &home, &work.join("stash"))?),
+        _ => None,
+    };
+    let session_home = ns.as_ref().map_or(home.clone(), |n| n.home.clone());
+    let mut session_vars = vref.clone();
+    session_vars.push(("home", session_home.as_path()));
+    let inside_cwd = terminal
         .cwd
         .as_ref()
-        .map(|c| PathBuf::from(app::expand(c, &vref)))
+        .map(|c| PathBuf::from(app::expand(c, &session_vars)))
         .unwrap_or_else(|| scratch_dir.clone());
+    let cwd = ns
+        .as_ref()
+        .map_or(inside_cwd.clone(), |n| n.outside(&inside_cwd));
     std::fs::create_dir_all(&cwd).map_err(|e| format!("{}: {e}", cwd.display()))?;
+    let mut session_env = env.clone();
+    if let Some(n) = ns.as_mut() {
+        n.cwd = n.inside(&cwd);
+        let user = n
+            .home
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        for (k, v) in [
+            ("HOME", n.home.display().to_string()),
+            ("USER", user.clone()),
+            ("LOGNAME", user),
+        ] {
+            if k == "HOME" || !terminal.env.contains_key(k) {
+                session_env.retain(|(ek, _)| ek != k);
+                session_env.push((k.to_string(), v));
+            }
+        }
+        n.probe(&path, &cwd)?;
+    }
     let tape_path = resolved.dir.join(&shot.tape);
     let launch = set_value(&sets, "launch")
         .or_else(|| shot.launch.clone())
-        .map(|l| app::expand(&l, &vref));
+        .map(|l| app::expand(&l, &session_vars));
     let settle = set_value(&sets, "settle")
         .or_else(|| shot.settle.clone())
         .unwrap_or_else(|| "800ms".into());
@@ -585,6 +636,9 @@ fn prepare(resolved: Resolved, kind: &str, opts: &Opts, run_name: &str) -> Resul
         frame,
         grid,
         env,
+        session_env,
+        passed,
+        ns,
         fixture_record,
         path,
         cwd,
@@ -614,6 +668,21 @@ pub fn record_cast(
     to_out: bool,
 ) -> Result<(PathBuf, Option<Run>), String> {
     let p = prepare(resolved, kind, opts, &run_name(opts, kind, Some("record")))?;
+    record_prepared(&p, kind, opts, to_out).map_err(|e| private::redact(&e, &p.passed))
+}
+
+fn with_passed(env: &[(String, String)], passed: &[(String, String)]) -> Vec<(String, String)> {
+    let mut out = env.to_vec();
+    out.extend(passed.iter().cloned());
+    out
+}
+
+fn record_prepared(
+    p: &Prep,
+    kind: &str,
+    opts: &Opts,
+    to_out: bool,
+) -> Result<(PathBuf, Option<Run>), String> {
     let steps = tape::load(&p.tape_path)?;
     let tape_text = std::fs::read_to_string(&p.tape_path).map_err(|e| e.to_string())?;
     let settle = tape::duration(&p.settle)?;
@@ -621,7 +690,7 @@ pub fn record_cast(
     let vars = p.vars();
     let hook = |cmd: &str| Hook {
         cmd: app::expand(cmd, &vars),
-        env: p.env.clone(),
+        env: with_passed(&p.env, &p.passed),
         path: p.path.clone(),
         cwd: p.cwd.clone(),
     };
@@ -639,9 +708,10 @@ pub fn record_cast(
         paths::settle();
         record::record(&record::Spec {
             grid: p.grid,
-            env: &p.env,
+            env: &with_passed(&p.session_env, &p.passed),
             path: &p.path,
             cwd: &p.cwd,
+            ns: p.ns.as_ref(),
             prompt: &p.prompt,
             launch: p.launch.as_deref(),
             settle,
@@ -657,8 +727,50 @@ pub fn record_cast(
         Some(c) => c,
         None => p.shot.closure()?,
     };
+    let meta = cast_meta(p, opts, kind, shown, &closure, &tape_text);
+    let cast = Cast {
+        cols: p.grid[0],
+        rows: p.grid[1],
+        meta,
+        events,
+    };
+    let (dir, kept) = if to_out {
+        (p.out_root.join(&opts.product).join(kind), None)
+    } else {
+        let run = run_folder(&run_name(opts, kind, Some("cast")))?;
+        (run.dir.clone(), Some(run))
+    };
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{}-{kind}-{}.cast", opts.product, opts.shot));
+    record::write(&path, &cast)?;
+    eprintln!(
+        "recorded {:.2}s shown, {} events → {}",
+        shown,
+        cast.events.len(),
+        paths::shown(&path)
+    );
+    if !opts.allow_private {
+        let found = private::scan(&cast, &private::Needles::of_this_machine(&p.passed));
+        if !to_out {
+            private::refuse(&path, &found)?;
+        }
+        for line in private::lines(&path, &found) {
+            eprintln!("prec: {line}");
+        }
+    }
+    Ok((path, kept))
+}
+
+fn cast_meta(
+    p: &Prep,
+    opts: &Opts,
+    kind: &str,
+    shown: f64,
+    closure: &app::Closure,
+    tape_text: &str,
+) -> Value {
     let ground = set_value(&p.sets, "ground").or_else(|| p.terminal.ground.clone());
-    let meta = json!({
+    json!({
         "tool": {"name": TOOL, "version": env!("CARGO_PKG_VERSION")},
         "product": opts.product,
         "shot": opts.shot,
@@ -689,30 +801,11 @@ pub fn record_cast(
         "shot_sha256": paths::hash_bytes(serde_json::to_string(&p.shot).unwrap_or_default().as_bytes()),
         "tape_sha256": paths::hash_bytes(tape_text.as_bytes()),
         "fixtures": p.fixture_record,
-        "env": p.env.iter().filter(|(k, _)| k != "HOME").map(|(k, v)| json!([k, v])).collect::<Vec<_>>(),
-    });
-    let cast = Cast {
-        cols: p.grid[0],
-        rows: p.grid[1],
-        meta,
-        events,
-    };
-    let (dir, kept) = if to_out {
-        (p.out_root.join(&opts.product).join(kind), None)
-    } else {
-        let run = run_folder(&run_name(opts, kind, Some("cast")))?;
-        (run.dir.clone(), Some(run))
-    };
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join(format!("{}-{kind}-{}.cast", opts.product, opts.shot));
-    record::write(&path, &cast)?;
-    eprintln!(
-        "recorded {:.2}s shown, {} events → {}",
-        shown,
-        cast.events.len(),
-        paths::shown(&path)
-    );
-    Ok((path, kept))
+        "env": p.session_env.iter().filter(|(k, _)| k != "HOME").map(|(k, v)| json!([k, v])).collect::<Vec<_>>(),
+        "pass_env": p.passed.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+        "home": p.ns.as_ref().map(|n| n.home.display().to_string()),
+        "hostname": p.ns.as_ref().map(|n| n.hostname.as_str()),
+    })
 }
 
 fn frames_for(shown: f64, fps: u32, closure: &app::Closure) -> usize {
@@ -753,6 +846,12 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
         checked_name("the cast's shot", meta["shot"].as_str().unwrap_or("shot"))?.to_string();
     let kind = checked_kind(meta["kind"].as_str().unwrap_or("clip"))?.to_string();
     validate(&kind, opts)?;
+    if !opts.allow_private {
+        private::refuse(
+            &cast_path,
+            &private::scan(&cast, &private::Needles::of_this_machine(&[])),
+        )?;
+    }
     let sets = sets(opts)?;
     let out_root = paths::inside_tmp(&opts.out)?;
     let app_theme = if meta["app_theme"].is_null() {
@@ -1049,6 +1148,8 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
         "tape_sha256": meta["tape_sha256"],
         "cast_sha256": cast_sha,
         "fixtures": meta["fixtures"],
+        "pass_env": meta["pass_env"].as_array().cloned().unwrap_or_default(),
+        "private_allowed": opts.allow_private,
         "theme": {"name": choice.name, "label": label, "background": hexs(rendered.bg), "ground": hexs(rendered.ground)},
         "font": {"family": family, "file": metrics.file.display().to_string(), "size_px": rendered.font_px, "scale": 1},
         "grid": {"cols": cast.cols, "rows": cast.rows, "cell": rendered.cell, "canvas": [rendered.canvas[0], rendered.canvas[1]]},
@@ -1169,6 +1270,68 @@ fn probe(video: &Path) -> Result<([u32; 2], usize), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_passed_value_never_reaches_the_written_cast() {
+        let terminal: Terminal = toml::from_str(
+            "app = \"demo\"\nbin = \"demo\"\ngrid = [20, 4]\npass_env = [\"TOKEN\"]\n[env]\nA = \"b\"\n[shots.s]\nkind = \"clip\"\ntape = \"s.tape\"\n",
+        )
+        .unwrap();
+        let secret = "s3cret-token-value";
+        let env = vec![("A".to_string(), "b".to_string())];
+        let p = Prep {
+            resolved: Resolved {
+                dir: PathBuf::from("/a"),
+                commit: None,
+                rev: "local".into(),
+                tag: None,
+                pinned: false,
+                terminal: terminal.clone(),
+                source_sha256: String::new(),
+                gitdir: None,
+                key: None,
+                clean: false,
+            },
+            shot: terminal.shots["s"].clone(),
+            terminal,
+            sets: vec![],
+            out_root: PathBuf::from("/o"),
+            bin_dir: PathBuf::from("/b"),
+            family: DEFAULT_FONT.into(),
+            frame: "bare".into(),
+            grid: [20, 4],
+            env: env.clone(),
+            session_env: env,
+            passed: vec![("TOKEN".into(), secret.into())],
+            ns: None,
+            fixture_record: Value::Null,
+            path: "/b".into(),
+            cwd: PathBuf::from("/c"),
+            vars: vec![],
+            launch: None,
+            settle: "1ms".into(),
+            typing: "1ms".into(),
+            prompt: "$ ".into(),
+            tape_path: PathBuf::from("/t"),
+        };
+        let meta = cast_meta(&p, &Opts::default(), "clip", 1.0, &app::Closure::Open, "");
+        assert_eq!(meta["pass_env"], json!(["TOKEN"]));
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tmp/unit-render-pass");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("a.cast");
+        let cast = Cast {
+            cols: 20,
+            rows: 4,
+            meta,
+            events: vec![],
+        };
+        record::write(&path, &cast).unwrap();
+        let bytes = std::fs::read_to_string(&path).unwrap();
+        assert!(bytes.contains("\"TOKEN\""), "{bytes}");
+        assert!(!bytes.contains(secret), "{bytes}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn a_job_declares_the_stages_its_run_goes_through() {

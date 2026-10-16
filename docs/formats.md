@@ -43,6 +43,8 @@ The terminal renderer's own keys:
 | `app` | `rev`, `tag`, `pinned`, `commit`, `bin_dir`, `bin_sha256` and `terminal_toml_sha256`, copied from the cast |
 | `shot`, `shot_sha256`, `tape_sha256`, `cast_sha256` | the shot's name, and the hashes of its resolved recipe, its tape and the cast |
 | `fixtures` | `null`, or `{"path", "door", "files": [{"file", "sha256"}]}`: the materialized fixture set, the variable that named it to the app, and every file's hash |
+| `pass_env` | the names the cast's record passed from prec's environment (`pass_env` in `terminal.toml`), never their values; `[]` when none |
+| `private_allowed` | `true` when `--allow-private` skipped the scan for private data in the picture, else `false` |
 | `theme` | `name`, `label` (`null` for the app's own theme), and the rendered `background` and `ground` as `#rrggbb` |
 | `font` | `family`, `file`, `size_px` and `scale` |
 | `grid` | `cols`, `rows`, `cell` (one cell's size in pixels) and `canvas` ([w, h]) |
@@ -68,7 +70,7 @@ Every `leaf` is relative to the archive's `Masters/` folder (since 0.21.0; befor
 
 - **Header:** `{"version": 2, "width": <cols>, "height": <rows>, "env": {"TERM": "xterm-256color", "SHELL": "/bin/bash"}, "x_terminal_renderer": {…}}`.
 - **Events:** `[<seconds since the start, to the microsecond>, <code>, <data>]`, where the code is `o` for output, `i` for input, and `m` for a marker: `hide`, `show`, `screenshot` or `end`.
-- **`x_terminal_renderer`** holds what a later `prec render <cast>` needs: `tool`, `product`, `shot`, `kind`, `grid`, `app_theme`, `frame`, `ground`, `font`, `closure`, `size`, `fps`, `poster`, `typing`, `settle`, `launch`, `prompt`, `shown_seconds`, `app` (as in the manifest), `shot_sha256`, `tape_sha256`, `fixtures`, and `env`, the pty's environment as `[name, value]` pairs without `HOME`.
+- **`x_terminal_renderer`** holds what a later `prec render <cast>` needs: `tool`, `product`, `shot`, `kind`, `grid`, `app_theme`, `frame`, `ground`, `font`, `closure`, `size`, `fps`, `poster`, `typing`, `settle`, `launch`, `prompt`, `shown_seconds`, `app` (as in the manifest), `shot_sha256`, `tape_sha256`, `fixtures`, `env`, the pty's environment as `[name, value]` pairs without `HOME` and without the `pass_env` variables, `pass_env`, the names of the variables passed from prec's environment (never their values), and `home` and `hostname`, the session's neutral home and hostname, or `null` when `terminal.toml` sets no `home`.
 
 ## 3. The archive catalog line
 

@@ -7,8 +7,10 @@ mod config;
 mod doctor;
 mod encode;
 mod font;
+mod home;
 mod jobs;
 mod paths;
+mod private;
 mod record;
 mod render;
 mod replay;
@@ -119,6 +121,11 @@ struct Shot {
     profile: Vec<String>,
     #[arg(long, help = "Skip archive copying")]
     no_archive: bool,
+    #[arg(
+        long,
+        help = "Skip the scan that refuses a picture showing a home path, hostname, user name, email or passed variable"
+    )]
+    allow_private: bool,
     #[command(flatten)]
     camera: Camera,
 }
@@ -218,6 +225,11 @@ struct Replay {
     profile: Vec<String>,
     #[arg(long, help = "Skip archive copying")]
     no_archive: bool,
+    #[arg(
+        long,
+        help = "Skip the scan that refuses a picture showing a home path, hostname, user name or email"
+    )]
+    allow_private: bool,
     #[command(flatten)]
     camera: Camera,
 }
@@ -312,6 +324,7 @@ fn opts(s: &Shot, theme: &str, made: &str) -> render::Opts {
         web: s.web.clone(),
         profile: s.profile.clone(),
         no_archive: s.no_archive,
+        allow_private: s.allow_private,
     }
 }
 
@@ -334,6 +347,7 @@ fn replay_opts(r: &Replay, theme: &str, made: &str) -> render::Opts {
         web: r.web.clone(),
         profile: r.profile.clone(),
         no_archive: r.no_archive,
+        allow_private: r.allow_private,
         ..Default::default()
     }
 }

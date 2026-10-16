@@ -62,6 +62,9 @@ prec clip myapp tour --size 1080p --fps 60
 | `fixtures_env` | the variable that names `--fixtures` to the app; default `PITO_<APP>_FIXTURES` |
 | `[build]` | `command` builds the app and `bin_dir` is where its binaries land; `bin_dir` alone uses prebuilt binaries in the tree |
 | `[env]` | variables for the pty, as written |
+| `pass_env` | names of variables whose values come from prec's own environment, such as a token; see [A session with no private data](#a-session-with-no-private-data) |
+| `home` | an absolute neutral home for the session, such as `/home/gamerdad`, in its own user and mount namespace; Linux only |
+| `hostname` | the session's hostname when `home` is set; default `prec` |
 | `[theme]` | the app's own palette ([Choose a theme](choose-a-theme.md)) |
 
 An unknown key is refused, so a typo never passes silently.
@@ -86,11 +89,30 @@ Each `[shots.<name>]` is one render:
 
 ## Placeholders
 
-`{tmp}` (the repository's `tmp/`), `{scratch}` (this run's scratch), `{app}` (the checkout), `{bin}` (the cached build of this commit), `{target}` (the repository's shared cargo target dir in the [machine cache](manage-the-cache.md)) and `{fixtures}` expand the same way in `setup`, `teardown`, `launch`, `cwd`, every `[env]` value and the `[build]` command. `bin_dir` takes `{tmp}`, `{app}` and `{target}`.
+`{tmp}` (the repository's `tmp/`), `{scratch}` (this run's scratch), `{app}` (the checkout), `{bin}` (the cached build of this commit), `{target}` (the repository's shared cargo target dir in the [machine cache](manage-the-cache.md)) and `{fixtures}` expand the same way in `setup`, `teardown`, `launch`, `cwd`, every `[env]` value and the `[build]` command. `bin_dir` takes `{tmp}`, `{app}` and `{target}`. `{home}` expands in `cwd` and `launch` only: to the `home` key's path when it is set, else to the scratch `HOME`.
 
 ## The pty's environment
 
-The pty starts from a clean environment, so the recording doesn't depend on your shell: `TZ=UTC`, `LANG=C.UTF-8`, `TERM=xterm-256color`, `COLORTERM=truecolor`, a scratch `HOME`, `USER`, `LOGNAME`, every `[env]` value as written, and `PATH=<bin>:<system PATH>`. Pin anything else your app reads, such as a clock or a data folder, through `[env]`, as `MYAPP_NOW` and `MYAPP_DATA` do above.
+The pty starts from a clean environment, so the recording doesn't depend on your shell: `TZ=UTC`, `LANG=C.UTF-8`, `TERM=xterm-256color`, `COLORTERM=truecolor`, a scratch `HOME`, `USER`, `LOGNAME`, every `[env]` value as written, every `pass_env` variable, and `PATH=<bin>:<system PATH>`. Pin anything else your app reads, such as a clock or a data folder, through `[env]`, as `MYAPP_NOW` and `MYAPP_DATA` do above.
+
+## A session with no private data
+
+Three top-level keys keep a live session, such as a coding agent at work, free of your own details:
+
+```toml
+home = "/home/gamerdad"
+hostname = "pitomd"
+cwd = "{home}/work"
+pass_env = ["MYAPP_TOKEN"]
+```
+
+- `pass_env` gives the pty and the `setup` and `teardown` hooks each named variable with its value from prec's own environment when the record starts. The value is never written: the cast and the manifest list the names only, and no log line or error message prints it. A name that is unset refuses the record with `prec: pass_env NAME is not set` before any hook runs; a name also in `[env]`, or one prec sets itself (`HOME`, `PATH`, `TERM`, `PS1`, `SHELL`, `TZ`, `LANG`, `LC_ALL`, `COLORTERM`), is a config error.
+- `home` runs the pty's shell under `unshare` from util-linux, in a user, mount and UTS namespace of its own: `home`'s parent (`/home` here) is covered by a tmpfs holding a bind of each folder that was there, so every path of yours stays reachable, plus the neutral home, bound to the run's scratch `HOME`. Inside, `HOME` is `home`, `USER` and `LOGNAME` are its last part unless `[env]` sets them, the hostname is `hostname`, and a `cwd` under the scratch home starts under `home`. `home` is an absolute path of two or more parts that doesn't exist on the machine, its parent does, and `[env] HOME` can't be set with it. The `setup` and `teardown` hooks run outside the namespace, as without `home`, and prepare the scratch home the session sees. Before recording, prec makes the namespace once and refuses with one line naming why when it can't, such as `unshare` or `hostname` missing, or unprivileged user namespaces turned off (Ubuntu's `apparmor_restrict_unprivileged_userns`). On a build for another system, `home` refuses with `prec: home needs Linux user namespaces`. `id -un` still prints your own user name, since the session keeps your uid.
+- `hostname` names the namespace's host; it needs `home`.
+
+Placeholders other than `{home}` keep their real paths, since only hidden steps (`launch`, the hooks) type them.
+
+Before any replay, prec reads the screen the cast shows and refuses a picture that shows your home path, your hostname or user name as a whole word, an email address, or a value the record passed through `pass_env`: [Render a cast again](render-a-cast-again.md#a-picture-with-private-data).
 
 ## A working example
 

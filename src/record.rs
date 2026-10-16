@@ -33,6 +33,7 @@ pub struct Spec<'a> {
     pub env: &'a [(String, String)],
     pub path: &'a str,
     pub cwd: &'a Path,
+    pub ns: Option<&'a crate::home::Ns>,
     pub prompt: &'a str,
     pub launch: Option<&'a str>,
     pub settle: Duration,
@@ -232,8 +233,12 @@ pub fn record(spec: &Spec) -> Result<Vec<Event>, String> {
             pixel_height: 0,
         })
         .map_err(|e| format!("openpty: {e}"))?;
-    let mut cmd = CommandBuilder::new("bash");
-    cmd.args(["--noprofile", "--norc", "-i"]);
+    let shell = ["bash", "--noprofile", "--norc", "-i"];
+    let argv: Vec<String> = match spec.ns {
+        Some(ns) => ns.argv(&shell),
+        None => shell.iter().map(|s| s.to_string()).collect(),
+    };
+    let mut cmd = CommandBuilder::from_argv(argv.iter().map(Into::into).collect());
     cmd.env_clear();
     let mut pairs = vec![
         ("SHELL".to_string(), "/bin/bash".to_string()),
@@ -315,7 +320,12 @@ fn drive(s: &mut Session, spec: &Spec) -> Result<(), String> {
         "export PATH={} PS1={} && cd {} && clear\r",
         shell_quote(spec.path),
         shell_quote(spec.prompt),
-        shell_quote(&spec.cwd.to_string_lossy())
+        shell_quote(
+            &spec
+                .ns
+                .map_or(spec.cwd, |n| n.cwd.as_path())
+                .to_string_lossy()
+        )
     );
     s.send(setup.as_bytes())?;
     s.sleep(Duration::from_millis(300));
