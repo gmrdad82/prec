@@ -9,8 +9,8 @@ these third-party files, compiled in, each under its own MIT licence below:
   vendored as published; assets/xterm/VERSIONS lists their sha256.
 - assets/vhs-themes.json: the built-in theme set of VHS v0.11.0
   (https://github.com/charmbracelet/vhs), extracted verbatim.
-- pito-codecs 1.10.0 (https://github.com/gmrdad82/pito-codecs, tag v1.10.0,
-  commit 3350e927148ef87ea8557a51183de4f6b1935109), compiled in with its
+- pito-codecs 1.12.1 (https://github.com/gmrdad82/pito-codecs, tag v1.12.1,
+  commit 2e6793c68b20f36aded0514ce4edca3999bab370), compiled in with its
   h264, mp4, filter and png parts to encode clip masters; its MIT licence and
   the notices of the work it adapts are copied verbatim at the end of this file.
 
@@ -124,7 +124,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
------ pito-codecs 1.10.0 LICENSE
+----- pito-codecs 1.12.1 LICENSE
 
 MIT License
 
@@ -148,7 +148,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
------ pito-codecs 1.10.0 NOTICE
+----- pito-codecs 1.12.1 NOTICE
 
 Parts of this package are adapted from FilmCraft
 (https://github.com/storytold/filmcraft, tag v0.6.0, commit 2ff3f5e266838700c292a35aaf762e3d4dcef980),
@@ -193,9 +193,9 @@ Adapted modules (one line per module, filled in by each task):
 - src/opus/: the decoder (SILK, CELT, hybrid, multistream, OpusHead) from crates/opus; the range encoder, the FFT butterflies and the Ogg reader and writer are new.
 - src/mkv/: the Matroska and WebM reader (EBML, lacing, Cues, damage resync) from crates/matroska; the writer, remux and MP4 to MKV are reworked or new.
 - src/vp9/enc/: the VP9 encoder; its motion vector prediction (mvref.rs) and the syntax contexts of entropy.rs mirror crates/vp9's tile.rs, and it reuses the decoder's tables, probability adaptation and loop filter; the rest is new.
-- src/gif/: new, written from the GIF89a specification; no code adapted.
+- src/gif/: written from the GIF89a specification; the encoder's frame differencing, its clamped Sierra-2-4A diffusion and its 7-bit nearest-colour table in src/gif/encode.rs are adapted from pconv v1.0.1 (commit 8879614b928b8fdde500a16376b85a2c95551dc9), Copyright (c) 2026 Cătălin Ilinca, MIT, the same author and licence as this package.
 - src/vp9/enc/tx/: the inverse DCT and ADST butterflies (transform_gen.rs), the scan, band and energy-class tables and the coefficient-context neighbours from crates/vp9; the forward transforms (the transposes of those butterflies), the quantiser, the trellis and the AVX2 kernels are new.
-- src/webp/: new, written from RFC 9649 (the container, VP8L lossless and animation); src/webp/vp8/ is described below.
+- src/webp/: new, written from RFC 9649 (the container, VP8L lossless and animation); src/webp/vp8/ is described below; the lossy animation sub-frames (the quality-to-difference limit, similar-pixel rectangles and flattened similar 8x8 blocks) in src/webp/anim.rs follow libwebp's anim_encode.c.
 - src/opus/enc/: the CELT encoder is new, written from RFC 6716; it shares the decoder's tables and range coder.
 
 The VA-API declarations in src/gpu/vaapi/ffi.rs are transcribed from libva's
@@ -599,8 +599,200 @@ The Adler-32 in src/png/inflate.rs follows adler2 2.0.1
 licensed 0BSD OR MIT OR Apache-2.0; it is used under the 0BSD terms, which ask
 for no notice, and is credited here.
 
+The AV1 decode structures in src/gpu/vaapi/av1.rs are transcribed from libva's
+va_dec_av1.h (libva 2.23, https://github.com/intel/libva), Copyright (c) 2019
+Intel Corporation, under the same MIT terms as the libva notice above.
+
+The AV1 syntax parser in src/av1/ (OBU reader, sequence and frame headers with
+reference frame state, order hints, segmentation, loop filter, quantizer, delta,
+CDEF, loop restoration, global motion and film grain parameters, tile info and
+tile groups, and the subexp, uvlc and leb128 helpers) and the VA-API AV1
+picture and tile parameter fill in src/gpu/vaapi/av1.rs are adapted from
+cros-codecs (https://github.com/chromeos/cros-codecs, commit
+5ff6d693ffae0b36935b8fc13092c733b4c2646f: src/codec/av1/parser.rs, reader.rs,
+helpers.rs, src/decoder/stateless/av1.rs and av1/vaapi.rs). Changed: the bit
+reader is src/syntax/bits.rs, Annex B input and the encoder side are left out,
+indexing driven by the bitstream is checked, and film grain output, show
+existing frames and the surface handling are reworked for this package's
+VA-API session. It carries this notice:
+
+Copyright 2022 The ChromiumOS Authors
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+   may be used to endorse or promote products derived from this software without
+   specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+The SHA-256 in src/bin/pcod/sha256.rs is adapted from the sha2 crate 0.10.9
+(https://github.com/RustCrypto/hashes, commit
+82c36a428f8d6f05f3bfccdedb243e9d1f85359d) by the RustCrypto Developers,
+dual-licensed MIT OR Apache-2.0; the MIT terms are taken here. From sha2: the
+portable compression function with its four-lane message schedule, the x86-64
+SHA-NI and AArch64 SHA2 compression functions and the round constants. The
+streaming buffer, the padding and the runtime dispatch are new. It carries
+this notice:
+
+Copyright (c) 2006-2009 Graydon Hoare
+Copyright (c) 2009-2013 Mozilla Foundation
+Copyright (c) 2016 Artyom Pavlov
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+The progress line, the probe and manifest JSON shapes in src/bin/pcod/ are
+adapted from pconv 1.0.1 (commit 8879614), MIT, by Cătălin Ilinca, the author
+of pito-codecs.
+
+The linear-light resize in src/filter/linear.rs follows zimg
+(https://github.com/sekrit-twc/zimg, commit
+67e0603271c080e22c8429856dd4a8a56587e61e) by sekrit-twc: the resampling filter
+construction (pixel-centre positions, half-up rounding, mirrored edges, f32
+coefficient error diffusion), the Lanczos weights and the BT.1886, BT.709 and
+sRGB transfer functions with their constants. zimg is licensed under the Do What
+The F*ck You Want To Public License, version 2 (Sam Hocevar, 2004), whose only
+term is: "0. You just DO WHAT THE FUCK YOU WANT TO."; it is credited here.
+
+The interleaved RGBA f32 convolution layout in src/filter/linear.rs (taps taken
+in pairs across one 256-bit register, rows convolved over flat components) is
+adapted from fast_image_resize 6.1.0
+(https://github.com/Cykooz/fast_image_resize, commit
+ce36aeb20ed4a33805baa3c0ff4caff7cf163e19), licensed MIT OR Apache-2.0; the MIT
+terms are taken here:
+
+MIT License
+
+Copyright (c) 2021 Kirill Kuzminykh
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 The PITO MD wordmark in assets/marks/pitomd-wordmark.svg is copied by bin/marks
 from the PITO MD brand masters at aa3aee8b232a1b848995bf3d9a012a01d4aff8ec
 (exports/pitomd/readme/wordmark.svg). The PITO MD name and its logos are
 © Catalin Ilinca, all rights reserved and not covered by the MIT licence
 (TRADEMARKS.md).
+
+The VP9 alpha layout in src/mkv/writer.rs and src/mkv/reader.rs (a BlockGroup
+with BlockAdditions, BlockMore, BlockAddID 1 and BlockAdditional, written in
+libwebm's element order, and AlphaMode and MaxBlockAdditionID on the track)
+follows libwebm (libwebm-1.0.0.32,
+https://chromium.googlesource.com/webm/libwebm), which carries this notice:
+
+Copyright (c) 2010, Google Inc. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+  * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+
+  * Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in
+    the documentation and/or other materials provided with the
+    distribution.
+
+  * Neither the name of Google nor the names of its contributors may
+    be used to endorse or promote products derived from this software
+    without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Parts of this package are adapted from rav1d
+(https://github.com/memorysafety/rav1d, commit 0c851fa046d6a36430570459283e5886fbdd8a66),
+the Rust port of dav1d, used under the BSD-2-Clause License. Adapted module:
+src/av1/cpu/ (the AV1 decoder: OBU parsing, entropy decoding, reconstruction,
+loop filter, CDEF, loop restoration, film grain and frame and tile threading;
+the assembly dispatch, C API and logging are dropped, the crate dependencies
+are replaced by std code, and the frame front in src/av1/cpu/decoder.rs is new):
+
+Copyright © 2018-2019, VideoLAN and dav1d authors
+Copyright © 2023-2024, VideoLAN, dav1d authors, and Internet Security Research Group
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

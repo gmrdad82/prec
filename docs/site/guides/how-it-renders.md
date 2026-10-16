@@ -17,7 +17,7 @@ xterm.js draws truecolor, box drawing, wide CJK and Nerd Font glyphs; the font i
 
 ## Encode
 
-A clip is one silent H.264 High master at the render's size and fps, encoded inside prec by [pito-codecs](https://docs.pitomd.com/pito-codecs/) 1.10.0 with no ffmpeg: its `quality` preset, CRF 14, no B-frames, 8-bit 4:2:0, a keyframe every two seconds, BT.709 limited range tagged in the stream. Chromium's 8-bit frames go to YUV with the BT.709 limited-range matrix and left-sited chroma, and a crossfade is blended from the two frames before that. The encoder's 16 threads are fixed, because its output follows its thread count; that keeps a master byte-identical on any machine. prec reads the MP4 back and checks its frame count and size before the manifest claims them.
+A clip is one silent H.264 High master at the render's size and fps, encoded inside prec by [pito-codecs](https://docs.pitomd.com/pito-codecs/) 1.12.1 with no ffmpeg: its `quality` preset, CRF 14, no B-frames, 8-bit 4:2:0, a keyframe every two seconds, BT.709 limited range tagged in the stream. Chromium's 8-bit frames go to YUV with the BT.709 limited-range matrix and left-sited chroma, and a crossfade is blended from the two frames before that. The encoder's 16 threads are fixed, because its output follows its thread count; that keeps a master byte-identical on any machine. prec reads the MP4 back and checks its frame count and size before the manifest claims them.
 
 ## Atomic
 
