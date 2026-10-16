@@ -46,7 +46,7 @@ got=$("$bin" --version)
 }
 
 estate_links() {
-  sed -E 's#\(https://github\.com/gmrdad82/(pfx|manfred|pconv|pito-compare|pito-jobs)\)#(https://docs.pitomd.com/\1/)#g'
+  sed -E 's#\(https://github\.com/gmrdad82/(pfx|manfred|pito-codecs|pito-compare|pito-jobs)\)#(https://docs.pitomd.com/\1/)#g'
 }
 
 front() {

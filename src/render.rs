@@ -96,19 +96,19 @@ pub fn validate(kind: &str, opts: &Opts) -> Result<(), String> {
     }
     if kind == "clip" {
         if !opts.profile.is_empty() {
-            return Err("--profile for clips belongs to pconv".into());
+            return Err("--profile for clips belongs to pcod".into());
         }
         if opts.youtube {
-            return Err("--youtube for clips belongs to pconv".into());
+            return Err("--youtube for clips belongs to pcod".into());
         }
         if !opts.derive.is_empty() {
-            return Err("--derive for clips belongs to pconv".into());
+            return Err("--derive for clips belongs to pcod".into());
         }
         if let Some(fps) = opts.fps {
             check_fps(fps)?;
         }
         if !opts.web.is_empty() {
-            return Err("--web makes still web copies; use pconv for clips".into());
+            return Err("--web makes still web copies; use pcod for clips".into());
         }
     }
     Ok(())
@@ -1139,7 +1139,7 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
             "terminal": "24-bit truecolor (TERM=xterm-256color, COLORTERM=truecolor), painted by xterm.js with --force-color-profile=srgb",
         },
         "outputs": {
-            "delivery": if kind == "clip" { "pconv makes delivery formats from the H.264 master" } else { "8-bit sRGB PNG with an sRGB chunk" },
+            "delivery": if kind == "clip" { "pcod makes delivery formats from the H.264 master" } else { "8-bit sRGB PNG with an sRGB chunk" },
             "master": if kind == "clip" { if opts.no_encode { "none: frames only" } else { "H.264 High by pito-codecs, CRF 14, 8-bit 4:2:0 BT.709 limited range in MP4" } } else { "16-bit sRGB PNG, lossless" },
             "poster": poster_out,
             "resampling": format!("{} (the master is drawn at its own size, never scaled)", encode::LANCZOS),

@@ -5,13 +5,13 @@ sidebar:
   order: 9
 ---
 
-prec writes masters: a clip is one silent H.264 file at CRF 14, larger and sharper than a page needs. Make the delivery from it with [pconv](https://docs.pitomd.com/pconv/) or ffmpeg.
+prec writes masters: a clip is one silent H.264 file at CRF 14, larger and sharper than a page needs. Make the delivery from it with pcod from [pito-codecs](https://docs.pitomd.com/pito-codecs/) or ffmpeg.
 
-## With pconv
+## With pcod
 
 ```sh
 prec clip demo typing --app-dir examples/demo --size 720p --fps 30
-pconv tmp/renders/demo/clip/demo-clip-typing-1280x720-30fps.master.mp4 demo.gif --size 1280 --fps 15
+pcod tmp/renders/demo/clip/demo-clip-typing-1280x720-30fps.master.mp4 demo.gif --size 1280 --fps 15
 ```
 
 That is how the clip below was made: recorded at 1280x720 and 30 fps, made a 15 fps GIF at the same width.

@@ -66,10 +66,10 @@ struct Shot {
     #[arg(
         long,
         value_delimiter = ',',
-        help = "More still sizes from the same master; clips use pconv"
+        help = "More still sizes from the same master; clips use pcod"
     )]
     derive: Vec<String>,
-    #[arg(long, help = "One of 30, 60 or 120; pconv makes other clip rates")]
+    #[arg(long, help = "One of 30, 60 or 120; pcod makes other clip rates")]
     fps: Option<u32>,
     #[arg(
         long,
@@ -106,7 +106,7 @@ struct Shot {
         help = "A materialized fixture set, passed through the app's door"
     )]
     fixtures: Option<PathBuf>,
-    #[arg(long, help = "Clip formats belong to pconv")]
+    #[arg(long, help = "Clip formats belong to pcod")]
     youtube: bool,
     #[arg(long, help = "Keep the raw frames under tmp/prec/run/")]
     keep_frames: bool,
@@ -118,7 +118,7 @@ struct Shot {
         help = "Still web copies at these widths, each also at @2x"
     )]
     web: Vec<u32>,
-    #[arg(long, value_delimiter = ',', help = "Clip formats belong to pconv")]
+    #[arg(long, value_delimiter = ',', help = "Clip formats belong to pcod")]
     profile: Vec<String>,
     #[arg(long, help = "Skip archive copying")]
     no_archive: bool,
@@ -182,10 +182,10 @@ struct Replay {
     #[arg(
         long,
         value_delimiter = ',',
-        help = "More still sizes from the same master; clips use pconv"
+        help = "More still sizes from the same master; clips use pcod"
     )]
     derive: Vec<String>,
-    #[arg(long, help = "One of 30, 60 or 120; pconv makes other clip rates")]
+    #[arg(long, help = "One of 30, 60 or 120; pcod makes other clip rates")]
     fps: Option<u32>,
     #[arg(
         long,
@@ -210,7 +210,7 @@ struct Replay {
     font: Option<String>,
     #[arg(long, help = "window or bare")]
     frame: Option<String>,
-    #[arg(long, help = "Clip formats belong to pconv")]
+    #[arg(long, help = "Clip formats belong to pcod")]
     youtube: bool,
     #[arg(long, help = "Keep the raw frames under tmp/prec/run/")]
     keep_frames: bool,
@@ -222,7 +222,7 @@ struct Replay {
         help = "Still web copies at these widths, each also at @2x"
     )]
     web: Vec<u32>,
-    #[arg(long, value_delimiter = ',', help = "Clip formats belong to pconv")]
+    #[arg(long, value_delimiter = ',', help = "Clip formats belong to pcod")]
     profile: Vec<String>,
     #[arg(long, help = "Skip archive copying")]
     no_archive: bool,

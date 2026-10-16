@@ -31,7 +31,7 @@ prec doctor
 prec clip demo typing --app-dir examples/demo --size 720p --fps 30
 ```
 
-That records this repository's sample app from its tape and writes `tmp/renders/demo/clip/demo-clip-typing-1280x720-30fps.master.mp4`, its poster PNG, the cast and a JSON manifest. Turn the master into a GIF with [pconv](https://github.com/gmrdad82/pconv) (`pconv <master> demo.gif --size 1280 --fps 15`): that is how the clip below was made.
+That records this repository's sample app from its tape and writes `tmp/renders/demo/clip/demo-clip-typing-1280x720-30fps.master.mp4`, its poster PNG, the cast and a JSON manifest. Turn the master into a GIF with pcod from [pito-codecs](https://github.com/gmrdad82/pito-codecs) (`pcod <master> demo.gif --size 1280 --fps 15`): that is how the clip below was made.
 
 <p align="center"><img src="docs/images/typing.gif" width="800" alt="The clip that run makes: in a window on a dark ground, demo tick draws a progress bar, then demo show prints a truecolor gradient, a box with a wide CJK character, an arrow and blocks, and the 16 ANSI colours, before the clip crossfades back to its first frame."></p>
 
@@ -75,7 +75,7 @@ xterm.js 5.5 with Unicode 11 widths draws truecolor, box drawing, wide CJK and N
 
 ### Masters, not deliveries
 
-A clip is one silent H.264 master (CRF 14, BT.709 limited range, tagged), encoded inside prec by [pito-codecs](https://github.com/gmrdad82/pito-codecs) with no ffmpeg, a poster PNG and a JSON manifest with each file's sha256. A still is a 16-bit sRGB master PNG with 8-bit PNG deliveries, extra sizes and `@2x` web copies. Turn a master into a GIF, WebP or a web MP4 with [pconv](https://github.com/gmrdad82/pconv) or ffmpeg.
+A clip is one silent H.264 master (CRF 14, BT.709 limited range, tagged), encoded inside prec by [pito-codecs](https://github.com/gmrdad82/pito-codecs) with no ffmpeg, a poster PNG and a JSON manifest with each file's sha256. A still is a 16-bit sRGB master PNG with 8-bit PNG deliveries, extra sizes and `@2x` web copies. Turn a master into a GIF, WebP or a web MP4 with pcod from [pito-codecs](https://github.com/gmrdad82/pito-codecs) or ffmpeg.
 
 ### Your app, your repository
 
@@ -310,7 +310,7 @@ Every `clip`, `still`, `record` and `render` publishes a live job record through
 
 ## Part of PITO MD
 
-prec is one of the open tools of [PITO MD](https://pitomd.com), made for its apps and games and free for yours. It is the terminal half of the renders: [pfx](https://github.com/gmrdad82/pfx) and [Manfred](https://github.com/gmrdad82/manfred) render the 3D and app scenes, prec renders the TUIs and CLIs. [pconv](https://github.com/gmrdad82/pconv) turns prec's masters into GIFs, WebP and web MP4s, and [pito-compare](https://github.com/gmrdad82/pito-compare) draws the charts on this page. [pito-jobs](https://github.com/gmrdad82/pito-jobs) carries its live job records.
+prec is one of the open tools of [PITO MD](https://pitomd.com), made for its apps and games and free for yours. It is the terminal half of the renders: [pfx](https://github.com/gmrdad82/pfx) and [Manfred](https://github.com/gmrdad82/manfred) render the 3D and app scenes, prec renders the TUIs and CLIs. pcod from [pito-codecs](https://github.com/gmrdad82/pito-codecs) turns prec's masters into GIFs, WebP and web MP4s, and [pito-compare](https://github.com/gmrdad82/pito-compare) draws the charts on this page. [pito-jobs](https://github.com/gmrdad82/pito-jobs) carries its live job records.
 
 ## Contributing
 
@@ -324,7 +324,7 @@ bin/gate
 bin/gate --render
 ```
 
-`bin/gate` runs what CI runs on Linux and macOS on every push and nightly: ShellCheck, rustfmt, clippy with warnings as errors, and the unit tests. `bin/gate --render` runs the integration tests, which drive the prec binary through Chromium on Linux, and decode its masters with ffmpeg to check them (they need the prerequisites above and a systemd user session for the confinement tests). A tag builds the Linux and macOS release binaries and the docs bundle, `docs-vX.Y.Z.tar.gz`, which `bin/docs-bundle` makes from `docs/site/`, the binary's `--help`, `docs/formats.md` and `CHANGELOG.md`. The README's GIFs are prec's own shot in `render/terminal.toml` and the clip it records, made GIFs by pconv; its stills are prec renders of `examples/demo`'s palette, laid side by side with ImageMagick, and its charts are pito-compare's from `docs/bench/` ([NOTICE](NOTICE)).
+`bin/gate` runs what CI runs on Linux and macOS on every push and nightly: ShellCheck, rustfmt, clippy with warnings as errors, and the unit tests. `bin/gate --render` runs the integration tests, which drive the prec binary through Chromium on Linux, and decode its masters with ffmpeg to check them (they need the prerequisites above and a systemd user session for the confinement tests). A tag builds the Linux and macOS release binaries and the docs bundle, `docs-vX.Y.Z.tar.gz`, which `bin/docs-bundle` makes from `docs/site/`, the binary's `--help`, `docs/formats.md` and `CHANGELOG.md`. The README's GIFs are prec's own shot in `render/terminal.toml` and the clip it records, made GIFs by pcod; its stills are prec renders of `examples/demo`'s palette, laid side by side with ImageMagick, and its charts are pito-compare's from `docs/bench/` ([NOTICE](NOTICE)).
 
 ## Licence
 
