@@ -9,8 +9,8 @@ these third-party files, compiled in, each under its own MIT licence below:
   vendored as published; assets/xterm/VERSIONS lists their sha256.
 - assets/vhs-themes.json: the built-in theme set of VHS v0.11.0
   (https://github.com/charmbracelet/vhs), extracted verbatim.
-- pito-codecs 1.13.0 (https://github.com/gmrdad82/pito-codecs, tag v1.13.0,
-  commit 3103f73d63999827cebe31e81d8e529fee3a004e), compiled in with its
+- pito-codecs 1.14.0 (https://github.com/gmrdad82/pito-codecs, tag v1.14.0,
+  commit 508b369d2279249dfc46f600b5bbef3b904984fa), compiled in with its
   h264, mp4, filter and png parts to encode clip masters; its MIT licence and
   the notices of the work it adapts are copied verbatim at the end of this file.
 
@@ -124,7 +124,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
------ pito-codecs 1.13.0 LICENSE
+----- pito-codecs 1.14.0 LICENSE
 
 MIT License
 
@@ -148,7 +148,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
------ pito-codecs 1.13.0 NOTICE
+----- pito-codecs 1.14.0 NOTICE
 
 Parts of this package are adapted from FilmCraft
 (https://github.com/storytold/filmcraft, tag v0.6.0, commit 2ff3f5e266838700c292a35aaf762e3d4dcef980),
@@ -357,8 +357,8 @@ SOFTWARE.
 
 The MPEG audio decoder in src/mp3/ (layers I, II and III: frame sync, side
 information, scale factors, Huffman decoding, stereo processing, the IMDCT and
-the polyphase synthesis with its SSE and NEON layout, and their tables) is
-ported from minimp3 (https://github.com/lieff/minimp3, commit
+the polyphase synthesis with its SSE and NEON layout, and their tables, and
+the VBR-tag, ID3 and gapless handling of minimp3_ex.h) is ported from minimp3 (https://github.com/lieff/minimp3, commit
 ea99364f61c14656440e8d77e9c233ccf3124633) by lieff, which its authors
 dedicated to the public domain under CC0 1.0 Universal:
 
