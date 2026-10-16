@@ -63,7 +63,7 @@ prec clip myapp tour --size 1080p --fps 60
 | `[build]` | `command` builds the app and `bin_dir` is where its binaries land; `bin_dir` alone uses prebuilt binaries in the tree |
 | `[env]` | variables for the pty, as written |
 | `pass_env` | names of variables whose values come from prec's own environment, such as a token; see [A session with no private data](#a-session-with-no-private-data) |
-| `home` | an absolute neutral home for the session, such as `/home/gamerdad`, in its own user and mount namespace; Linux only |
+| `home` | an absolute neutral home for the session, such as `/srv/demo`, in its own user and mount namespace; Linux only |
 | `hostname` | the session's hostname when `home` is set; default `prec` |
 | `[theme]` | the app's own palette ([Choose a theme](choose-a-theme.md)) |
 
@@ -100,7 +100,7 @@ The pty starts from a clean environment, so the recording doesn't depend on your
 Three top-level keys keep a live session, such as a coding agent at work, free of your own details:
 
 ```toml
-home = "/home/gamerdad"
+home = "/srv/demo"
 hostname = "pitomd"
 cwd = "{home}/work"
 pass_env = ["MYAPP_TOKEN"]
