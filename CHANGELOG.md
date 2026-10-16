@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.2.0 — 2026-10-16
+
+### Added
+
+- `mask` in `terminal.toml`, for every shot or one: `{ match = "<regex>" }` or `{ rect = [col, row, cols, rows] }` hides that text or block of cells behind the theme's background in every frame, and every later render of the cast keeps it hidden.
+- An `Idle 3s` tape step waits until the screen has stopped changing for that long, such as when an agent session finishes (`Idle@20m 5s` waits up to 20 minutes).
+- The check for private data before a render also catches plan and organisation labels, such as `Claude Max` or `someone's Organization`, unless a mask hides them.
+
+### Changed
+
+- Clip masters are encoded inside prec by pito-codecs, so ffmpeg is no longer needed: the same quality within 0.2 dB at CRF 14, files about 3% smaller, and re-renders 1.6 to 3 times as fast (a 10-second cast at 1080p 60 fps in 16.9 s, was 27.4 s; at 720p 30 fps in 9.2 s, was 28.5 s).
+- `[confine]` also runs the encode at nice 10, on its pinned CPUs.
+
 ## v1.1.0 — 2026-10-16
 
 ### Added
