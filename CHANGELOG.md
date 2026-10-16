@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.2.1 — 2026-10-16
+
+### Changed
+
+- Clips encode faster: the built-in encoder is now pito-codecs 1.13.0, and an 839-frame 720p30 clip encodes in about 2.4 s where 1.2.0 took about 4.2 s.
+- The help, refusals and clip manifests name pcod (from pito-codecs) for making GIFs, WebP and web MP4s from a master, since pconv is gone.
+
 ## v1.2.0 — 2026-10-16
 
 ### Added
