@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.2.2 — 2026-10-16
+
+### Changed
+
+- Clips are encoded with pito-codecs 1.14.0, the latest release of the encoder built into prec.
+
 ## v1.2.1 — 2026-10-16
 
 ### Changed
