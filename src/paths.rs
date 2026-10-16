@@ -303,11 +303,8 @@ fn wrapped(bin: &str, memory_max: &str, tail: &[&str]) -> Command {
 }
 
 pub fn confine_here() {
-    if crate::config::get().confine.is_none() || direct() {
-        return;
-    }
     #[cfg(target_os = "linux")]
-    {
+    if crate::config::get().confine.is_some() && !direct() {
         unsafe {
             nix::libc::setpriority(nix::libc::PRIO_PROCESS, 0, 10);
         }
