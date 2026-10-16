@@ -154,7 +154,7 @@ mod tests {
 
     #[test]
     fn a_mask_hides_its_match_and_its_rectangle_and_nothing_else() {
-        let p = screen("Opus 5.5 · Claude Max\r\n/home/x/chase");
+        let p = screen("Opus 5.5 · Claude Max\r\n/srv/x/chase");
         let m = Masks::new(
             &[
                 Mask {
@@ -171,7 +171,7 @@ mod tests {
         .unwrap();
         assert_eq!(m.cells(p.screen()), vec![[0, 1, 7, 1], [11, 0, 10, 1]]);
         let text = m.text(p.screen());
-        assert!(!text.contains("Max") && !text.contains("/home/x"));
+        assert!(!text.contains("Max") && !text.contains("/srv/x"));
         assert!(text.starts_with("Opus 5.5 · ") && text.contains("chase"));
     }
 
