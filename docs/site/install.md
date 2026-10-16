@@ -74,7 +74,7 @@ ok   git                          /usr/bin/git
 ok   chromium                     /usr/bin/chromium: Chromium 152.0.7977.82 Arch Linux
 ok   xterm.js                     xterm.js 5.5.0, addon-canvas 0.7.0, addon-unicode11 0.8.0, embedded
 ok   themes                       348 vendored from VHS v0.11.0
-ok   encoder                      pito-codecs 1.12.1, H.264 built in
+ok   encoder                      pito-codecs 1.13.0, H.264 built in
 ok   archive root                 none configured; renders are never archived
 ok   default font                 JetBrainsMono Nerd Font (/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf)
 ok   CJK fallback                 WDXL Lubrifont TC,WDXL 滑油字 TC
