@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.1.0 — 2026-10-16
+
+### Added
+
+- `pass_env` in `terminal.toml` hands named variables, such as a token, from your environment to the recorded session without writing their values to the cast, the manifest or any message.
+- `home` and `hostname` in `terminal.toml` record a session under a neutral absolute home and hostname in its own user and mount namespace, so its home, working folder and hostname are not yours (Linux only); `{home}` names that home in `cwd` and `launch`.
+- Before replaying, prec refuses a picture that shows your home path, hostname, user name, an email address or a passed value, naming each and when it shows; `prec record` only warns, and `--allow-private` renders anyway.
+
 ## v1.0.3 — 2026-10-16
 
 ### Changed
