@@ -18,7 +18,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap = { version = "4.6", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 nix = { version = "0.28", default-features = false, features = ["signal", "sched"] }
-pito-codecs = { git = "https://github.com/gmrdad82/pito-codecs", tag = "v1.14.3", default-features = false, features = ["h264", "mp4", "filter", "png"] }
+pito-codecs = { git = "https://github.com/gmrdad82/pito-codecs", tag = "v1.15.0", default-features = false, features = ["h264", "mp4", "filter", "png"] }
 pito-jobs = { git = "https://github.com/gmrdad82/pito-jobs", tag = "v1.0.2" }
 png = "0.18"
 portable-pty = "0.9.0"
