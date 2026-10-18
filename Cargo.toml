@@ -1,6 +1,6 @@
 [package]
 name = "prec"
-version = "1.4.1"
+version = "1.4.2"
 edition = "2024"
 description = "Deterministic recordings of terminal apps: a VHS alternative that replays a pty session frame by frame in headless Chromium into exact video and PNG masters"
 license = "MIT"
