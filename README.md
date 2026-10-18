@@ -310,7 +310,7 @@ Every `clip`, `still`, `record` and `render` publishes a live job record through
 
 ## Part of PITO MD
 
-prec is one of the open tools of [PITO MD](https://pitomd.com), made for its apps and games and free for yours. It is the terminal half of the renders: [pfx](https://github.com/gmrdad82/pfx) and [Manfred](https://github.com/gmrdad82/manfred) render the 3D and app scenes, prec renders the TUIs and CLIs. pcod from [pito-codecs](https://github.com/gmrdad82/pito-codecs) turns prec's masters into GIFs, WebP and web MP4s, and [pito-compare](https://github.com/gmrdad82/pito-compare) draws the charts on this page. [pito-jobs](https://github.com/gmrdad82/pito-jobs) carries its live job records.
+prec is one of the open tools of [PITO MD](https://pitomd.com), made for its apps and games and free for yours. It is the terminal half of the renders: [pfx](https://github.com/gmrdad82/pfx) and Manfred render the 3D and app scenes, prec renders the TUIs and CLIs. pcod from [pito-codecs](https://github.com/gmrdad82/pito-codecs) turns prec's masters into GIFs, WebP and web MP4s, and [pito-compare](https://github.com/gmrdad82/pito-compare) draws the charts on this page. [pito-jobs](https://github.com/gmrdad82/pito-jobs) carries its live job records.
 
 ## Contributing
 
