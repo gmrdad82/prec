@@ -2,7 +2,7 @@
 
 # prec
 
-[![CI](https://github.com/gmrdad82/prec/actions/workflows/ci.yml/badge.svg)](https://github.com/gmrdad82/prec/actions/workflows/ci.yml) [![Version](https://img.shields.io/github/v/tag/gmrdad82/prec)](https://github.com/gmrdad82/prec/tags)
+[![Version](https://img.shields.io/github/v/tag/gmrdad82/prec)](https://github.com/gmrdad82/prec/tags)
 
 prec records terminal apps into exact videos and stills, part of [PITO MD](https://pitomd.com). It is an alternative to [VHS](https://github.com/charmbracelet/vhs): you write a tape of keystrokes, and prec runs your app in a real pty, records the session once, then replays it frame by frame in headless Chromium at exactly 30, 60 or 120 fps, at any size up to 4K. The same recording always replays to the same bytes.
 
@@ -99,7 +99,7 @@ Size and build: the Linux x86_64 binary is 5,935,688 bytes (5.7 MB; 2,508,494 by
 
 ## Install
 
-prec runs on Linux (x86_64), on Windows through WSL, and on macOS (Apple Silicon). Each [release](https://github.com/gmrdad82/prec/releases/latest) carries a Linux and a macOS binary with a `SHA256SUMS` file. On macOS the binary is built and its tests pass on GitHub's runner; renders on a Mac are untested.
+prec runs on Linux (x86_64), on Windows through WSL, and on macOS (Apple Silicon). Each [release](https://github.com/gmrdad82/prec/releases/latest) carries a Linux and a macOS binary with a `SHA256SUMS` file. On macOS the binary is built on an Apple Silicon Mac; renders on a Mac are untested.
 
 **Linux and WSL:**
 
@@ -325,7 +325,7 @@ bin/gate
 bin/gate --render
 ```
 
-`bin/gate` runs what CI runs on Linux and macOS on every push and nightly: ShellCheck, rustfmt, clippy with warnings as errors, and the unit tests. `bin/gate --render` runs the integration tests, which drive the prec binary through Chromium on Linux, and decode its masters with ffmpeg to check them (they need the prerequisites above and a systemd user session for the confinement tests). A tag builds the Linux and macOS release binaries and the docs bundle, `docs-vX.Y.Z.tar.gz`, which `bin/docs-bundle` makes from `docs/site/`, the binary's `--help`, `docs/formats.md` and `CHANGELOG.md`. The README's GIFs are prec's own shot in `render/terminal.toml` and the clip it records, made GIFs by pcod; its stills are prec renders of `examples/demo`'s palette, laid side by side with ImageMagick, and its charts are pito-compare's from `docs/bench/` ([NOTICE](NOTICE)).
+`bin/gate` runs the checks every change passes before it merges: ShellCheck, rustfmt, clippy with warnings as errors, and the unit tests. `bin/gate --render` runs the integration tests, which drive the prec binary through Chromium on Linux, and decode its masters with ffmpeg to check them (they need the prerequisites above and a systemd user session for the confinement tests). Each release carries the Linux and macOS binaries and the docs bundle, `docs-vX.Y.Z.tar.gz`, which `bin/docs-bundle` makes from `docs/site/`, the binary's `--help`, `docs/formats.md` and `CHANGELOG.md`. The README's GIFs are prec's own shot in `render/terminal.toml` and the clip it records, made GIFs by pcod; its stills are prec renders of `examples/demo`'s palette, laid side by side with ImageMagick, and its charts are pito-compare's from `docs/bench/` ([NOTICE](NOTICE)).
 
 ## Licence
 

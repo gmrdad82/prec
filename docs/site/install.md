@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-prec runs on Linux (x86_64), on Windows through WSL, and on macOS (Apple Silicon). Each [release](https://github.com/gmrdad82/prec/releases/latest) carries a Linux and a macOS binary with a `SHA256SUMS` file. There is no native Windows build: install the Linux binary inside WSL. On macOS the binary is built and its tests pass on GitHub's runner; renders on a Mac are untested.
+prec runs on Linux (x86_64), on Windows through WSL, and on macOS (Apple Silicon). Each [release](https://github.com/gmrdad82/prec/releases/latest) carries a Linux and a macOS binary with a `SHA256SUMS` file. There is no native Windows build: install the Linux binary inside WSL. On macOS the binary is built on an Apple Silicon Mac; renders on a Mac are untested.
 
 ## The binary
 

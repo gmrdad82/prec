@@ -37,4 +37,4 @@ Measured on 2026-10-16 on an AMD Ryzen 9 9950X (prec and VHS pinned to the same 
 - **Masters, not deliveries.** A clip is a silent H.264 master, a poster PNG and a JSON manifest; a still is a 16-bit PNG master with 8-bit deliveries.
 - **Your app, your repository.** Each app keeps its own `render/terminal.toml` and tapes; prec builds it, runs its fixtures, and renders the working tree or any tag or commit.
 
-prec runs on Linux and on Windows through WSL; its macOS build passes its tests on GitHub's runner, and renders on a Mac are untested. It is [MIT licensed](https://github.com/gmrdad82/prec/blob/main/LICENSE); the prec and PITO MD names and logos are not covered by that licence.
+prec runs on Linux and on Windows through WSL; its macOS binary is built on an Apple Silicon Mac, and renders on a Mac are untested. It is [MIT licensed](https://github.com/gmrdad82/prec/blob/main/LICENSE); the prec and PITO MD names and logos are not covered by that licence.
