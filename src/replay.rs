@@ -125,6 +125,7 @@ pub struct Look {
     pub font: String,
     pub window: bool,
     pub ground: Option<[u8; 3]>,
+    pub inset: [u32; 4],
     pub masks: crate::mask::Masks,
 }
 
@@ -300,7 +301,7 @@ pub fn render(
     let frames_dir = work.join("frames");
     paths::fresh(&frames_dir)?;
     let [vw, vh] = size;
-    let dev = Layout::new(size[0], size[1], look.window);
+    let dev = Layout::new(size[0], size[1], look.window).boxed(look.inset)?;
     let avail = dev.avail();
     let grid = [cast.cols, cast.rows];
     let theme = xterm_theme(&look.theme);

@@ -82,7 +82,7 @@ struct Shot {
     seed: u64,
     #[arg(
         long = "set",
-        help = "key=value: grid=<cols>x<rows>, typing, settle, closure, closure.crossfade, launch, ground"
+        help = "key=value: grid=<cols>x<rows>, typing, settle, closure, closure.crossfade, launch, ground, inset"
     )]
     set: Vec<String>,
     #[arg(
@@ -196,7 +196,10 @@ struct Replay {
     out: PathBuf,
     #[arg(long, default_value_t = 7)]
     seed: u64,
-    #[arg(long = "set", help = "key=value: closure, closure.crossfade, ground")]
+    #[arg(
+        long = "set",
+        help = "key=value: closure, closure.crossfade, ground, inset"
+    )]
     set: Vec<String>,
     #[arg(
         long,

@@ -11,6 +11,7 @@ pub struct Layout {
     pub pad: u32,
     pub bar: u32,
     pub radius: u32,
+    pub inset: [u32; 4],
 }
 
 impl Layout {
@@ -25,6 +26,7 @@ impl Layout {
                 pad: (0.022 * h).round() as u32,
                 bar: (0.04 * h).round() as u32,
                 radius: (0.014 * h).round() as u32,
+                inset: [0; 4],
             }
         } else {
             Layout {
@@ -35,23 +37,48 @@ impl Layout {
                 pad: (0.022 * h).round() as u32,
                 bar: 0,
                 radius: 0,
+                inset: [0; 4],
             }
         }
     }
 
+    pub fn boxed(mut self, inset: [u32; 4]) -> Result<Layout, String> {
+        let [t, r, b, l] = inset;
+        if l + r >= self.width || t + b >= self.height {
+            return Err(format!(
+                "inset {t},{r},{b},{l} px leaves no box in {}x{}",
+                self.width, self.height
+            ));
+        }
+        if inset != [0; 4] {
+            self.margin = 0;
+            if !self.window {
+                self.pad = 0;
+            }
+        }
+        self.inset = inset;
+        Ok(self)
+    }
+
+    fn area(&self) -> [u32; 4] {
+        let [t, r, b, l] = self.inset;
+        [l, t, self.width - l - r, self.height - t - b]
+    }
+
     pub fn avail(&self) -> [u32; 2] {
+        let [_, _, w, h] = self.area();
         [
-            self.width.saturating_sub(2 * self.margin + 2 * self.pad),
-            self.height
-                .saturating_sub(2 * self.margin + 2 * self.pad + self.bar),
+            w.saturating_sub(2 * self.margin + 2 * self.pad),
+            h.saturating_sub(2 * self.margin + 2 * self.pad + self.bar),
         ]
     }
 
     pub fn place(&self, canvas: [u32; 2]) -> ([u32; 4], [u32; 2]) {
+        let [x, y, w, h] = self.area();
         let ww = canvas[0] + 2 * self.pad;
         let wh = canvas[1] + 2 * self.pad + self.bar;
-        let wx = (self.width.saturating_sub(ww)) / 2;
-        let wy = (self.height.saturating_sub(wh)) / 2;
+        let wx = x + (w.saturating_sub(ww)) / 2;
+        let wy = y + (h.saturating_sub(wh)) / 2;
         ([wx, wy, ww, wh], [wx + self.pad, wy + self.bar + self.pad])
     }
 }
@@ -360,5 +387,22 @@ mod tests {
         let bare = Layout::new(1920, 1080, false);
         assert_eq!(bare.bar, 0);
         assert_eq!(bare.margin, 0);
+    }
+
+    #[test]
+    fn an_inset_keeps_the_grid_inside_its_box() {
+        let inset = crate::render::inset_px("4%,15%,20%,4%", [1080, 1920]).unwrap();
+        assert_eq!(inset, [77, 162, 384, 43]);
+        let l = Layout::new(1080, 1920, false).boxed(inset).unwrap();
+        assert_eq!(l.avail(), [1080 - 43 - 162, 1920 - 77 - 384]);
+        let (_, at) = l.place([875, 700]);
+        assert_eq!(at, [43, 77 + (1459 - 700) / 2]);
+        let (_, at) = l.place([600, 1459]);
+        assert_eq!(at, [43 + (875 - 600) / 2, 77]);
+        let w = Layout::new(1080, 1920, true).boxed(inset).unwrap();
+        let (win, _) = w.place([w.avail()[0], 1000]);
+        assert!(win[0] >= 43 && win[0] + win[2] <= 1080 - 162);
+        assert!(win[1] >= 77 && win[1] + win[3] <= 1920 - 384);
+        assert!(Layout::new(100, 100, false).boxed([50, 0, 50, 0]).is_err());
     }
 }

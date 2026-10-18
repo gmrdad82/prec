@@ -20,6 +20,8 @@ pub struct Terminal {
     #[serde(default)]
     pub ground: Option<String>,
     #[serde(default)]
+    pub inset: Option<String>,
+    #[serde(default)]
     pub prompt: Option<String>,
     #[serde(default)]
     pub cwd: Option<String>,

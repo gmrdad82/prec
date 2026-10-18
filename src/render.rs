@@ -224,7 +224,37 @@ const SET_KEYS: &[&str] = &[
     "closure.crossfade",
     "launch",
     "ground",
+    "inset",
 ];
+
+pub fn inset_px(spec: &str, size: [u32; 2]) -> Result<[u32; 4], String> {
+    let bad = || format!("inset {spec}: 1 to 4 of N% or Npx, top,right,bottom,left");
+    let parts: Vec<&str> = spec.split(',').map(str::trim).collect();
+    let [t, r, b, l] = match parts.as_slice() {
+        [a] => [*a, *a, *a, *a],
+        [v, h] => [*v, *h, *v, *h],
+        [t, h, b] => [*t, *h, *b, *h],
+        [t, r, b, l] => [*t, *r, *b, *l],
+        _ => return Err(bad()),
+    };
+    let side = |v: &str, dim: u32| -> Result<u32, String> {
+        let (n, pct) = match v.strip_suffix('%') {
+            Some(n) => (n, true),
+            None => (v.strip_suffix("px").unwrap_or(v), false),
+        };
+        let n: f64 = n.trim().parse().map_err(|_| bad())?;
+        if !n.is_finite() || n < 0.0 || (pct && n >= 100.0) {
+            return Err(bad());
+        }
+        Ok(if pct { n / 100.0 * dim as f64 } else { n }.round() as u32)
+    };
+    Ok([
+        side(t, size[1])?,
+        side(r, size[0])?,
+        side(b, size[1])?,
+        side(l, size[0])?,
+    ])
+}
 
 fn closure_from_sets(sets: &[(String, String)]) -> Result<Option<app::Closure>, String> {
     for (k, v) in sets.iter().rev() {
@@ -491,6 +521,9 @@ fn prepare(resolved: Resolved, kind: &str, opts: &Opts, run_name: &str) -> Resul
     let frame = opts.frame.clone().unwrap_or_else(|| terminal.frame.clone());
     if frame != "window" && frame != "bare" {
         return Err("--frame window or bare".into());
+    }
+    if let Some(spec) = set_value(&sets, "inset").or_else(|| terminal.inset.clone()) {
+        inset_px(&spec, [1000, 1000])?;
     }
     let grid = match set_value(&sets, "grid") {
         Some(g) => {
@@ -771,6 +804,7 @@ fn cast_meta(
     tape_text: &str,
 ) -> Value {
     let ground = set_value(&p.sets, "ground").or_else(|| p.terminal.ground.clone());
+    let inset = set_value(&p.sets, "inset").or_else(|| p.terminal.inset.clone());
     json!({
         "tool": {"name": TOOL, "version": env!("CARGO_PKG_VERSION")},
         "product": opts.product,
@@ -780,6 +814,7 @@ fn cast_meta(
         "app_theme": p.terminal.theme,
         "frame": p.frame,
         "ground": ground,
+        "inset": inset,
         "font": p.family,
         "closure": closure.to_json(),
         "size": p.shot.size,
@@ -888,6 +923,12 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
         opts.fps,
         meta["fps"].as_u64().map(|f| u32::try_from(f).unwrap_or(0)),
     )?;
+    let inset_spec = set_value(&sets, "inset").or_else(|| meta["inset"].as_str().map(String::from));
+    let inset = match &inset_spec {
+        Some(spec) => inset_px(spec, pl.master_size)?,
+        None => [0; 4],
+    };
+    compose::Layout::new(pl.master_size[0], pl.master_size[1], frame == "window").boxed(inset)?;
     let label = choice.label.clone();
     let name = format!(
         "{shot}{}",
@@ -898,6 +939,7 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
         font: family.clone(),
         window: frame == "window",
         ground,
+        inset,
         masks: crate::mask::Masks::of_meta(&meta, [cast.cols, cast.rows])?,
     };
     let timeline = Timeline::of(&cast.events);
@@ -1122,6 +1164,7 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
             "seed": opts.seed,
             "set": opts.set,
             "frame": frame,
+            "inset": inset_spec,
             "theme": opts.theme,
             "font": family,
             "youtube": opts.youtube,

@@ -18,7 +18,7 @@ The core keys, shared with pfx:
 | `product`, `kind` | the app's product slug, and `still` or `clip` |
 | `version` | the app's tag, else the first 12 hex digits of its commit, with `-dirty` for a dirty tree; `local` when no commit is known |
 | `source` | `{"path", "sha256", "commit"}`: the cast this render replayed, and the app's commit |
-| `params` | the render's flags: `size` ([w, h]), `size_arg`, `derive` (the extra still sizes), `fps` ([fps] for a clip, `null` for a still), `seed`, `set`, `frame`, `theme`, `font`, `youtube`, `encode` (`false` with `--no-encode`), `web`, `poster` |
+| `params` | the render's flags: `size` ([w, h]), `size_arg`, `derive` (the extra still sizes), `fps` ([fps] for a clip, `null` for a still), `seed`, `set`, `frame`, `inset` (the inset as given, `null` when none), `theme`, `font`, `youtube`, `encode` (`false` with `--no-encode`), `web`, `poster` |
 | `device` | `"CPU"` |
 | `colour` | `master`, `delivery` and `terminal`, as text |
 | `outputs` | `delivery`, `master`, `poster` and `resampling`, as text |
@@ -70,7 +70,7 @@ Every `leaf` is relative to the archive's `Masters/` folder (since 0.21.0; befor
 
 - **Header:** `{"version": 2, "width": <cols>, "height": <rows>, "env": {"TERM": "xterm-256color", "SHELL": "/bin/bash"}, "x_terminal_renderer": {…}}`.
 - **Events:** `[<seconds since the start, to the microsecond>, <code>, <data>]`, where the code is `o` for output, `i` for input, and `m` for a marker: `hide`, `show`, `screenshot` or `end`.
-- **`x_terminal_renderer`** holds what a later `prec render <cast>` needs: `tool`, `product`, `shot`, `kind`, `grid`, `app_theme`, `frame`, `ground`, `font`, `closure`, `size`, `fps`, `poster`, `typing`, `settle`, `launch`, `prompt`, `shown_seconds`, `app` (as in the manifest), `shot_sha256`, `tape_sha256`, `fixtures`, `env`, the pty's environment as `[name, value]` pairs without `HOME` and without the `pass_env` variables, `pass_env`, the names of the variables passed from prec's environment (never their values), `home` and `hostname`, the session's neutral home and hostname, or `null` when `terminal.toml` sets no `home`, and `mask`, the masks of `terminal.toml` and the shot as `{"match": "<regex>"}` or `{"rect": [col, row, cols, rows]}`, which every replay of the cast covers (`[]` when none; absent before 1.2.0).
+- **`x_terminal_renderer`** holds what a later `prec render <cast>` needs: `tool`, `product`, `shot`, `kind`, `grid`, `app_theme`, `frame`, `ground`, `inset` (`null` when none; absent before 1.4.0), `font`, `closure`, `size`, `fps`, `poster`, `typing`, `settle`, `launch`, `prompt`, `shown_seconds`, `app` (as in the manifest), `shot_sha256`, `tape_sha256`, `fixtures`, `env`, the pty's environment as `[name, value]` pairs without `HOME` and without the `pass_env` variables, `pass_env`, the names of the variables passed from prec's environment (never their values), `home` and `hostname`, the session's neutral home and hostname, or `null` when `terminal.toml` sets no `home`, and `mask`, the masks of `terminal.toml` and the shot as `{"match": "<regex>"}` or `{"rect": [col, row, cols, rows]}`, which every replay of the cast covers (`[]` when none; absent before 1.2.0).
 
 ## 3. The archive catalog line
 
