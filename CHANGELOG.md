@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.3.0 — 2026-10-18
+
+### Added
+
+- A `Squeeze [gap] [/regex/]` tape step shortens every stretch where only a spinner or a counter moves (default 500 ms), keeping typed and printed text and `Sleep` at real speed; `Squeeze off` ends it, and the regex leaves status rows out.
+
+### Fixed
+
+- A tape that opens with `Hide` no longer shows the launch line in a first frame, and the private-data check no longer flags it.
+- `Wait` regexes see a no-break space or any other Unicode space as a plain space, so `/⎿ +name/` matches what an app drew with a no-break space.
+
 ## v1.2.5 — 2026-10-17
 
 ### Changed
