@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.4.0 — 2026-10-18
+
+### Added
+
+- `inset` in `terminal.toml`, or `--set inset=4%,15%,20%,4%`, places the terminal in a box inside the frame, so a vertical video keeps its text in the platform's safe zone. It takes one to four sides in percent or pixels, works for clips, stills and frames alike, and `prec render` keeps it from the cast.
+
 ## v1.3.0 — 2026-10-18
 
 ### Added
