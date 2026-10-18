@@ -96,9 +96,7 @@ impl Screen {
     }
 
     fn shown(&self) -> String {
-        self.parser
-            .screen()
-            .contents()
+        displayed(&self.parser.screen().contents())
             .lines()
             .enumerate()
             .filter(|(_, l)| !l.trim().is_empty())
@@ -112,7 +110,7 @@ impl Screen {
     }
 
     fn matches(&self, re: &regex::Regex, screen: bool) -> bool {
-        let text = self.parser.screen().contents();
+        let text = displayed(&self.parser.screen().contents());
         if screen {
             return re.is_match(&text);
         }
@@ -121,6 +119,19 @@ impl Screen {
             .find(|l| !l.trim().is_empty())
             .is_some_and(|l| re.is_match(l))
     }
+}
+
+fn displayed(text: &str) -> String {
+    text.chars()
+        .filter(|c| !matches!(c, '\u{200b}'..='\u{200d}' | '\u{2060}' | '\u{feff}'))
+        .map(|c| {
+            if c != '\n' && c.is_whitespace() {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect()
 }
 
 struct Session {
@@ -309,6 +320,7 @@ pub fn record(spec: &Spec) -> Result<Vec<Event>, String> {
     result?;
     let mut events: Vec<Event> = s.events.into_iter().filter(|e| e.t <= end).collect();
     events.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
+    squeeze(&mut events, spec.grid, end);
     events.push(Event {
         t: end,
         kind: Kind::Marker,
@@ -337,7 +349,10 @@ fn drive(s: &mut Session, spec: &Spec) -> Result<(), String> {
         s.send(format!("{l}\r").as_bytes())?;
     }
     s.sleep(spec.settle);
-    s.marker("show");
+    if spec.steps.first() != Some(&Step::Hide) {
+        s.marker("show");
+    }
+    let mut squeezing = false;
     for step in spec.steps {
         match step {
             Step::Type { text, speed } => s.type_text(text, speed.unwrap_or(spec.typing))?,
@@ -350,7 +365,21 @@ fn drive(s: &mut Session, spec: &Spec) -> Result<(), String> {
                     s.sleep(delay);
                 }
             }
+            Step::Sleep(d) if squeezing => {
+                s.marker("hold");
+                s.sleep(*d);
+                s.marker("release");
+            }
             Step::Sleep(d) => s.sleep(*d),
+            Step::Squeeze { gap, ignore } => {
+                s.pump();
+                squeezing = gap.is_some();
+                s.marker(&match (gap, ignore) {
+                    (Some(g), Some(r)) => format!("squeeze {} /{r}/", g.as_secs_f64()),
+                    (Some(g), None) => format!("squeeze {}", g.as_secs_f64()),
+                    (None, _) => "squeeze off".into(),
+                });
+            }
             Step::Hide => s.marker("hide"),
             Step::Show => s.marker("show"),
             Step::Screenshot => s.marker("screenshot"),
@@ -414,6 +443,108 @@ fn drive(s: &mut Session, spec: &Spec) -> Result<(), String> {
         s.sleep(Duration::from_millis(200));
     }
     Ok(())
+}
+
+const BURST: f64 = 0.005;
+
+fn idle_key(screen: &vt100::Screen, ignore: Option<&regex::Regex>) -> String {
+    displayed(&screen.contents())
+        .lines()
+        .filter(|l| !ignore.is_some_and(|r| r.is_match(l)))
+        .map(|l| l.chars().filter(|c| c.is_alphabetic()).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn squeeze(events: &mut Vec<Event>, grid: [u32; 2], end: f64) {
+    if !events
+        .iter()
+        .any(|e| e.kind == Kind::Marker && e.data.starts_with("squeeze "))
+    {
+        return;
+    }
+    let mut parser = vt100::Parser::new(grid[1].max(1) as u16, grid[0].max(1) as u16, 0);
+    let mut ignore: Option<regex::Regex> = None;
+    let mut key = idle_key(parser.screen(), None);
+    let mut gap: Option<f64> = None;
+    let mut hold = false;
+    let mut since = 0.0;
+    let mut cuts: Vec<(f64, f64)> = vec![];
+    let mut mark = |t: f64, gap: Option<f64>, hold: bool, since: &mut f64| {
+        if let Some(g) = gap
+            && !hold
+            && t - *since > g
+        {
+            cuts.push((*since + g / 2.0, t - g / 2.0));
+        }
+        *since = t;
+    };
+    let mut i = 0;
+    while i < events.len() {
+        let e = &events[i];
+        match e.kind {
+            Kind::Output => {
+                let first = e.t;
+                let mut last = e.t;
+                while i < events.len()
+                    && events[i].kind == Kind::Output
+                    && events[i].t - last <= BURST
+                {
+                    parser.process(events[i].data.as_bytes());
+                    last = events[i].t;
+                    i += 1;
+                }
+                let next = idle_key(parser.screen(), ignore.as_ref());
+                if next != key {
+                    key = next;
+                    mark(first, gap, hold, &mut since);
+                }
+                continue;
+            }
+            Kind::Input => mark(e.t, gap, hold, &mut since),
+            Kind::Marker => match e.data.as_str() {
+                "hold" => {
+                    mark(e.t, gap, hold, &mut since);
+                    hold = true;
+                }
+                "release" => {
+                    hold = false;
+                    since = e.t;
+                }
+                "squeeze off" => {
+                    mark(e.t, gap, hold, &mut since);
+                    gap = None;
+                }
+                d => {
+                    if let Some(g) = d.strip_prefix("squeeze ") {
+                        mark(e.t, gap, hold, &mut since);
+                        let (g, r) = g.split_once(' ').unwrap_or((g, ""));
+                        gap = tape::duration(g).ok().map(|d| d.as_secs_f64());
+                        ignore = r
+                            .strip_prefix('/')
+                            .and_then(|r| r.strip_suffix('/'))
+                            .and_then(|r| regex::Regex::new(r).ok());
+                        key = idle_key(parser.screen(), ignore.as_ref());
+                    }
+                }
+            },
+        }
+        i += 1;
+    }
+    mark(end, gap, hold, &mut since);
+    for (a, b) in cuts {
+        events.push(Event {
+            t: a,
+            kind: Kind::Marker,
+            data: "cut".into(),
+        });
+        events.push(Event {
+            t: b,
+            kind: Kind::Marker,
+            data: "resume".into(),
+        });
+    }
+    events.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
 }
 
 fn shell_quote(s: &str) -> String {
@@ -485,6 +616,8 @@ pub fn read(path: &Path) -> Result<Cast, String> {
     })
 }
 
+const MIN_SHOWN: f64 = 0.001;
+
 pub struct Timeline {
     pub segments: Vec<(f64, f64)>,
     pub shots: Vec<f64>,
@@ -496,6 +629,8 @@ impl Timeline {
         let mut segments = vec![];
         let mut shots = vec![];
         let mut open: Option<f64> = None;
+        let mut cuts = vec![];
+        let mut cut: Option<f64> = None;
         let mut end = 0.0;
         for e in events.iter().filter(|e| e.kind == Kind::Marker) {
             match e.data.as_str() {
@@ -512,6 +647,12 @@ impl Timeline {
                     }
                 }
                 "screenshot" => shots.push(e.t),
+                "cut" => cut = Some(e.t),
+                "resume" => {
+                    if let Some(a) = cut.take() {
+                        cuts.push((a, e.t));
+                    }
+                }
                 "end" => end = e.t,
                 _ => {}
             }
@@ -521,6 +662,22 @@ impl Timeline {
         {
             segments.push((s, end));
         }
+        for (a, b) in cuts {
+            segments = segments
+                .into_iter()
+                .flat_map(|(s, e)| {
+                    if b <= s || a >= e {
+                        vec![(s, e)]
+                    } else {
+                        [(s, a), (b, e)]
+                            .into_iter()
+                            .filter(|(s, e)| e > s)
+                            .collect()
+                    }
+                })
+                .collect();
+        }
+        segments.retain(|(s, e)| e - s >= MIN_SHOWN);
         Timeline {
             segments,
             shots,
@@ -599,6 +756,67 @@ mod tests {
         assert!((tl.at(0.5) - 1.5).abs() < 1e-9);
         assert!((tl.at(2.5) - 4.5).abs() < 1e-9);
         assert_eq!(tl.shots, vec![4.5]);
+    }
+
+    #[test]
+    fn a_tape_that_opens_hidden_shows_nothing_before_its_first_show() {
+        let tl = Timeline::of(&[
+            m(0.0, "hide"),
+            m(1.0, "show"),
+            m(1.000002, "hide"),
+            m(3.0, "show"),
+            m(5.0, "end"),
+        ]);
+        assert_eq!(tl.segments, vec![(3.0, 5.0)]);
+        assert!((tl.at(0.0) - 3.0).abs() < 1e-9);
+    }
+
+    fn o(t: f64, d: &str) -> Event {
+        Event {
+            t,
+            kind: Kind::Output,
+            data: d.into(),
+        }
+    }
+
+    #[test]
+    fn a_squeeze_cuts_a_spinner_but_keeps_text_input_and_sleeps() {
+        let mut ev = vec![m(0.0, "show"), m(0.0, "squeeze 0.5 /^. Thinking/")];
+        ev.push(Event {
+            t: 1.0,
+            kind: Kind::Input,
+            data: "\r".into(),
+        });
+        ev.push(o(1.0, "\u{2733} Thinking 1s"));
+        for k in 2..10 {
+            let word = if k % 2 == 0 { "tokens" } else { "thought" };
+            ev.push(o(k as f64, &format!("\r\u{2736} Thinking {k}s {word}")));
+        }
+        ev.push(o(10.0, "\r\nDone"));
+        ev.push(o(10.2, "\r\nmore"));
+        ev.push(m(11.0, "hold"));
+        ev.push(m(15.0, "release"));
+        ev.push(m(15.0, "squeeze off"));
+        ev.push(o(16.0, "\r\n\u{2736} 1"));
+        ev.push(o(30.0, "\r\n\u{2736} 2"));
+        squeeze(&mut ev, [40, 10], 31.0);
+        let tl = Timeline::of(&[ev, vec![m(31.0, "end")]].concat());
+        let ms: Vec<(i64, i64)> = tl
+            .segments
+            .iter()
+            .map(|(a, b)| ((a * 1e3).round() as i64, (b * 1e3).round() as i64))
+            .collect();
+        assert_eq!(
+            ms,
+            vec![(0, 250), (750, 1250), (9750, 10450), (10750, 31000)]
+        );
+    }
+
+    #[test]
+    fn a_wait_sees_a_no_break_space_as_a_space() {
+        let mut s = Screen::new([60, 5]);
+        s.feed("  \u{23bf} \u{a0}mustang.toml: car\u{200b}s");
+        assert!(s.matches(&regex::Regex::new(r"⎿ +mustang\.toml: cars").unwrap(), true));
     }
 
     #[test]

@@ -48,6 +48,10 @@ pub enum Step {
         quiet: Duration,
         timeout: Duration,
     },
+    Squeeze {
+        gap: Option<Duration>,
+        ignore: Option<String>,
+    },
 }
 
 pub fn duration(s: &str) -> Result<Duration, String> {
@@ -178,20 +182,31 @@ pub fn parse_line(line: &str) -> Result<Option<Step>, String> {
             },
             timeout: speed.unwrap_or(Duration::from_secs(300)),
         })),
+        "Squeeze" if rest == "off" => Ok(Some(Step::Squeeze {
+            gap: None,
+            ignore: None,
+        })),
+        "Squeeze" => {
+            let (gap, ignore) = match rest.split_once('/') {
+                Some((g, r)) => (g.trim(), Some(slashed(t, &format!("/{r}"))?)),
+                None => (rest, None),
+            };
+            Ok(Some(Step::Squeeze {
+                gap: Some(if gap.is_empty() {
+                    Duration::from_millis(500)
+                } else {
+                    duration(gap)?
+                }),
+                ignore,
+            }))
+        }
         "Copy" | "Paste" => Err(format!(
             "{name}: the clipboard has no replay; type the text"
         )),
         n if n == "Wait" || n.starts_with("Wait+") => {
             let screen = n.ends_with("+Screen");
-            let pat = rest.trim();
-            let pattern = pat
-                .strip_prefix('/')
-                .and_then(|p| p.strip_suffix('/'))
-                .ok_or_else(|| format!("{t}: Wait takes /regex/"))?
-                .to_string();
-            regex::Regex::new(&pattern).map_err(|e| format!("{t}: {e}"))?;
             Ok(Some(Step::Wait {
-                pattern,
+                pattern: slashed(t, rest)?,
                 timeout: speed.unwrap_or(Duration::from_secs(15)),
                 screen,
             }))
@@ -211,6 +226,17 @@ pub fn parse_line(line: &str) -> Result<Option<Step>, String> {
             Ok(Some(Step::Key { key, count, speed }))
         }
     }
+}
+
+fn slashed(t: &str, rest: &str) -> Result<String, String> {
+    let pattern = rest
+        .trim()
+        .strip_prefix('/')
+        .and_then(|p| p.strip_suffix('/'))
+        .ok_or_else(|| format!("{t}: takes /regex/"))?
+        .to_string();
+    regex::Regex::new(&pattern).map_err(|e| format!("{t}: {e}"))?;
+    Ok(pattern)
 }
 
 pub fn parse(text: &str) -> Result<Vec<Step>, String> {
@@ -285,8 +311,30 @@ mod tests {
 
     #[test]
     fn steps_read_like_vhs() {
-        let s = parse("Type \"demo tui\"\nEnter\nSleep 2s\nDown@200ms 3\nCtrl+C\nType@0ms `a \"b\"`\n# note\nHide\nShow\nScreenshot\nWait+Screen@5s /ready/\nShift+Tab\nAlt+Enter\nIdle@10m 3s\nIdle\n").unwrap();
-        assert_eq!(s.len(), 14);
+        let s = parse("Type \"demo tui\"\nEnter\nSleep 2s\nDown@200ms 3\nCtrl+C\nType@0ms `a \"b\"`\n# note\nHide\nShow\nScreenshot\nWait+Screen@5s /ready/\nShift+Tab\nAlt+Enter\nIdle@10m 3s\nIdle\nSqueeze\nSqueeze 2s /^. \\w+… /\nSqueeze off\n").unwrap();
+        assert_eq!(s.len(), 17);
+        assert_eq!(
+            s[14],
+            Step::Squeeze {
+                gap: Some(Duration::from_millis(500)),
+                ignore: None
+            }
+        );
+        assert_eq!(
+            s[15],
+            Step::Squeeze {
+                gap: Some(Duration::from_secs(2)),
+                ignore: Some(r"^. \w+… ".into())
+            }
+        );
+        assert_eq!(
+            s[16],
+            Step::Squeeze {
+                gap: None,
+                ignore: None
+            }
+        );
+        assert!(parse("Squeeze 1s /(/\n").is_err());
         assert_eq!(
             s[12],
             Step::Idle {

@@ -29,6 +29,7 @@ Sleep 1.2s
 | `Wait /regex/` | waits until the screen's last non-blank row matches |
 | `Wait+Screen /regex/` | waits until anywhere on the screen matches |
 | `Idle <duration>` | waits until the screen hasn't changed for that long; default `2s` |
+| `Squeeze [<gap>] [/regex/]`, `Squeeze off` | from here on, shortens every stretch where only a spinner or a counter moves to `gap` (default `500ms`) |
 | `Hide`, `Show` | cut the steps between them from the recording |
 | `Screenshot` | keeps a marker in the cast |
 | `# …` | a comment |
@@ -50,13 +51,19 @@ Ctrl+C
 
 ## Wait for the screen, not the clock
 
-A `Sleep` guesses how long the app takes; a `Wait` watches the screen. `Wait /ready/` returns as soon as the last non-blank row matches the regex, and `Wait+Screen@5s /Loaded \d+ items/` searches the whole screen for up to 5 seconds. The default timeout is 15 seconds; on a timeout the recording stops with the rows it saw, so a tape that waits for the wrong text says what was there.
+A `Sleep` guesses how long the app takes; a `Wait` watches the screen. `Wait /ready/` returns as soon as the last non-blank row matches the regex, and `Wait+Screen@5s /Loaded \d+ items/` searches the whole screen for up to 5 seconds. The default timeout is 15 seconds; on a timeout the recording stops with the rows it saw, so a tape that waits for the wrong text says what was there. A regex sees each row as it is displayed: a no-break space or any other Unicode space is a plain space, so `/⎿ +done/` matches a row an app drew as `⎿` and a no-break space, and zero-width characters are left out.
 
 When nothing on the screen marks the end, wait for it to go still: `Idle 3s` returns once the screen, colours and cursor included, has stayed the same for 3 seconds, and `Idle@20m 3s` gives it up to 20 minutes (the default is 5). Output that redraws the same picture doesn't count as a change; a spinner or a running timer does, so an app that animates while it works is waited out.
 
 ## Hide setup steps
 
-`Hide` and `Show` cut a stretch from the replay: the app still runs it, but its frames never show. For a command that only prepares the app, the shot's `launch` is simpler: prec types it hidden, waits `settle`, then starts showing.
+`Hide` and `Show` cut a stretch from the replay: the app still runs it, but its frames never show. For a command that only prepares the app, the shot's `launch` is simpler: prec types it hidden, waits `settle`, then starts showing. A tape that opens with `Hide` stays hidden from the launch to its first `Show`, so the launch line never reaches a frame.
+
+## Squeeze the waits
+
+An app that thinks for a minute behind a spinner makes a long, dull clip. `Squeeze 400ms` keeps recording at real time but shortens, from there on, every stretch where nothing but a spinner or a counter moves to 400 ms: half of it before the jump, half after. A stretch ends when a letter on the screen changes, so typed keys and printed text keep their real speed, while a spinner's glyph, a timer's digits and colours alone count as still. A `Sleep` keeps its full length, and `Squeeze off` stops squeezing.
+
+A status row whose words change while it waits, such as an agent's `✻ Thinking… (12s · thinking)` that turns into `(14s · ↓ 300 tokens)`, is left out with a regex: `Squeeze 400ms /^. \w+… /` ignores every row it matches. The cast keeps the real times and marks each squeezed stretch, so the take's shown length, its clip and its private-data check all follow the squeezed timeline.
 
 ## Record a live agent session
 
@@ -69,6 +76,7 @@ Enter
 Wait+Screen@60s /> $/
 Ctrl+L
 Show
+Squeeze 400ms /^. \w+… /
 Type "Add a --json flag to the list command"
 Enter
 Wait+Screen@600s /tests pass/
@@ -79,6 +87,7 @@ Sleep 3s
 ```
 
 - `Hide` from the launch to the first prompt keeps the agent's start-up banner, with its account or plan, out of the picture; what is still on the screen at `Show` is in it, so clear the screen first, as `Ctrl+L` does here, when the banner stays drawn.
+- `Squeeze 400ms /^. \w+… /` cuts the agent's thinking down to 400 ms a stretch, leaving out its status row, while the prompt it is typed and the text it prints keep their pace.
 - `Wait+Screen@600s` gives a step up to ten minutes; the recording keeps going while it waits, and a `Hide` around a long wait cuts it from the clip.
 - `Idle@20m 5s` waits for the session to finish: the agent's spinner and timer change the screen while it works, so the step returns once it has stopped drawing for 5 seconds.
 - A label that stays on the screen, such as the plan or organisation in a banner, is hidden with a `mask` in [render/terminal.toml](set-up-your-app.md#mask-a-region): `mask = [{ match = "Claude (Max|Pro)" }]` fills each match with the theme's background in every frame.
