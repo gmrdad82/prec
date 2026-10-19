@@ -10,7 +10,7 @@ use std::sync::{Condvar, Mutex};
 
 pub const COLOR_709: &str = "BT.709 primaries, transfer and matrix, limited range (SDR)";
 pub const LANCZOS: &str = "Lanczos3 in linear light";
-pub const CODECS: &str = "1.16.0";
+pub const CODECS: &str = "1.16.1";
 const THREADS: usize = 16;
 const CRF: u8 = 14;
 const B_FRAMES: u8 = 0;
