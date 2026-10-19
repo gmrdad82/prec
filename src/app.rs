@@ -675,11 +675,8 @@ mod tests {
         let other = work.join("other");
         std::fs::create_dir_all(&inside).unwrap();
         std::fs::create_dir_all(&other).unwrap();
-        let init = Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(&other)
-            .status()
-            .unwrap();
+        let init =
+            paths::status(Command::new("git").args(["init", "-q"]).current_dir(&other)).unwrap();
         assert!(init.success());
         assert!(own(&tree, &tree).is_ok());
         assert!(own(&tree.join("examples/demo"), &tree).is_ok());

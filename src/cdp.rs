@@ -402,19 +402,18 @@ impl Drop for Browser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::process::CommandExt;
 
     fn peer(script: &str) -> Browser {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tmp/cdp-unit");
         std::fs::create_dir_all(&dir).unwrap();
-        let mut child = Command::new("bash")
-            .args(["-c", script])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .process_group(0)
-            .spawn()
-            .unwrap();
+        let mut child = crate::paths::spawn(
+            Command::new("bash")
+                .args(["-c", script])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null()),
+        )
+        .unwrap();
         let (stdin, stdout) = (child.stdin.take().unwrap(), child.stdout.take().unwrap());
         Browser {
             child,
