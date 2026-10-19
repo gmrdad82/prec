@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.4.4 — 2026-10-19
+
+### Changed
+
+- The check for private data before a render also catches Claude Code's usage limit lines, such as `You've used 77% of your weekly limit` or `session limit · resets 3pm`, unless a mask hides them.
+
 ## v1.4.3 — 2026-10-19
 
 ### Changed
