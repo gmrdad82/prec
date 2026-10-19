@@ -4,8 +4,8 @@
 
 ### Changed
 
-- Gate, build and release through pci, not GitHub Actions.
-- Pin pito-codecs v1.16.0.
+- Clip masters are encoded with pito-codecs 1.16.0.
+- Releases are built, tested and published on our own machines instead of GitHub Actions; the Linux and macOS downloads are the same as before.
 
 ## v1.4.2 — 2026-10-19
 
