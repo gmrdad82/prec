@@ -3,6 +3,7 @@ use crate::archive;
 use crate::compose;
 use crate::encode;
 use crate::font;
+use crate::fps::Fps;
 use crate::home::Ns;
 use crate::jobs;
 use crate::paths;
@@ -11,6 +12,7 @@ use crate::record::{self, Cast, Timeline};
 use crate::replay::{self, Look, Take};
 use crate::tape;
 use crate::theme::{self, Choice};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::cell::OnceCell;
 use std::collections::BTreeSet;
@@ -22,7 +24,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 pub const TOOL: &str = "prec";
-pub const DEFAULT_FPS: u32 = 120;
+pub const DEFAULT_FPS: Fps = Fps::new(120, 1);
 
 #[derive(Clone, Debug, Default)]
 pub struct Opts {
@@ -32,7 +34,7 @@ pub struct Opts {
     pub bin: Option<PathBuf>,
     pub size: Option<String>,
     pub derive: Vec<String>,
-    pub fps: Option<u32>,
+    pub fps: Option<Fps>,
     pub poster: Option<String>,
     pub out: PathBuf,
     pub seed: u64,
@@ -104,9 +106,6 @@ pub fn validate(kind: &str, opts: &Opts) -> Result<(), String> {
         if !opts.derive.is_empty() {
             return Err("--derive for clips belongs to pcod".into());
         }
-        if let Some(fps) = opts.fps {
-            check_fps(fps)?;
-        }
         if !opts.web.is_empty() {
             return Err("--web makes still web copies; use pcod for clips".into());
         }
@@ -149,13 +148,6 @@ fn checked_kind(kind: &str) -> Result<&str, String> {
         return Err(format!("kind {kind:?}: clip or still"));
     }
     Ok(kind)
-}
-
-fn check_fps(fps: u32) -> Result<u32, String> {
-    if ![30, 60, 120].contains(&fps) {
-        return Err(format!("--fps {fps}: 30, 60 or 120"));
-    }
-    Ok(fps)
 }
 
 struct Web {
@@ -385,7 +377,7 @@ fn hexs(c: [u8; 3]) -> String {
 struct Plan {
     master_size: [u32; 2],
     sizes: Vec<[u32; 2]>,
-    fps: u32,
+    fps: Fps,
     size_arg: String,
 }
 
@@ -394,8 +386,8 @@ fn plan(
     size: Option<String>,
     shot_size: Option<String>,
     derive: &[String],
-    fps: Option<u32>,
-    shot_fps: Option<u32>,
+    fps: Option<Fps>,
+    shot_fps: Option<Fps>,
 ) -> Result<Plan, String> {
     let size_arg = size.or(shot_size).unwrap_or_else(|| "1080p".into());
     let master_size = parse_size(&size_arg, kind)?;
@@ -410,9 +402,6 @@ fn plan(
         }
     }
     let fps = fps.or(shot_fps).unwrap_or(DEFAULT_FPS);
-    if kind == "clip" {
-        check_fps(fps)?;
-    }
     Ok(Plan {
         master_size,
         sizes,
@@ -501,11 +490,8 @@ fn prepare(resolved: Resolved, kind: &str, opts: &Opts, run_name: &str) -> Resul
     if let Some(size) = &shot.size {
         parse_size(size, kind).map_err(|e| format!("shot {}: {e}", opts.shot))?;
     }
-    if let Some(fps) = shot.fps {
-        if kind != "clip" {
-            return Err(format!("shot {}: fps is for clips", opts.shot));
-        }
-        check_fps(fps).map_err(|e| format!("shot {}: {e}", opts.shot))?;
+    if shot.fps.is_some() && kind != "clip" {
+        return Err(format!("shot {}: fps is for clips", opts.shot));
     }
     let out_root = paths::inside_tmp(&opts.out)?;
     if opts.bin.is_none() {
@@ -845,11 +831,20 @@ fn cast_meta(
     })
 }
 
-fn frames_for(shown: f64, fps: u32, closure: &app::Closure) -> usize {
+fn frames_for(shown: f64, fps: Fps, closure: &app::Closure) -> usize {
     if *closure == app::Closure::Palindrome {
-        return (shown * fps as f64).round().max(3.0) as usize;
+        return fps.frames(shown).round().max(3.0) as usize;
     }
     replay::frame_count(shown, fps, closure.fade_frames(fps))
+}
+
+fn cast_fps(meta: &Value) -> Result<Option<Fps>, String> {
+    match &meta["fps"] {
+        Value::Null => Ok(None),
+        v => Fps::deserialize(v)
+            .map(Some)
+            .map_err(|e| format!("cast: {e}")),
+    }
 }
 
 fn closure_of_cast(meta: &Value) -> Result<app::Closure, String> {
@@ -921,7 +916,7 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
         meta["size"].as_str().map(String::from),
         &opts.derive,
         opts.fps,
-        meta["fps"].as_u64().map(|f| u32::try_from(f).unwrap_or(0)),
+        cast_fps(&meta)?,
     )?;
     let inset_spec = set_value(&sets, "inset").or_else(|| meta["inset"].as_str().map(String::from));
     let inset = match &inset_spec {
@@ -950,8 +945,8 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
     };
     let dir = out_root.join(&product).join(&kind);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let stem_of = |s: [u32; 2], fps: Option<u32>| match fps {
-        Some(f) => format!("{product}-{kind}-{name}-{}x{}-{f}fps", s[0], s[1]),
+    let stem_of = |s: [u32; 2], fps: Option<Fps>| match fps {
+        Some(f) => format!("{product}-{kind}-{name}-{}x{}-{}fps", s[0], s[1], f.label()),
         None => format!("{product}-{kind}-{name}-{}x{}", s[0], s[1]),
     };
     let web = web_targets(&opts.web, &stem_of(pl.master_size, None));
@@ -1070,15 +1065,17 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
                 let output = stage.join(format!("{manifest_stem}.master.mp4"));
                 let (count, used) =
                     compose::master(&paths_in, fade, pl.master_size, pl.fps, &output)?;
-                let (size, frames) = encode::probe(&output)?;
-                if size != pl.master_size || frames != count {
+                let (size, frames, rate) = encode::probe(&output)?;
+                if size != pl.master_size || frames != count || rate != Some(pl.fps) {
                     return Err(format!(
-                        "{}: the file holds {frames} frames at {}x{}, not the {count} at {}x{} prec encoded",
+                        "{}: the file holds {frames} frames at {}x{} and {}, not the {count} at {}x{} and {} fps prec encoded",
                         output.display(),
                         size[0],
                         size[1],
+                        rate.map_or("no rate".into(), |r| format!("{r} fps")),
                         pl.master_size[0],
-                        pl.master_size[1]
+                        pl.master_size[1],
+                        pl.fps
                     ));
                 }
                 let poster = stage.join(format!("{manifest_stem}.poster.png"));
@@ -1115,7 +1112,7 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
             jobs::progress(count);
             frames_record = json!({
                 "master": if opts.no_encode { Value::Null } else { json!(count) },
-                "seconds": count as f64 / pl.fps as f64,
+                "seconds": pl.fps.seconds(count),
                 "exact": true,
                 "shown_seconds": (shown * 1e6).round() / 1e6,
                 "rendered": n,
@@ -1440,32 +1437,51 @@ mod tests {
 
     #[test]
     fn a_recipe_size_and_fps_fill_in_where_no_flag_is_given() {
-        let p = plan("clip", None, Some("720p".into()), &[], None, Some(30)).unwrap();
-        assert_eq!((p.master_size, p.fps), ([1280, 720], 30));
+        let p = plan(
+            "clip",
+            None,
+            Some("720p".into()),
+            &[],
+            None,
+            Some(Fps::new(30, 1)),
+        )
+        .unwrap();
+        assert_eq!((p.master_size, p.fps), ([1280, 720], Fps::new(30, 1)));
         let p = plan(
             "clip",
             Some("640x360".into()),
             Some("720p".into()),
             &[],
-            Some(60),
-            Some(30),
+            Some(Fps::new(60, 1)),
+            Some(Fps::new(30, 1)),
         )
         .unwrap();
-        assert_eq!((p.master_size, p.fps), ([640, 360], 60));
+        assert_eq!((p.master_size, p.fps), ([640, 360], Fps::new(60, 1)));
         assert_eq!(
             plan("clip", None, None, &[], None, None).unwrap().fps,
             DEFAULT_FPS
         );
-        assert!(plan("clip", None, None, &[], None, Some(0)).is_err());
     }
 
     #[test]
     fn a_clip_renders_its_shown_time_and_a_palindrome_at_least_three_frames() {
-        assert_eq!(frames_for(1.0, 120, &app::Closure::Palindrome), 120);
-        assert_eq!(frames_for(0.0, 30, &app::Closure::Palindrome), 3);
-        assert_eq!(frames_for(10.0, 120, &app::Closure::Open), 1200);
-        assert_eq!(frames_for(1.0, 30, &app::Closure::Crossfade(0.1)), 30);
-        assert_eq!(DEFAULT_FPS, 120);
+        assert_eq!(
+            frames_for(1.0, Fps::new(120, 1), &app::Closure::Palindrome),
+            120
+        );
+        assert_eq!(
+            frames_for(0.0, Fps::new(30, 1), &app::Closure::Palindrome),
+            3
+        );
+        assert_eq!(
+            frames_for(10.0, Fps::new(120, 1), &app::Closure::Open),
+            1200
+        );
+        assert_eq!(
+            frames_for(1.0, Fps::new(30, 1), &app::Closure::Crossfade(0.1)),
+            30
+        );
+        assert_eq!(DEFAULT_FPS, Fps::new(120, 1));
         assert!(
             sets(&Opts {
                 set: vec!["camera.zoom=2".into()],

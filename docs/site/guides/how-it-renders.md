@@ -11,7 +11,7 @@ The app runs in a pty of exactly the recipe's grid, driven by the tape at real s
 
 ## Replay
 
-A vendored xterm.js 5.5.0 (canvas renderer, Unicode 11 widths) runs in headless Chromium (`--disable-gpu`, sRGB), started through `env -i` with a scratch `HOME`, `TZ=UTC` and `C.UTF-8`, so your locale and fontconfig never reach it. prec steps a virtual clock at exactly 1/fps, writes every cast byte up to that moment, waits for xterm to paint, and screenshots the page at the target size. Hidden stretches are cut, and a frame whose moment brings no new bytes reuses the previous one, so a mostly still terminal replays faster than a busy one.
+A vendored xterm.js 5.5.0 (canvas renderer, Unicode 11 widths) runs in headless Chromium (`--disable-gpu`, sRGB), started through `env -i` with a scratch `HOME`, `TZ=UTC` and `C.UTF-8`, so your locale and fontconfig never reach it. prec steps a virtual clock at exactly 1/fps (frame n sits at n × 1001/24000 s at 24000/1001, never a rounded float), writes every cast byte up to that moment, waits for xterm to paint, and screenshots the page at the target size. Hidden stretches are cut, and a frame whose moment brings no new bytes reuses the previous one, so a mostly still terminal replays faster than a busy one.
 
 xterm.js draws truecolor, box drawing, wide CJK and Nerd Font glyphs; the font is fitted to the render size so the grid fills it at its own pixels.
 

@@ -54,7 +54,7 @@ tmp/renders/demo/clip/
 - **`.cast`** is the recording, an asciicast v2 file. [Render a cast again](render-a-cast-again.md) replays it at another size, rate or theme without the app.
 - **`.json`** is the manifest: what was rendered, from what, with which flags, and every file's sha256.
 
-The stem is `<product>-<kind>-<shot>-<W>x<H>-<fps>fps`; a theme other than the app's own adds its slug before the size.
+The stem is `<product>-<kind>-<shot>-<W>x<H>-<fps>fps`, with `23.976`, `29.97` or `59.94` as the `<fps>` of an NTSC rate; a theme other than the app's own adds its slug before the size.
 
 ## Read the manifest
 

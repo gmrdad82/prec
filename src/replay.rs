@@ -1,5 +1,6 @@
 use crate::cdp::Browser;
 use crate::compose::{self, Layout};
+use crate::fps::Fps;
 use crate::paths;
 use crate::record::{Cast, Event, Kind, Timeline};
 use base64::Engine;
@@ -132,7 +133,7 @@ pub struct Look {
 #[derive(Clone, Copy, Debug)]
 pub enum Take {
     Still(f64),
-    Clip { frames: usize, fps: u32 },
+    Clip { frames: usize, fps: Fps },
 }
 
 pub struct Output {
@@ -405,7 +406,7 @@ pub fn render(
         Take::Clip { frames: n, fps } => {
             let mut last: Option<PathBuf> = None;
             for k in 0..n {
-                let t = timeline.at(k as f64 / fps as f64);
+                let t = timeline.at(fps.seconds(k));
                 let changed = feeder.until(&mut b, t)?;
                 if changed || last.is_none() {
                     let png = b.screenshot()?;
@@ -431,8 +432,8 @@ pub fn render(
     })
 }
 
-pub fn frame_count(shown: f64, fps: u32, fade: usize) -> usize {
-    let body = (shown * fps as f64 - fade as f64).round().max(1.0) as usize;
+pub fn frame_count(shown: f64, fps: Fps, fade: usize) -> usize {
+    let body = (fps.frames(shown) - fade as f64).round().max(1.0) as usize;
     body + fade
 }
 
@@ -442,10 +443,10 @@ mod tests {
 
     #[test]
     fn a_clip_holds_its_shown_time_and_its_fade() {
-        assert_eq!(frame_count(10.0, 120, 0), 1200);
-        assert_eq!(frame_count(10.01, 120, 0), 1201);
-        assert_eq!(frame_count(5.0, 120, 12), 600);
-        assert_eq!(frame_count(0.0, 30, 3), 4);
+        assert_eq!(frame_count(10.0, Fps::new(120, 1), 0), 1200);
+        assert_eq!(frame_count(10.01, Fps::new(120, 1), 0), 1201);
+        assert_eq!(frame_count(5.0, Fps::new(120, 1), 12), 600);
+        assert_eq!(frame_count(0.0, Fps::new(30, 1), 3), 4);
     }
 
     #[test]

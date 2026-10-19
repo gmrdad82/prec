@@ -1,3 +1,4 @@
+use crate::fps::Fps;
 use pito_codecs::filter::{ColorSpec, Order, Packed, packed_to_yuv};
 use pito_codecs::h264::{Encoder, EncoderConfig, Preset, Profile};
 use pito_codecs::media::{Bitstream, Frame, Packet, PixelFormat, Rate, Rgba, TimeBase};
@@ -21,12 +22,12 @@ pub fn master_what() -> String {
     )
 }
 
-pub fn settings(fps: u32) -> Vec<String> {
+pub fn settings(fps: Fps) -> Vec<String> {
     vec![
         format!("pito-codecs {CODECS}"),
         "h264 High, preset quality".to_string(),
         format!("crf {CRF}"),
-        format!("gop {}", 2 * fps),
+        format!("gop {}", fps.gop()),
         format!("bframes {B_FRAMES}"),
         format!("threads {THREADS}"),
         "BT.709 limited range, left-sited 4:2:0 chroma".to_string(),
@@ -104,7 +105,7 @@ struct Line {
 pub fn master(
     pics: &[Pic],
     size: [u32; 2],
-    fps: u32,
+    fps: Fps,
     output: &Path,
 ) -> Result<Vec<String>, String> {
     if pics.is_empty() {
@@ -167,11 +168,11 @@ pub fn master(
         let mut enc = Encoder::new(EncoderConfig {
             width: size[0],
             height: size[1],
-            fps: (fps, 1),
+            fps: (fps.num, fps.den),
             profile: Profile::High,
             preset: Preset::Quality,
             rate: Rate::Crf(CRF),
-            gop: 2 * fps,
+            gop: fps.gop(),
             b_frames: B_FRAMES,
             threads: THREADS,
             bitstream: Bitstream::LengthPrefixed,
@@ -182,7 +183,7 @@ pub fn master(
         let track = mux
             .add_track(TrackConfig::new(
                 SampleEntry::h264(avc, size[0] as u16, size[1] as u16),
-                fps,
+                fps.num,
             ))
             .map_err(|e| named(&e))?;
         let mut held: Option<Packet> = None;
@@ -191,8 +192,16 @@ pub fn master(
                 let duration = next
                     .as_ref()
                     .map_or(1, |n| u32::try_from((n.dts - h.dts).max(1)).unwrap_or(1));
-                mux.push_sample(track, &h.data, h.pts, h.dts, duration, h.keyframe)
-                    .map_err(|e| named(&e))?;
+                let den = i64::from(fps.den);
+                mux.push_sample(
+                    track,
+                    &h.data,
+                    h.pts * den,
+                    h.dts * den,
+                    duration * fps.den,
+                    h.keyframe,
+                )
+                .map_err(|e| named(&e))?;
             }
             held = next;
             Ok(())
@@ -206,7 +215,7 @@ pub fn master(
             }
             let f = current.as_mut().ok_or("the first frame is missing")?;
             f.pts = n as i64;
-            f.time_base = TimeBase::new(1, fps);
+            f.time_base = TimeBase::new(fps.den, fps.num);
             for p in enc.encode(f).map_err(|e| named(&e))? {
                 write(Some(p))?;
             }
@@ -234,14 +243,18 @@ pub fn master(
     done.map(|()| settings(fps))
 }
 
-pub fn probe(video: &Path) -> Result<([u32; 2], usize), String> {
+pub fn probe(video: &Path) -> Result<([u32; 2], usize, Option<Fps>), String> {
     let r = Reader::open(video).map_err(|e| format!("{}: {e}", video.display()))?;
     let t = r
         .tracks
         .iter()
         .find(|t| t.kind == TrackKind::Video)
         .ok_or_else(|| format!("{}: no video track", video.display()))?;
-    Ok(([t.width, t.height], t.samples.len()))
+    let rate = t
+        .samples
+        .first()
+        .and_then(|s| Fps::reduced(t.timescale, s.duration));
+    Ok(([t.width, t.height], t.samples.len(), rate))
 }
 
 pub fn temp_of(path: &Path) -> PathBuf {
@@ -450,8 +463,34 @@ mod tests {
         let target = dir.join("a.master.mp4");
         std::fs::write(&target, b"half").unwrap();
         let missing = dir.join("missing.png");
-        master(&[Pic::One(&missing)], [64, 64], 30, &target).unwrap_err();
+        master(&[Pic::One(&missing)], [64, 64], Fps::new(30, 1), &target).unwrap_err();
         assert!(names(&dir).is_empty());
+    }
+
+    #[test]
+    fn a_film_rate_master_reads_back_at_its_exact_rate_and_frame_times() {
+        let dir = work("film");
+        let a = dir.join("a.png");
+        let b = dir.join("b.png");
+        write_png8(&a, [64, 64], &[40; 64 * 64 * 3]).unwrap();
+        write_png8(&b, [64, 64], &[200; 64 * 64 * 3]).unwrap();
+        let pics: Vec<Pic> = (0..60)
+            .map(|i| Pic::One(if i % 7 < 3 { &a } else { &b }))
+            .collect();
+        let film = Fps::new(24000, 1001);
+        let out = dir.join("a.master.mp4");
+        assert!(
+            master(&pics, [64, 64], film, &out)
+                .unwrap()
+                .contains(&"gop 48".to_string())
+        );
+        assert_eq!(probe(&out).unwrap(), ([64, 64], 60, Some(film)));
+        let r = Reader::open(&out).unwrap();
+        let t = &r.tracks[0];
+        assert_eq!(t.timescale, 24000);
+        for (n, s) in t.samples.iter().enumerate() {
+            assert_eq!((s.pts, s.duration), (n as i64 * 1001, 1001));
+        }
     }
 
     #[test]

@@ -7,14 +7,14 @@ sidebar:
 
 ![A terminal: cat render/terminal/typing.tape shows a short tape; then prec clip demo typing --size 720p --fps 30 records the demo in a 60x16 pty, replays 114 frames at 1280x720 and prints its manifest, and ls lists the cast, the manifest, the master MP4 and the poster PNG.](images/record.gif)
 
-prec records terminal apps into exact videos and stills, part of [PITO MD](https://pitomd.com). It is an alternative to [VHS](https://github.com/charmbracelet/vhs): you write a tape of keystrokes, and prec runs your app in a real pty, records the session once, then replays it frame by frame in headless Chromium at exactly 30, 60 or 120 fps, at any size up to 4K. The same recording always replays to the same bytes.
+prec records terminal apps into exact videos and stills, part of [PITO MD](https://pitomd.com). It is an alternative to [VHS](https://github.com/charmbracelet/vhs): you write a tape of keystrokes, and prec runs your app in a real pty, records the session once, then replays it frame by frame in headless Chromium at exactly 24, 30, 60 or 120 fps or the NTSC rates 23.976, 29.97 and 59.94 (as exact rationals such as 24000/1001), at any size up to 4K. The same recording always replays to the same bytes.
 
 | | |
 |---|---|
 | Frames in a 10-second clip at 120 fps | **1,196**, every one (VHS v0.11.0 on the same tape: 214) |
 | Re-render a 10-second cast at 1080p 60 fps | **16.9 s**, without running the app again |
 | Two renders of one cast | **byte-identical** masters, same sha256 |
-| Sizes and rates | any size up to **3840x2160**, at **30, 60 or 120 fps** |
+| Sizes and rates | any size up to **3840x2160**, at **24, 30, 60 or 120 fps**, or NTSC **24000/1001, 30000/1001 and 60000/1001** |
 | Binary | **5.7 MB**, stripped, fat LTO, its H.264 encoder built in (2.4 MB as the release `.tar.gz`) |
 | Network | none: prec downloads nothing |
 
@@ -30,7 +30,7 @@ Measured on 2026-10-16 on an AMD Ryzen 9 9950X (prec and VHS pinned to the same 
 
 ## What it does
 
-- **Every frame, at the rate you ask for.** prec records the app's output bytes with their timestamps, then steps a virtual clock at exactly 1/fps, so a clip has the shown time times the fps in frames.
+- **Every frame, at the rate you ask for.** prec records the app's output bytes with their timestamps, then steps a virtual clock at exactly 1/fps (frame n sits at n × 1001/24000 s at 24000/1001, never a rounded float), so a clip has the shown time times the fps in frames.
 - **Record once, render many.** The session is an asciicast v2 cast; `prec render` replays it at another size, rate or theme without running the app again.
 - **Native pixels at every size.** The grid is fixed and the font is fitted to each size, so 4K shows exactly what 720p shows, drawn at its own pixels.
 - **348 themes.** The app's own palette, VHS's built-in schemes, curated light and dark pairs, and installed Omarchy themes; `--themes` renders one recording in several at once.

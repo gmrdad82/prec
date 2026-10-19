@@ -7,6 +7,7 @@ mod config;
 mod doctor;
 mod encode;
 mod font;
+mod fps;
 mod home;
 mod jobs;
 mod mask;
@@ -69,8 +70,12 @@ struct Shot {
         help = "More still sizes from the same master; clips use pcod"
     )]
     derive: Vec<String>,
-    #[arg(long, help = "One of 30, 60 or 120; pcod makes other clip rates")]
-    fps: Option<u32>,
+    #[arg(
+        long,
+        value_parser = fps::Fps::parse,
+        help = "One of 24, 30, 60, 120, 24000/1001 (23.976), 30000/1001 (29.97) or 60000/1001 (59.94); pcod makes other clip rates"
+    )]
+    fps: Option<fps::Fps>,
     #[arg(
         long,
         help = "Poster frame for a clip: first, before-closure, or seconds of shown time"
@@ -185,8 +190,12 @@ struct Replay {
         help = "More still sizes from the same master; clips use pcod"
     )]
     derive: Vec<String>,
-    #[arg(long, help = "One of 30, 60 or 120; pcod makes other clip rates")]
-    fps: Option<u32>,
+    #[arg(
+        long,
+        value_parser = fps::Fps::parse,
+        help = "One of 24, 30, 60, 120, 24000/1001 (23.976), 30000/1001 (29.97) or 60000/1001 (59.94); pcod makes other clip rates"
+    )]
+    fps: Option<fps::Fps>,
     #[arg(
         long,
         help = "Poster frame for a clip: first, before-closure, or seconds of shown time"
@@ -371,7 +380,7 @@ fn begin(verb: &str, kind: &str, s: &Shot) -> Result<(), String> {
         detail.push(size.clone());
     }
     if let Some(fps) = s.fps {
-        detail.push(format!("{fps}fps"));
+        detail.push(format!("{}fps", fps.label()));
     }
     if let Some(poster) = &s.poster {
         detail.push(format!("poster {poster}"));

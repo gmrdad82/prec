@@ -1,3 +1,4 @@
+use crate::fps::Fps;
 use crate::{cache, paths};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -81,7 +82,7 @@ pub struct Shot {
     #[serde(default)]
     pub size: Option<String>,
     #[serde(default)]
-    pub fps: Option<u32>,
+    pub fps: Option<Fps>,
     #[serde(default)]
     pub poster: Option<Poster>,
     #[serde(default)]
@@ -147,9 +148,9 @@ impl Closure {
         }
     }
 
-    pub fn fade_frames(&self, fps: u32) -> usize {
+    pub fn fade_frames(&self, fps: Fps) -> usize {
         match self {
-            Closure::Crossfade(s) => ((s * fps as f64).round() as usize).max(1),
+            Closure::Crossfade(s) => (fps.frames(*s).round() as usize).max(1),
             _ => 0,
         }
     }
@@ -712,7 +713,7 @@ mod tests {
             )
             .is_err()
         );
-        assert_eq!(Closure::Crossfade(0.5).fade_frames(120), 60);
+        assert_eq!(Closure::Crossfade(0.5).fade_frames(Fps::new(120, 1)), 60);
         assert_eq!(
             Closure::from_set("closure.crossfade", "0.25").unwrap(),
             Closure::Crossfade(0.25)

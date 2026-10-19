@@ -83,7 +83,7 @@ Each `[shots.<name>]` is one render:
 | `settle` | how long to wait after `launch` before the recording shows; default `800ms` |
 | `closure` | how a clip ends: `"palindrome"`, `{ crossfade = 0.5 }`, or none |
 | `poster` | `"first"`, `"before-closure"` or seconds of shown time |
-| `size`, `fps` | the defaults for `--size` and `--fps` (otherwise 1080p and 120 fps) |
+| `size`, `fps` | the defaults for `--size` and `--fps` (otherwise 1080p and 120 fps); `fps` takes what `--fps` takes, such as `fps = 30`, `fps = "24000/1001"` or `fps = 23.976` |
 | `grid` | this shot's own grid |
 | `status` | a free word shown by `prec shots` |
 | `mask` | this shot's own masks, added to the top-level ones |

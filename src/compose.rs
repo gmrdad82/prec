@@ -1,4 +1,5 @@
 use crate::encode;
+use crate::fps::Fps;
 use std::path::Path;
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Transform};
 
@@ -181,7 +182,7 @@ pub fn background(
 pub fn closure(
     picks: &[usize],
     closure: &crate::app::Closure,
-    fps: u32,
+    fps: Fps,
 ) -> Result<(Vec<usize>, Option<usize>), String> {
     use crate::app::Closure;
     match closure {
@@ -211,7 +212,7 @@ pub fn closure(
 pub fn poster_frame(
     n: usize,
     closure: &crate::app::Closure,
-    fps: u32,
+    fps: Fps,
     poster: &crate::app::Poster,
 ) -> Result<(usize, usize), String> {
     use crate::app::{Closure, Poster};
@@ -238,8 +239,8 @@ pub fn poster_frame(
     Ok((src, master_slot(&order, fade.unwrap_or(0), src)?))
 }
 
-fn frame_at(seconds: f64, fps: u32, n: usize) -> usize {
-    let scaled = seconds * fps as f64;
+fn frame_at(seconds: f64, fps: Fps, n: usize) -> usize {
+    let scaled = fps.frames(seconds);
     if !scaled.is_finite() {
         return n - 1;
     }
@@ -291,7 +292,7 @@ pub fn master(
     files: &[&Path],
     fade: Option<usize>,
     size: [u32; 2],
-    fps: u32,
+    fps: Fps,
     output: &Path,
 ) -> Result<(usize, Vec<String>), String> {
     let pics = pictures(files, fade);
@@ -306,15 +307,30 @@ mod tests {
     #[test]
     fn a_palindrome_never_repeats_its_ends_and_a_crossfade_starts_where_the_master_does() {
         use crate::app::Closure;
-        let (p, f) = closure(&[0, 1, 2, 3], &Closure::Palindrome, 30).unwrap();
+        let (p, f) = closure(&[0, 1, 2, 3], &Closure::Palindrome, Fps::new(30, 1)).unwrap();
         assert_eq!(p, vec![0, 1, 2, 3, 2, 1]);
         assert!(f.is_none());
         assert_eq!(
-            closure(&[0, 1, 2, 3, 4, 5, 6], &Closure::Crossfade(0.1), 30).unwrap(),
+            closure(
+                &[0, 1, 2, 3, 4, 5, 6],
+                &Closure::Crossfade(0.1),
+                Fps::new(30, 1)
+            )
+            .unwrap(),
             (vec![3, 4, 5, 6, 0, 1, 2], Some(3))
         );
-        assert!(closure(&[0, 1, 2, 3], &Closure::Crossfade(2.0 / 30.0), 30).is_err());
-        assert_eq!(closure(&[0, 1], &Closure::Open, 30).unwrap().0, vec![0, 1]);
+        assert!(
+            closure(
+                &[0, 1, 2, 3],
+                &Closure::Crossfade(2.0 / 30.0),
+                Fps::new(30, 1)
+            )
+            .is_err()
+        );
+        assert_eq!(
+            closure(&[0, 1], &Closure::Open, Fps::new(30, 1)).unwrap().0,
+            vec![0, 1]
+        );
     }
 
     #[test]
@@ -324,52 +340,61 @@ mod tests {
         let open = Closure::Open;
         let pal = Closure::Palindrome;
         let fade = Closure::Crossfade(0.1);
-        assert_eq!(fade.fade_frames(30), 3);
-        assert_eq!(poster_frame(n, &open, 30, &Poster::First).unwrap(), (0, 0));
+        assert_eq!(fade.fade_frames(Fps::new(30, 1)), 3);
         assert_eq!(
-            poster_frame(n, &open, 30, &Poster::BeforeClosure).unwrap(),
+            poster_frame(n, &open, Fps::new(30, 1), &Poster::First).unwrap(),
+            (0, 0)
+        );
+        assert_eq!(
+            poster_frame(n, &open, Fps::new(30, 1), &Poster::BeforeClosure).unwrap(),
             (23, 23)
         );
         assert_eq!(
-            poster_frame(n, &open, 30, &Poster::Seconds(0.5)).unwrap(),
+            poster_frame(n, &open, Fps::new(30, 1), &Poster::Seconds(0.5)).unwrap(),
             (15, 15)
         );
         assert_eq!(
-            poster_frame(n, &open, 30, &Poster::Seconds(0.35)).unwrap(),
+            poster_frame(n, &open, Fps::new(30, 1), &Poster::Seconds(0.35)).unwrap(),
             (10, 10)
         );
         assert_eq!(
-            poster_frame(n, &open, 30, &Poster::Seconds(100.0)).unwrap(),
+            poster_frame(n, &open, Fps::new(30, 1), &Poster::Seconds(100.0)).unwrap(),
             (23, 23)
         );
         assert_eq!(
-            poster_frame(n, &open, 60, &Poster::Seconds(0.5)).unwrap(),
+            poster_frame(n, &open, Fps::new(60, 1), &Poster::Seconds(0.5)).unwrap(),
             (23, 23)
         );
         assert_eq!(
-            poster_frame(n, &pal, 30, &Poster::BeforeClosure).unwrap(),
+            poster_frame(n, &pal, Fps::new(30, 1), &Poster::BeforeClosure).unwrap(),
             (23, 23)
         );
-        assert_eq!(poster_frame(n, &pal, 30, &Poster::First).unwrap(), (0, 0));
         assert_eq!(
-            poster_frame(n, &pal, 30, &Poster::Seconds(1.0 / 30.0)).unwrap(),
+            poster_frame(n, &pal, Fps::new(30, 1), &Poster::First).unwrap(),
+            (0, 0)
+        );
+        assert_eq!(
+            poster_frame(n, &pal, Fps::new(30, 1), &Poster::Seconds(1.0 / 30.0)).unwrap(),
             (1, 1)
         );
-        assert_eq!(poster_frame(n, &fade, 30, &Poster::First).unwrap(), (3, 0));
         assert_eq!(
-            poster_frame(n, &fade, 30, &Poster::BeforeClosure).unwrap(),
+            poster_frame(n, &fade, Fps::new(30, 1), &Poster::First).unwrap(),
+            (3, 0)
+        );
+        assert_eq!(
+            poster_frame(n, &fade, Fps::new(30, 1), &Poster::BeforeClosure).unwrap(),
             (20, 17)
         );
         assert_eq!(
-            poster_frame(n, &fade, 30, &Poster::Seconds(0.0)).unwrap(),
+            poster_frame(n, &fade, Fps::new(30, 1), &Poster::Seconds(0.0)).unwrap(),
             (0, 18)
         );
         assert_eq!(
-            poster_frame(n, &fade, 30, &Poster::Seconds(20.0 / 30.0)).unwrap(),
+            poster_frame(n, &fade, Fps::new(30, 1), &Poster::Seconds(20.0 / 30.0)).unwrap(),
             (20, 17)
         );
         assert_eq!(
-            poster_frame(n, &fade, 30, &Poster::Seconds(23.0 / 30.0)).unwrap(),
+            poster_frame(n, &fade, Fps::new(30, 1), &Poster::Seconds(23.0 / 30.0)).unwrap(),
             (23, 20)
         );
     }

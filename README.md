@@ -4,14 +4,14 @@
 
 [![Version](https://img.shields.io/github/v/tag/gmrdad82/prec)](https://github.com/gmrdad82/prec/tags)
 
-prec records terminal apps into exact videos and stills, part of [PITO MD](https://pitomd.com). It is an alternative to [VHS](https://github.com/charmbracelet/vhs): you write a tape of keystrokes, and prec runs your app in a real pty, records the session once, then replays it frame by frame in headless Chromium at exactly 30, 60 or 120 fps, at any size up to 4K. The same recording always replays to the same bytes.
+prec records terminal apps into exact videos and stills, part of [PITO MD](https://pitomd.com). It is an alternative to [VHS](https://github.com/charmbracelet/vhs): you write a tape of keystrokes, and prec runs your app in a real pty, records the session once, then replays it frame by frame in headless Chromium at exactly 24, 30, 60 or 120 fps or the NTSC rates 23.976, 29.97 and 59.94 (as exact rationals such as 24000/1001), at any size up to 4K. The same recording always replays to the same bytes.
 
 | | |
 |---|---|
 | Frames in a 10-second clip at 120 fps | **1,196**, every one (VHS v0.11.0 on the same tape: 214) |
 | Re-render a 10-second cast at 1080p 60 fps | **16.9 s**, without running the app again |
 | Two renders of one cast | **byte-identical** masters, same sha256 |
-| Sizes and rates | any size up to **3840x2160**, at **30, 60 or 120 fps** |
+| Sizes and rates | any size up to **3840x2160**, at **24, 30, 60 or 120 fps**, or NTSC **24000/1001, 30000/1001 and 60000/1001** |
 | Binary | **5.7 MB**, stripped, fat LTO, its H.264 encoder built in (2.4 MB as the release `.tar.gz`) |
 | Code | **10,912 lines** of Rust in `src/`, unit tests included; **18** direct dependencies |
 | Cold release build | **70.4 s** with 4 build jobs |
@@ -39,7 +39,7 @@ That records this repository's sample app from its tape and writes `tmp/renders/
 
 ### Every frame, at the rate you ask for
 
-prec doesn't capture the screen while the app runs. It records the app's output bytes with their timestamps, then steps a virtual clock at exactly 1/fps and draws each frame, so a clip has the shown time times the fps in frames, however heavy the frame or the rate. Here is one 10-second tape recorded by both tools at 1280x720:
+prec doesn't capture the screen while the app runs. It records the app's output bytes with their timestamps, then steps a virtual clock at exactly 1/fps (frame n sits at n × 1001/24000 s at 24000/1001, never a rounded float) and draws each frame, so a clip has the shown time times the fps in frames, however heavy the frame or the rate. Here is one 10-second tape recorded by both tools at 1280x720:
 
 <p align="center"><img src="docs/images/frames-vs-vhs.png" width="640" alt="Paired bars, higher is better: frames in the clip for one 10-second tape at 1280x720. Asked for 30 fps, prec 299 and VHS 239; at 60 fps, 598 and 228; at 120 fps, 1196 and 214. VHS wrote a 25 fps file of 9.6, 9.1 and 8.6 seconds."></p>
 
@@ -220,7 +220,7 @@ Flags for `clip`, `still` and `record`:
 | `--bin DIR` | a prebuilt folder holding the app's binary; skips the build |
 | `--size` | the largest delivery: `N` (square), `WxH` (even for clips), `720p`, `1080p`, `1440p` or `2160p` |
 | `--derive` | more still sizes from the same master |
-| `--fps` | `30`, `60` or `120` (the default) for a clip |
+| `--fps` | `24`, `30`, `60` or `120` (the default) for a clip, or an NTSC rate as its exact rational, `24000/1001`, `30000/1001` or `60000/1001`, or as `23.976`, `29.97` or `59.94`; another decimal is refused with the rational to use |
 | `--poster` | a clip's poster: `first`, `before-closure` or seconds of shown time |
 | `--web` | still web copies at these widths, each also at `@2x`, resampled in linear light |
 | `--theme` | `app` (the default: the app's `[theme]`, else the config's theme, else `Catppuccin Mocha`), any built-in scheme, or `omarchy:<name>` |
@@ -297,7 +297,7 @@ A `<repo>` key is the repository's name and a hash of its origin URL, so every c
 ## How it renders
 
 - **Record.** The app runs in a pty of exactly the grid, driven by the tape at real speed. Its output bytes are kept with monotonic timestamps as an asciicast v2 cast, with the input events and `hide`, `show`, `screenshot` and `end` markers.
-- **Replay.** A vendored xterm.js 5.5.0 (canvas renderer, Unicode 11 widths) runs in headless Chromium (`--disable-gpu`, sRGB), started through `env -i` with a scratch `HOME`, `TZ=UTC` and `C.UTF-8`, so your locale and fontconfig never reach it. prec steps a virtual clock at exactly 1/fps, writes every cast byte up to that moment, waits for xterm to paint and screenshots the page at the target size. Hidden stretches are cut; a frame whose moment brings no new bytes reuses the previous one.
+- **Replay.** A vendored xterm.js 5.5.0 (canvas renderer, Unicode 11 widths) runs in headless Chromium (`--disable-gpu`, sRGB), started through `env -i` with a scratch `HOME`, `TZ=UTC` and `C.UTF-8`, so your locale and fontconfig never reach it. prec steps a virtual clock at exactly 1/fps (frame n sits at n × 1001/24000 s at 24000/1001, never a rounded float), writes every cast byte up to that moment, waits for xterm to paint and screenshots the page at the target size. Hidden stretches are cut; a frame whose moment brings no new bytes reuses the previous one.
 - **Encode.** A clip is one silent H.264 High master at the render's size and fps, encoded inside prec by pito-codecs 1.16.1 with no ffmpeg: its `quality` preset, CRF 14, no B-frames, 8-bit 4:2:0, a keyframe every two seconds, BT.709 limited range tagged in the stream. Chromium's 8-bit frames go to YUV with the BT.709 limited-range matrix and left-sited chroma; a crossfade is blended from the two frames before that. The encoder's 16 threads are fixed, because its output follows its thread count; that keeps a master byte-identical on any machine. prec reads the MP4 back and checks its frame count and size before the manifest claims them.
 - **Atomic.** A render builds its files in its scratch folder, then moves them into the output folder and writes the manifest last, so a failed or cancelled re-render never leaves new files beside an old manifest.
 
