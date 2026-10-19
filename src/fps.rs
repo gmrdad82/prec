@@ -19,15 +19,16 @@ const RATES: [Fps; 9] = [
     Fps::new(60000, 1001),
 ];
 
-const DECIMALS: [(&str, Fps); 5] = [
+const DECIMALS: [(&str, Fps); 6] = [
     ("23.976", Fps::new(24000, 1001)),
+    ("23.98", Fps::new(24000, 1001)),
     ("29.97", Fps::new(30000, 1001)),
     ("47.952", Fps::new(48000, 1001)),
     ("47.95", Fps::new(48000, 1001)),
     ("59.94", Fps::new(60000, 1001)),
 ];
 
-const ALL: &str = "24, 30, 48, 60, 120, 24000/1001 (23.976), 30000/1001 (29.97), 48000/1001 (47.952) or 60000/1001 (59.94)";
+const ALL: &str = "24, 30, 48, 60, 120, 24000/1001 (23.976 or 23.98), 30000/1001 (29.97), 48000/1001 (47.952) or 60000/1001 (59.94)";
 
 fn gcd(a: u32, b: u32) -> u32 {
     if b == 0 { a } else { gcd(b, a % b) }
@@ -154,6 +155,7 @@ mod tests {
             ("30000/1001", Fps::new(30000, 1001)),
             ("60000/1001", Fps::new(60000, 1001)),
             ("23.976", FILM),
+            ("23.98", FILM),
             ("29.97", Fps::new(30000, 1001)),
             ("59.94", Fps::new(60000, 1001)),
             ("48", Fps::new(48, 1)),
@@ -164,7 +166,7 @@ mod tests {
             assert_eq!(Fps::parse(s), Ok(f), "{s}");
         }
         assert_eq!(
-            Fps::parse("23.98").unwrap_err(),
+            Fps::parse("23.97").unwrap_err(),
             "not an exact rate; use 24000/1001"
         );
         assert_eq!(Fps::parse("30.0").unwrap_err(), "not an exact rate; use 30");
