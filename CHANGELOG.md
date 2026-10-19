@@ -4,7 +4,7 @@
 
 ### Added
 
-- Clips render at 24 fps and at the exact NTSC rates 24000/1001, 30000/1001 and 60000/1001: `--fps` and a shot's `fps` take the rationals or 23.976, 29.97 and 59.94, every frame sits at its exact time, and the master MP4 carries the exact rate. Another decimal is refused with the rational to use.
+- Clips render at 24 and 48 fps and at the exact NTSC rates 24000/1001, 30000/1001, 48000/1001 and 60000/1001: `--fps` and a shot's `fps` take the rationals or 23.976, 29.97, 47.952 (or 47.95) and 59.94, every frame sits at its exact time, and the master MP4 carries the exact rate. Another decimal is refused with the rational to use.
 
 ### Changed
 

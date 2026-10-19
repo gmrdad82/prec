@@ -4,14 +4,14 @@
 
 [![Version](https://img.shields.io/github/v/tag/gmrdad82/prec)](https://github.com/gmrdad82/prec/tags)
 
-prec records terminal apps into exact videos and stills, part of [PITO MD](https://pitomd.com). It is an alternative to [VHS](https://github.com/charmbracelet/vhs): you write a tape of keystrokes, and prec runs your app in a real pty, records the session once, then replays it frame by frame in headless Chromium at exactly 24, 30, 60 or 120 fps or the NTSC rates 23.976, 29.97 and 59.94 (as exact rationals such as 24000/1001), at any size up to 4K. The same recording always replays to the same bytes.
+prec records terminal apps into exact videos and stills, part of [PITO MD](https://pitomd.com). It is an alternative to [VHS](https://github.com/charmbracelet/vhs): you write a tape of keystrokes, and prec runs your app in a real pty, records the session once, then replays it frame by frame in headless Chromium at exactly 24, 30, 48, 60 or 120 fps or the NTSC rates 23.976, 29.97, 47.952 and 59.94 (as exact rationals such as 24000/1001), at any size up to 4K. The same recording always replays to the same bytes.
 
 | | |
 |---|---|
 | Frames in a 10-second clip at 120 fps | **1,196**, every one (VHS v0.11.0 on the same tape: 214) |
 | Re-render a 10-second cast at 1080p 60 fps | **16.9 s**, without running the app again |
 | Two renders of one cast | **byte-identical** masters, same sha256 |
-| Sizes and rates | any size up to **3840x2160**, at **24, 30, 60 or 120 fps**, or NTSC **24000/1001, 30000/1001 and 60000/1001** |
+| Sizes and rates | any size up to **3840x2160**, at **24, 30, 48, 60 or 120 fps**, or NTSC **24000/1001, 30000/1001, 48000/1001 and 60000/1001** |
 | Binary | **5.7 MB**, stripped, fat LTO, its H.264 encoder built in (2.4 MB as the release `.tar.gz`) |
 | Code | **10,912 lines** of Rust in `src/`, unit tests included; **18** direct dependencies |
 | Cold release build | **70.4 s** with 4 build jobs |
@@ -220,7 +220,7 @@ Flags for `clip`, `still` and `record`:
 | `--bin DIR` | a prebuilt folder holding the app's binary; skips the build |
 | `--size` | the largest delivery: `N` (square), `WxH` (even for clips), `720p`, `1080p`, `1440p` or `2160p` |
 | `--derive` | more still sizes from the same master |
-| `--fps` | `24`, `30`, `60` or `120` (the default) for a clip, or an NTSC rate as its exact rational, `24000/1001`, `30000/1001` or `60000/1001`, or as `23.976`, `29.97` or `59.94`; another decimal is refused with the rational to use |
+| `--fps` | `24`, `30`, `48`, `60` or `120` (the default) for a clip, or an NTSC rate as its exact rational, `24000/1001`, `30000/1001`, `48000/1001` or `60000/1001`, or as `23.976`, `29.97`, `47.952` (or `47.95`) or `59.94`; another decimal is refused with the rational to use |
 | `--poster` | a clip's poster: `first`, `before-closure` or seconds of shown time |
 | `--web` | still web copies at these widths, each also at `@2x`, resampled in linear light |
 | `--theme` | `app` (the default: the app's `[theme]`, else the config's theme, else `Catppuccin Mocha`), any built-in scheme, or `omarchy:<name>` |

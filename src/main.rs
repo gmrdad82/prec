@@ -73,7 +73,7 @@ struct Shot {
     #[arg(
         long,
         value_parser = fps::Fps::parse,
-        help = "One of 24, 30, 60, 120, 24000/1001 (23.976), 30000/1001 (29.97) or 60000/1001 (59.94); pcod makes other clip rates"
+        help = "One of 24, 30, 48, 60, 120, 24000/1001 (23.976), 30000/1001 (29.97), 48000/1001 (47.952) or 60000/1001 (59.94); pcod makes other clip rates"
     )]
     fps: Option<fps::Fps>,
     #[arg(
@@ -193,7 +193,7 @@ struct Replay {
     #[arg(
         long,
         value_parser = fps::Fps::parse,
-        help = "One of 24, 30, 60, 120, 24000/1001 (23.976), 30000/1001 (29.97) or 60000/1001 (59.94); pcod makes other clip rates"
+        help = "One of 24, 30, 48, 60, 120, 24000/1001 (23.976), 30000/1001 (29.97), 48000/1001 (47.952) or 60000/1001 (59.94); pcod makes other clip rates"
     )]
     fps: Option<fps::Fps>,
     #[arg(
