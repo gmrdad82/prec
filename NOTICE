@@ -9,8 +9,8 @@ these third-party files, compiled in, each under its own MIT licence below:
   vendored as published; assets/xterm/VERSIONS lists their sha256.
 - assets/vhs-themes.json: the built-in theme set of VHS v0.11.0
   (https://github.com/charmbracelet/vhs), extracted verbatim.
-- pito-codecs 1.16.1 (https://github.com/gmrdad82/pito-codecs, tag v1.16.1,
-  commit 778aa2f9f3c50df76c0ea54bf4b1220a216a4777), compiled in with its
+- pito-codecs 1.16.2 (https://github.com/gmrdad82/pito-codecs, tag v1.16.2,
+  commit 940dc0ac52fbe51fe393b03fb4d4e8e042d110b4), compiled in with its
   h264, mp4, filter and png parts to encode clip masters; its MIT licence and
   the notices of the work it adapts are copied verbatim at the end of this file.
 
@@ -124,7 +124,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
------ pito-codecs 1.16.1 LICENSE
+----- pito-codecs 1.16.2 LICENSE
 
 MIT License
 
@@ -148,7 +148,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
------ pito-codecs 1.16.1 NOTICE
+----- pito-codecs 1.16.2 NOTICE
 
 Parts of this package are adapted from FilmCraft
 (https://github.com/storytold/filmcraft, tag v0.6.0, commit 2ff3f5e266838700c292a35aaf762e3d4dcef980),

@@ -8,7 +8,7 @@
 
 ### Changed
 
-- Clip masters are encoded with pito-codecs 1.16.1.
+- Clip masters are encoded with pito-codecs 1.16.2.
 
 ## v1.4.4 — 2026-10-19
 
