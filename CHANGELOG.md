@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.4.3 — 2026-10-19
+
+### Changed
+
+- Gate, build and release through pci, not GitHub Actions.
+- Pin pito-codecs v1.16.0.
+
 ## v1.4.2 — 2026-10-19
 
 ### Changed
