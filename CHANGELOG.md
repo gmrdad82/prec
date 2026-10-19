@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.4.5 — 2026-10-19
+
+### Changed
+
+- Clip masters are encoded with pito-codecs 1.16.1.
+
 ## v1.4.4 — 2026-10-19
 
 ### Changed
