@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.4.6 — 2026-10-19
+
+### Changed
+
+- `--fps` and a shot's `fps` take 23.98 too, for the film rate 24000/1001, as cameras and editors label it.
+- Clip masters are encoded with pito-codecs 1.16.3.
+
 ## v1.4.5 — 2026-10-19
 
 ### Added
