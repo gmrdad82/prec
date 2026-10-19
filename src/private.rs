@@ -4,6 +4,7 @@ use std::process::Command;
 
 const EMAIL: &str = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}";
 const PLAN: &str = r"\b(?:Claude (?:Max|Pro|Team|Enterprise)|ChatGPT (?:Plus|Pro|Team|Business|Enterprise)|Copilot (?:Pro\+?|Business|Enterprise)|Gemini (?:Advanced|Pro|Ultra) plan)\b";
+const USAGE: &str = r"(?i)\byou(?:'|’)ve (?:used \d+% of|hit|reached) your [\w-]+(?: [\w-]+)? limit\b|\b(?:usage|session|weekly|daily|monthly|\d+-hour) limit\b|\blimit (?:will )?resets?\b|\bresets (?:at |in |on )?(?:\d|(?:mon|tue|wed|thu|fri|sat|sun|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b)";
 const ORG: &str = r"\S(?:'s|’s) (?:Organi[sz]ation|Workspace)\b|\bOrgani[sz]ation(?: name)?: *\S";
 const SHORTEST_PASSED: usize = 4;
 const GRID: f64 = 120.0;
@@ -14,6 +15,7 @@ pub struct Needles {
     user: Option<String>,
     email: regex::Regex,
     plan: regex::Regex,
+    usage: regex::Regex,
     org: regex::Regex,
     passed: Vec<(String, String)>,
 }
@@ -75,6 +77,7 @@ impl Needles {
             user: user.filter(|u| u.chars().count() >= 3),
             email: regex::Regex::new(EMAIL).expect("the email pattern"),
             plan: regex::Regex::new(PLAN).expect("the plan pattern"),
+            usage: regex::Regex::new(USAGE).expect("the usage pattern"),
             org: regex::Regex::new(ORG).expect("the org pattern"),
             passed: passed
                 .iter()
@@ -104,6 +107,9 @@ impl Needles {
         }
         if self.plan.is_match(text) {
             out.push("a plan label".to_string());
+        }
+        if self.usage.is_match(text) {
+            out.push("a usage limit".to_string());
         }
         if self.org.is_match(text) {
             out.push("an organisation label".to_string());
@@ -294,7 +300,7 @@ mod tests {
     }
 
     #[test]
-    fn a_plan_or_organisation_label_is_found_unless_a_mask_hides_it() {
+    fn a_plan_organisation_or_usage_label_is_found_unless_a_mask_hides_it() {
         let n = needles();
         assert_eq!(
             n.found("Opus 5.5 · Claude Max · someone's Organization"),
@@ -305,6 +311,18 @@ mod tests {
             n.found("the project's workspace on a Claude plan")
                 .is_empty()
         );
+        for line in [
+            "You've used 77% of your weekly limit",
+            "You’ve hit your session limit · resets 3pm",
+            "Approaching usage limit",
+            "5-hour limit reached ∙ resets Oct 21",
+            "Your limit will reset at 10pm",
+        ] {
+            assert_eq!(n.found(line), ["a usage limit"], "{line}");
+        }
+        for line in ["the cache resets the index", "a rate limit of 4 requests"] {
+            assert!(n.found(line).is_empty(), "{line}");
+        }
         let mut banner = cast(
             &[(0.1, "Opus 5.5 · Claude Max\r\n")],
             &[(0.0, "show"), (1.0, "end")],
@@ -312,6 +330,16 @@ mod tests {
         assert_eq!(whats(&banner), [("a plan label".to_string(), 0.1)]);
         banner.meta = json!({"mask": [{"match": "Claude \\w+"}]});
         assert!(whats(&banner).is_empty());
+        let mut usage = cast(
+            &[(
+                0.1,
+                "\x1b[33mYou've used 77% of your weekly limit\x1b[0m\r\n",
+            )],
+            &[(0.0, "show"), (1.0, "end")],
+        );
+        assert_eq!(whats(&usage), [("a usage limit".to_string(), 0.1)]);
+        usage.meta = json!({"mask": [{"match": "You've used .*limit"}]});
+        assert!(whats(&usage).is_empty());
     }
 
     #[test]

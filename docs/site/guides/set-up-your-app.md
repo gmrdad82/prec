@@ -114,15 +114,16 @@ pass_env = ["MYAPP_TOKEN"]
 
 Placeholders other than `{home}` keep their real paths, since only hidden steps (`launch`, the hooks) type them.
 
-Before any replay, prec reads the screen the cast shows and refuses a picture that shows your home path, your hostname or user name as a whole word, an email address, a value the record passed through `pass_env`, or a plan or organisation label (such as `Claude Max` or `someone's Organization`): [Render a cast again](render-a-cast-again.md#a-picture-with-private-data).
+Before any replay, prec reads the screen the cast shows and refuses a picture that shows your home path, your hostname or user name as a whole word, an email address, a value the record passed through `pass_env`, a plan or organisation label (such as `Claude Max` or `someone's Organization`), or a usage limit line (such as `You've used 77% of your weekly limit`): [Render a cast again](render-a-cast-again.md#a-picture-with-private-data).
 
 ## Mask a region
 
-Some text can't be kept off the screen: a banner that names the plan, an account line. A `mask` hides it in the picture by filling its cells with the theme's background:
+Some text can't be kept off the screen: a banner that names the plan, an account line, a usage limit warning. A `mask` hides it in the picture by filling its cells with the theme's background:
 
 ```toml
 mask = [
   { match = "Claude (Max|Pro|Team)" },
+  { match = "You've used \\d+% of your .*limit" },
   { rect = [0, 0, 40, 2] },
 ]
 

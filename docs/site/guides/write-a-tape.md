@@ -94,7 +94,7 @@ Sleep 3s
 - A token the agent needs goes in `pass_env` in [render/terminal.toml](set-up-your-app.md#a-session-with-no-private-data), never in the tape or `[env]`: prec hands it from its own environment to the pty and never writes its value.
 - `home`, `hostname` and `cwd = "{home}/…"` give the session a neutral home, host and folder, so a banner or a tool line that prints them shows nothing of yours.
 
-prec refuses to replay a cast whose picture shows your home path, hostname, user name, an email, a passed value, or a plan or organisation label that no mask hides ([Render a cast again](render-a-cast-again.md#a-picture-with-private-data)); `prec record` keeps the take and prints what it found and when.
+prec refuses to replay a cast whose picture shows your home path, hostname, user name, an email, a passed value, a plan or organisation label, or a usage limit line that no mask hides ([Render a cast again](render-a-cast-again.md#a-picture-with-private-data)); `prec record` keeps the take and prints what it found and when.
 
 ## Stills
 
