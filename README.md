@@ -19,6 +19,8 @@ prec records terminal apps into exact videos and stills, part of [PITO MD](https
 
 Measured on 2026-10-16 on an AMD Ryzen 9 9950X (prec and VHS pinned to the same 24 threads), with prec 1.2.0 and VHS v0.11.0, from [docs/bench/bench.sh](docs/bench/bench.sh); see [Speed](#speed) for every number and how it was taken.
 
+Got questions or doubts? Ping me on Discord: https://discord.gg/XsNcn3kYzn
+
 ## Start in 30 seconds
 
 On Linux or WSL (macOS: swap `linux-x86_64` for `macos-arm64`), with Chromium installed ([Prerequisites](#prerequisites)):
