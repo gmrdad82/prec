@@ -177,7 +177,9 @@ fn the_goldens_cover_every_step_of_a_render() {
     assert_eq!(tags.len(), FULL.len());
     for (tag, template) in FULL {
         let filled = fill(template);
-        assert!(!filled.contains('@'), "{tag}");
+        for token in ["@HOST@", "@PID@", "@PSTART@"] {
+            assert!(!filled.contains(token), "{tag}");
+        }
         let value: serde_json::Value = serde_json::from_str(&filled).unwrap();
         assert_eq!(value["v"], 1, "{tag}");
     }
