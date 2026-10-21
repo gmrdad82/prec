@@ -4,10 +4,9 @@ Code prec carries from other projects, with where it came from.
 
 ## pito-jobs
 
-prec's job-record writer in `src/jobs/` is copied from pito-jobs
-(https://github.com/gmrdad82/pito-jobs), MIT, by the same owner as prec, at
-commit 2d0689da084a7186aa2794bd192a70c91af24cf4 (tag v1.0.3), so the records
-it writes stay byte for byte those pito-jobs wrote.
+prec's job-record writer in `src/jobs/` is copied from pito-jobs, MIT, by the
+same owner as prec, at commit 2d0689da084a7186aa2794bd192a70c91af24cf4 (tag
+v1.0.3), so the records it writes stay byte for byte those pito-jobs wrote.
 
 - `src/jobs/job.rs` from `src/job.rs`: `start_with` and `Job` with `detail`,
   `device`, `out`, `stage`, `stages`, `stage_note`, `progress`, `finish` and

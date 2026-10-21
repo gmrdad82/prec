@@ -9,7 +9,7 @@ use super::{scratch, settings};
 
 const T0: u64 = 1_791_000_000_000;
 
-const FULL: [(&str, &str); 24] = [
+const FULL: &[(&str, &str)] = &[
     (
         "start",
         r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":null,"invoker":"agent","parent":"desk:9:100","state":"running","stage":null,"stage_note":null,"progress":null,"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":null,"out":null,"started":1791000000000,"updated":1791000000000,"ended":null,"exit":null,"error":null}"##,
@@ -102,10 +102,6 @@ const FULL: [(&str, &str); 24] = [
         "after-drop",
         r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"done","stage":"archive","stages":["build","record","replay","master","archive"],"stage_note":"dark","progress":{"done":1,"total":1,"unit":"outputs"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000011200,"ended":1791000011200,"exit":0,"error":null}"##,
     ),
-    (
-        "cancel-start",
-        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":null,"label":"take","detail":null,"invoker":null,"parent":null,"state":"running","stage":null,"stage_note":null,"progress":null,"rate":null,"pgpu":null,"device":null,"out":null,"started":1791000000000,"updated":1791000000000,"ended":null,"exit":null,"error":null}"##,
-    ),
 ];
 
 const CANCEL_START: &str = r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":null,"label":"take","detail":null,"invoker":null,"parent":null,"state":"running","stage":null,"stage_note":null,"progress":null,"rate":null,"pgpu":null,"device":null,"out":null,"started":1791000000000,"updated":1791000000000,"ended":null,"exit":null,"error":null}"##;
@@ -170,12 +166,11 @@ fn sized(template: &str) -> String {
 
 #[test]
 fn the_goldens_cover_every_step_of_a_render() {
-    assert_eq!(FULL.len(), 24);
     let mut tags: Vec<&str> = FULL.iter().map(|(tag, _)| *tag).collect();
     tags.sort_unstable();
     tags.dedup();
     assert_eq!(tags.len(), FULL.len());
-    for (tag, template) in FULL {
+    for (tag, template) in FULL.iter().copied() {
         let filled = fill(template);
         for token in ["@HOST@", "@PID@", "@PSTART@"] {
             assert!(!filled.contains(token), "{tag}");

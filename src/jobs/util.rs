@@ -1,3 +1,5 @@
+use std::fs::{File, OpenOptions};
+use std::io::{ErrorKind, Write};
 use std::path::Path;
 #[cfg(test)]
 use std::sync::Arc;
@@ -31,7 +33,7 @@ pub(crate) fn atomic_write(dir: &Path, file_name: &str, bytes: &[u8]) -> std::io
     std::fs::create_dir_all(dir)?;
     let dest = dir.join(file_name);
     let tmp = dir.join(format!(".{file_name}.tmp"));
-    if let Err(err) = std::fs::write(&tmp, bytes) {
+    if let Err(err) = write_new(&tmp, bytes) {
         let _ = std::fs::remove_file(&tmp);
         return Err(err);
     }
@@ -40,6 +42,21 @@ pub(crate) fn atomic_write(dir: &Path, file_name: &str, bytes: &[u8]) -> std::io
         return Err(err);
     }
     Ok(())
+}
+
+fn write_new(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut file = match open_new(path) {
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => {
+            std::fs::remove_file(path)?;
+            open_new(path)?
+        }
+        opened => opened?,
+    };
+    file.write_all(bytes)
+}
+
+fn open_new(path: &Path) -> std::io::Result<File> {
+    OpenOptions::new().write(true).create_new(true).open(path)
 }
 
 #[derive(Clone, Debug)]

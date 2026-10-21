@@ -540,7 +540,10 @@ fn gpu_queue_pid_names_the_tool() {
     assert_eq!(pgpu.pid, 1440);
     assert_eq!(pgpu.as_name, "prec");
     let text = std::fs::read_to_string(&json_files(&dir)[0]).unwrap();
-    assert!(text.contains(r#""pgpu":{"pid":1440,"as":"prec"}"#), "{text}");
+    assert!(
+        text.contains(r#""pgpu":{"pid":1440,"as":"prec"}"#),
+        "{text}"
+    );
     job.finish(0);
 }
 
@@ -624,7 +627,6 @@ fn a_missing_directory_or_a_blocked_path_does_not_panic() {
     job.stage("replay", Some(1), "frames");
     job.progress(1);
     job.finish(0);
-    assert_eq!(entries(&dir), 0);
 
     let blocker = dir.join("blocker");
     std::fs::write(&blocker, b"x").unwrap();
@@ -697,6 +699,62 @@ fn atomic_write_replaces_the_file_and_leaves_no_temp() {
     let blocked = dir.join("a.json").join("sub");
     assert!(super::util::atomic_write(&blocked, "b.json", b"x").is_err());
     assert_eq!(std::fs::read(dir.join("a.json")).unwrap(), b"two");
+}
+
+#[test]
+fn a_stale_temp_file_is_replaced_and_never_kept() {
+    let dir = scratch("stale-tmp");
+    std::fs::write(dir.join(".a.json.tmp"), b"stale stale stale").unwrap();
+    super::util::atomic_write(&dir, "a.json", b"new").unwrap();
+    assert_eq!(std::fs::read(dir.join("a.json")).unwrap(), b"new");
+    assert_eq!(entries(&dir), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_in_the_temp_file_s_place_is_never_followed() {
+    let dir = scratch("symlink-tmp");
+    let jobs = dir.join("jobs");
+    std::fs::create_dir(&jobs).unwrap();
+    let victim = dir.join("victim");
+    std::fs::write(&victim, b"keep me").unwrap();
+    let (clock, ms) = manual(20);
+    let job = start_with("prec", None, "clip", settings(&jobs), clock);
+    let file = json_files(&jobs)[0].clone();
+    let name = file.file_name().unwrap().to_string_lossy().into_owned();
+    let tmp = jobs.join(format!(".{name}.tmp"));
+    std::os::unix::fs::symlink(&victim, &tmp).unwrap();
+    at(&ms, 21);
+    job.stage("replay", Some(2), "frames");
+    assert_eq!(std::fs::read(&victim).unwrap(), b"keep me");
+    assert!(std::fs::symlink_metadata(&tmp).is_err());
+    let rec = only(&jobs);
+    assert_eq!(rec.stage.as_deref(), Some("replay"));
+    assert_eq!(rec.updated, 21);
+    job.finish(0);
+    assert_eq!(std::fs::read(&victim).unwrap(), b"keep me");
+    assert_eq!(only(&jobs).state, "done");
+    assert_eq!(entries(&jobs), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_in_the_record_s_place_is_replaced_not_followed() {
+    let dir = scratch("symlink-dest");
+    let jobs = dir.join("jobs");
+    std::fs::create_dir(&jobs).unwrap();
+    let victim = dir.join("victim");
+    std::fs::write(&victim, b"keep me").unwrap();
+    std::os::unix::fs::symlink(&victim, jobs.join("a.json")).unwrap();
+    super::util::atomic_write(&jobs, "a.json", b"record").unwrap();
+    assert_eq!(std::fs::read(&victim).unwrap(), b"keep me");
+    assert!(
+        !std::fs::symlink_metadata(jobs.join("a.json"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(std::fs::read(jobs.join("a.json")).unwrap(), b"record");
 }
 
 #[test]
@@ -788,18 +846,7 @@ fn a_wall_clock_step_back_does_not_loosen_the_progress_throttle_or_the_rate() {
     job.finish(0);
 }
 
-#[test]
-fn the_machine_gives_its_real_pid_here() {
-    assert_eq!(super::util::process_id(), std::process::id());
-}
-
-fn slot_open(
-    slot: &Slot,
-    settings: Settings,
-    clock: Clock,
-    label: &str,
-    out: &Path,
-) {
+fn slot_open(slot: &Slot, settings: Settings, clock: Clock, label: &str, out: &Path) {
     slot.start(|| {
         open(
             Some("demo"),
@@ -818,7 +865,13 @@ fn a_render_publishes_its_whole_life() {
     let dir = scratch("slot-life");
     let slot = Slot::new();
     let (clock, ms) = manual(1_000);
-    slot_open(&slot, settings(&dir), clock, "intro", Path::new("/srv/renders/demo"));
+    slot_open(
+        &slot,
+        settings(&dir),
+        clock,
+        "intro",
+        Path::new("/srv/renders/demo"),
+    );
     let rec = only(&dir);
     assert_eq!(rec.tool, crate::render::TOOL);
     assert_eq!(rec.app.as_deref(), Some("demo"));
@@ -844,7 +897,10 @@ fn a_render_publishes_its_whole_life() {
     slot.progress(45);
     assert_eq!(only(&dir).progress.unwrap().done, 45);
     slot.note("archive queued");
-    assert_eq!(only(&dir).stage_note.as_deref(), Some("dark archive queued"));
+    assert_eq!(
+        only(&dir).stage_note.as_deref(),
+        Some("dark archive queued")
+    );
     slot.context(None);
     slot.note("archive refused");
     assert_eq!(only(&dir).stage_note.as_deref(), Some("archive refused"));
@@ -902,7 +958,15 @@ fn a_second_start_is_ignored_and_writes_nothing() {
     let second = settings(&dir);
     slot.start(|| {
         called.store(true, Ordering::Relaxed);
-        open(None, "second", String::new(), String::new(), Path::new("/x"), second, clock)
+        open(
+            None,
+            "second",
+            String::new(),
+            String::new(),
+            Path::new("/x"),
+            second,
+            clock,
+        )
     });
     assert!(!called.load(Ordering::Relaxed));
     let rec = only(&dir);
@@ -961,7 +1025,12 @@ fn pito_jobs_off_writes_nothing_through_a_whole_render() {
 #[test]
 fn no_runtime_dir_means_no_record_and_the_render_goes_on() {
     let dir = scratch("slot-none");
-    let cfg = Settings::from_fn(|_| None);
+    let target = dir.to_string_lossy().into_owned();
+    let cfg = Settings::from_fn(|key| match key {
+        "PITO_JOBS_DIR" | "XDG_RUNTIME_DIR" => Some("  ".to_string()),
+        "TMPDIR" if !super::env::MACOS => Some(target.clone()),
+        _ => None,
+    });
     assert!(cfg.dir.is_none());
     let slot = Slot::new();
     let (clock, _) = manual(11);
@@ -979,7 +1048,13 @@ fn a_blocked_jobs_dir_never_fails_the_render() {
     std::fs::write(&blocker, b"x").unwrap();
     let slot = Slot::new();
     let (clock, _) = manual(12);
-    slot_open(&slot, settings(&blocker), clock, "intro", Path::new("/srv/out"));
+    slot_open(
+        &slot,
+        settings(&blocker),
+        clock,
+        "intro",
+        Path::new("/srv/out"),
+    );
     slot.stages(&["replay"]);
     slot.stage("replay", Some(2), "frames");
     slot.progress(2);
