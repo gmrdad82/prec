@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -26,16 +27,20 @@ pub struct Confine {
 static LOADED: OnceLock<(Option<PathBuf>, Config)> = OnceLock::new();
 
 fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
+    absolute(std::env::var_os("HOME"))
+}
+
+fn absolute(var: Option<OsString>) -> Option<PathBuf> {
+    var.map(PathBuf::from).filter(|p| p.is_absolute())
 }
 
 fn default_path() -> Option<PathBuf> {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| Some(home()?.join(".config")))
+    default_path_in(std::env::var_os("XDG_CONFIG_HOME"), home())
+}
+
+fn default_path_in(xdg: Option<OsString>, home: Option<PathBuf>) -> Option<PathBuf> {
+    absolute(xdg)
+        .or_else(|| Some(home?.join(".config")))
         .map(|d| d.join("prec/config.toml"))
 }
 
@@ -47,8 +52,12 @@ pub fn path() -> Option<PathBuf> {
 }
 
 pub fn expand(p: &Path) -> PathBuf {
+    expand_in(p, home())
+}
+
+fn expand_in(p: &Path, home: Option<PathBuf>) -> PathBuf {
     match p.strip_prefix("~") {
-        Ok(rest) => home().map(|h| h.join(rest)).unwrap_or_else(|| p.into()),
+        Ok(rest) => home.map(|h| h.join(rest)).unwrap_or_else(|| p.into()),
         Err(_) => p.into(),
     }
 }
@@ -137,5 +146,118 @@ mod tests {
         let missing = Path::new("/nonexistent/prec/config.toml");
         assert_eq!(read(Some(missing), false).unwrap(), Config::default());
         assert!(read(Some(missing), true).is_err());
+    }
+
+    fn test_dir(name: &str) -> PathBuf {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tmp/test-config")
+            .join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn the_default_file_is_under_an_absolute_xdg_config_home_else_home() {
+        let home = Some(PathBuf::from("/h"));
+        assert_eq!(
+            default_path_in(Some("/x".into()), home.clone()),
+            Some(PathBuf::from("/x/prec/config.toml"))
+        );
+        for xdg in [None, Some("rel/config".into()), Some("".into())] {
+            assert_eq!(
+                default_path_in(xdg, home.clone()),
+                Some(PathBuf::from("/h/.config/prec/config.toml"))
+            );
+        }
+        assert_eq!(default_path_in(None, None), None);
+        assert_eq!(default_path_in(Some("rel".into()), None), None);
+        assert_eq!(absolute(Some("relative/home".into())), None);
+        assert_eq!(absolute(Some("/abs".into())), Some(PathBuf::from("/abs")));
+    }
+
+    #[test]
+    fn a_leading_tilde_is_the_home_and_nothing_else_is_expanded() {
+        let home = || Some(PathBuf::from("/h"));
+        assert_eq!(
+            expand_in(Path::new("~/arch"), home()),
+            PathBuf::from("/h/arch")
+        );
+        assert_eq!(expand_in(Path::new("~"), home()), PathBuf::from("/h"));
+        for kept in ["~other/x", "/abs/~/x", "rel/~", "a~/b"] {
+            assert_eq!(expand_in(Path::new(kept), home()), PathBuf::from(kept));
+        }
+        assert_eq!(expand_in(Path::new("~/arch"), None), PathBuf::from("~/arch"));
+    }
+
+    #[test]
+    fn a_confine_table_parses_alone_or_with_its_cpus_file() {
+        let c = parse("[confine]\n").unwrap();
+        assert_eq!(c.confine, Some(Confine::default()));
+        assert_eq!(c.archive, None);
+        let c = parse("[confine]\ncpus_from = \"/etc/machine.env\"\ncpus_key = \"RENDER_CPUS\"\n")
+            .unwrap()
+            .confine
+            .unwrap();
+        assert_eq!(c.cpus_from.as_deref(), Some(Path::new("/etc/machine.env")));
+        assert_eq!(c.cpus_key.as_deref(), Some("RENDER_CPUS"));
+        assert_eq!(c.cpus, None);
+        let both = parse("[confine]\ncpus = \"1\"\ncpus_from = \"/x\"\n").unwrap_err();
+        assert_eq!(both, "[confine] takes cpus or cpus_from, not both");
+    }
+
+    #[test]
+    fn a_tilde_in_a_path_key_is_expanded_and_left_alone_elsewhere() {
+        let c = parse(
+            "archive = \"~/arch\"\nchromium = \"~/bin/chrome\"\ntheme = \"~nord\"\n[confine]\ncpus_from = \"~/m.env\"\n",
+        )
+        .unwrap();
+        assert_eq!(c.archive, Some(expand(Path::new("~/arch"))));
+        assert_eq!(c.chromium, Some(expand(Path::new("~/bin/chrome"))));
+        assert_eq!(c.confine.unwrap().cpus_from, Some(expand(Path::new("~/m.env"))));
+        assert_eq!(c.theme.as_deref(), Some("~nord"));
+    }
+
+    #[test]
+    fn an_unknown_key_or_a_wrong_type_is_refused_by_name() {
+        for (text, names) in [
+            ("archiv = \"/srv\"\n", "archiv"),
+            ("[confine]\ncpu = \"1\"\n", "cpu"),
+            ("[confin]\n", "confin"),
+        ] {
+            let e = parse(text).unwrap_err();
+            assert!(e.contains(&format!("unknown field `{names}`")), "{text}: {e}");
+        }
+        assert!(parse("archive = 3\n").is_err());
+        assert!(parse("confine = \"yes\"\n").is_err());
+        assert!(parse("archive = \"/a\"\narchive = \"/b\"\n").is_err());
+        assert!(parse("not toml").is_err());
+    }
+
+    #[test]
+    fn a_config_file_is_read_and_its_errors_name_it() {
+        let dir = test_dir("read");
+        assert_eq!(read(None, false).unwrap(), Config::default());
+        let good = dir.join("good.toml");
+        std::fs::write(&good, "archive = \"/srv/a\"\n").unwrap();
+        for explicit in [false, true] {
+            assert_eq!(
+                read(Some(&good), explicit).unwrap().archive.as_deref(),
+                Some(Path::new("/srv/a"))
+            );
+        }
+        let empty = dir.join("empty.toml");
+        std::fs::write(&empty, "").unwrap();
+        assert_eq!(read(Some(&empty), false).unwrap(), Config::default());
+        let bad = dir.join("bad.toml");
+        std::fs::write(&bad, "archiv = \"/srv\"\n").unwrap();
+        let e = read(Some(&bad), false).unwrap_err();
+        assert!(e.starts_with(&format!("{}: ", bad.display())), "{e}");
+        assert!(e.contains("archiv"), "{e}");
+        let e = read(Some(&dir), false).unwrap_err();
+        assert!(e.starts_with(&format!("{}: ", dir.display())), "{e}");
+        let absent = dir.join("absent.toml");
+        let e = read(Some(&absent), true).unwrap_err();
+        assert!(e.starts_with(&format!("{}: ", absent.display())), "{e}");
     }
 }

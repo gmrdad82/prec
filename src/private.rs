@@ -41,6 +41,10 @@ fn hostname() -> Option<String> {
                 .filter(|o| o.status.success())
                 .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
         })?;
+    host_name(&text)
+}
+
+fn host_name(text: &str) -> Option<String> {
     let name = text.trim().to_string();
     (!name.is_empty() && name != "localhost" && name != "(none)").then_some(name)
 }
@@ -215,11 +219,12 @@ pub fn refuse(cast: &Path, findings: &[Finding]) -> Result<(), String> {
 }
 
 pub fn redact(text: &str, passed: &[(String, String)]) -> String {
+    let mut longest_first: Vec<&(String, String)> =
+        passed.iter().filter(|(_, v)| !v.is_empty()).collect();
+    longest_first.sort_by_key(|(_, v)| std::cmp::Reverse(v.len()));
     let mut out = text.to_string();
-    for (name, value) in passed {
-        if !value.is_empty() {
-            out = out.replace(value.as_str(), &format!("<{name}>"));
-        }
+    for (name, value) in longest_first {
+        out = out.replace(value.as_str(), &format!("<{name}>"));
     }
     out
 }
@@ -362,5 +367,184 @@ mod tests {
             ),
             "echo <TOKEN>"
         );
+    }
+
+    #[test]
+    fn each_kind_of_private_text_is_named_and_neutral_text_is_not() {
+        let n = needles();
+        for (text, what) in [
+            ("cd /home/alpha/work", &["the home path", "the user name"][..]),
+            ("/home/alphabet/x", &["the home path"]),
+            ("user@beta-box:~$", &["the hostname"]),
+            ("BETA-BOX ready", &["the hostname"]),
+            ("logged in as alpha", &["the user name"]),
+            ("write to ops@example.com", &["an email"]),
+            ("Plan: ChatGPT Plus", &["a plan label"]),
+            ("Copilot Pro+ enabled", &["a plan label"]),
+            ("weekly limit reached", &["a usage limit"]),
+            ("Organisation name: Acme", &["an organisation label"]),
+            ("Bearer s3cret-value", &["a passed variable TOKEN"]),
+        ] {
+            assert_eq!(n.found(text), what, "{text}");
+        }
+        for neutral in [
+            "",
+            "demo show: 3 frames rendered in 0.42s",
+            "the alphabet and the beta-boxes",
+            "s3cret-valu",
+            "a pro plan for the team",
+            "limited edition",
+        ] {
+            assert!(n.found(neutral).is_empty(), "{neutral:?}: {:?}", n.found(neutral));
+        }
+    }
+
+    #[test]
+    fn a_line_showing_several_kinds_names_each_once_in_a_fixed_order() {
+        assert_eq!(
+            needles().found("alpha@beta-box /home/alpha a@b.io s3cret-value usage limit"),
+            [
+                "the home path",
+                "the hostname",
+                "the user name",
+                "an email",
+                "a usage limit",
+                "a passed variable TOKEN"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_short_passed_value_or_user_name_is_not_looked_for() {
+        let n = Needles::new(
+            vec![],
+            None,
+            Some("abc".into()),
+            &[
+                ("SHORT".into(), "abc".into()),
+                ("FOUR".into(), "wxyz".into()),
+                ("EMPTY".into(), String::new()),
+            ],
+        );
+        assert_eq!(n.found("abc wxyz"), ["the user name", "a passed variable FOUR"]);
+        assert!(n.found("").is_empty());
+        assert!(Needles::new(vec![], None, Some(String::new()), &[]).found("x").is_empty());
+    }
+
+    #[test]
+    fn a_word_match_needs_a_non_word_character_or_an_edge_on_each_side() {
+        for (text, hit) in [
+            ("alpha", true),
+            ("alpha!", true),
+            ("-alpha-", true),
+            ("alpha1", false),
+            ("_alpha", false),
+            ("ßalpha", false),
+            ("alphaé", false),
+            ("x alphax alpha", true),
+        ] {
+            assert_eq!(word(text, "alpha"), hit, "{text:?}");
+        }
+        assert!(!word("anything", ""));
+    }
+
+    #[test]
+    fn a_home_needle_is_an_absolute_path_below_the_root() {
+        assert_eq!(real_home("/home/alpha/").as_deref(), Some("/home/alpha"));
+        assert_eq!(real_home("/alpha").as_deref(), Some("/alpha"));
+        for none in ["/", "", "home/alpha", "~"] {
+            assert_eq!(real_home(none), None, "{none:?}");
+        }
+    }
+
+    #[test]
+    fn a_generic_hostname_is_not_looked_for() {
+        assert_eq!(host_name("beta-box\n").as_deref(), Some("beta-box"));
+        for generic in ["localhost\n", "(none)", "", "  \n"] {
+            assert_eq!(host_name(generic), None, "{generic:?}");
+        }
+    }
+
+    #[test]
+    fn redaction_replaces_exactly_each_passed_value_longest_first() {
+        let passed = [
+            ("KEY".to_string(), "abcd1234".to_string()),
+            ("URL".to_string(), "https://site/?k=abcd1234&s=zz9".to_string()),
+            ("EMPTY".to_string(), String::new()),
+        ];
+        assert_eq!(
+            redact("get https://site/?k=abcd1234&s=zz9 with abcd1234, abcd1234", &passed),
+            "get <URL> with <KEY>, <KEY>"
+        );
+        assert_eq!(redact("pre-abcd1234-post", &passed), "pre-<KEY>-post");
+        assert_eq!(redact("abcd123 bcd1234", &passed), "abcd123 bcd1234");
+        assert_eq!(redact("nothing here", &passed), "nothing here");
+        assert_eq!(redact("abcd1234", &[]), "abcd1234");
+    }
+
+    #[test]
+    fn a_finding_is_told_with_the_cast_kind_and_time_one_line_each() {
+        let cast = Path::new("/nowhere/demo-clip-s.cast");
+        let found = [
+            Finding {
+                what: "the hostname".into(),
+                at: 1.254,
+            },
+            Finding {
+                what: "an email".into(),
+                at: 0.0,
+            },
+        ];
+        let lines = lines(cast, &found);
+        assert_eq!(
+            lines,
+            [
+                "/nowhere/demo-clip-s.cast: the picture shows the hostname at 1.25s; hide it in the tape, mask it in terminal.toml or re-record",
+                "/nowhere/demo-clip-s.cast: the picture shows an email at 0.00s; hide it in the tape, mask it in terminal.toml or re-record",
+            ]
+        );
+        assert_eq!(refuse(cast, &[]), Ok(()));
+        assert_eq!(
+            refuse(cast, &found).unwrap_err(),
+            format!("{}\nprec: {}", lines[0], lines[1])
+        );
+    }
+
+    #[test]
+    fn a_moment_is_placed_on_the_shown_timeline() {
+        let segments = [(0.0, 1.0), (2.0, 3.5)];
+        assert_eq!(shown_at(&segments, 0.0), Some(0.0));
+        assert_eq!(shown_at(&segments, 0.5), Some(0.5));
+        assert_eq!(shown_at(&segments, 2.5), Some(1.5));
+        assert_eq!(shown_at(&segments, 1.5), None);
+        assert_eq!(shown_at(&segments, 3.5), None);
+        assert_eq!(shown_at(&[], 1.0), None);
+    }
+
+    #[test]
+    fn a_mask_hides_exactly_what_it_matches_and_the_rest_is_still_found() {
+        let mut c = cast(
+            &[(0.1, "Claude Max · ops@example.com\r\n")],
+            &[(0.0, "show"), (1.0, "end")],
+        );
+        assert_eq!(
+            whats(&c),
+            [
+                ("an email".to_string(), 0.1),
+                ("a plan label".to_string(), 0.1)
+            ]
+        );
+        c.meta = json!({"mask": [{"match": "Claude \\w+"}]});
+        assert_eq!(whats(&c), [("an email".to_string(), 0.1)]);
+        c.meta = json!({"mask": [{"rect": [0, 0, 40, 1]}]});
+        assert!(whats(&c).is_empty());
+        c.meta = json!({"mask": [{"rect": [0, 1, 40, 1]}]});
+        assert_eq!(whats(&c).len(), 2);
+    }
+
+    #[test]
+    fn a_cast_with_nothing_on_screen_has_no_findings() {
+        assert!(whats(&cast(&[], &[(0.0, "show"), (1.0, "end")])).is_empty());
+        assert!(whats(&cast(&[(0.1, "neutral text\r\n")], &[(0.0, "show"), (1.0, "end")])).is_empty());
     }
 }
