@@ -48,12 +48,37 @@ Unit tests: **59.3% of lines** (5,452 of 9,192), 51.9% of functions, 59.4% of re
 | `src/mask.rs` | 156 | 151 | 96.8% | 84.6% |
 | `src/fps.rs` | 150 | 148 | 98.7% | 96.2% |
 
-Whole suite: measuring.
+Whole suite (126 tests, unit and integration): **83.6% of lines** (7,688 of 9,192), 73.6% of functions, 83.0% of regions.
+
+| File | Lines | Covered | Lines % | Functions % |
+|---|---:|---:|---:|---:|
+| `src/doctor.rs` | 117 | 0 | 0.0% | 0.0% |
+| `src/theme.rs` | 278 | 130 | 46.8% | 28.6% |
+| `src/config.rs` | 99 | 62 | 62.6% | 52.0% |
+| `src/app.rs` | 551 | 383 | 69.5% | 73.0% |
+| `src/home.rs` | 119 | 88 | 73.9% | 66.7% |
+| `src/paths.rs` | 600 | 466 | 77.7% | 78.1% |
+| `src/main.rs` | 341 | 276 | 80.9% | 81.0% |
+| `src/tape.rs` | 277 | 228 | 82.3% | 68.0% |
+| `src/render.rs` | 1270 | 1063 | 83.7% | 75.2% |
+| `src/cdp.rs` | 372 | 316 | 84.9% | 78.0% |
+| `src/encode.rs` | 451 | 384 | 85.1% | 60.5% |
+| `src/cache.rs` | 1043 | 889 | 85.2% | 78.3% |
+| `src/record.rs` | 700 | 597 | 85.3% | 80.8% |
+| `src/replay.rs` | 294 | 253 | 86.1% | 72.7% |
+| `src/font.rs` | 40 | 35 | 87.5% | 37.5% |
+| `src/archive.rs` | 1637 | 1545 | 94.4% | 74.3% |
+| `src/jobs.rs` | 56 | 53 | 94.6% | 100.0% |
+| `src/private.rs` | 305 | 290 | 95.1% | 88.6% |
+| `src/mask.rs` | 156 | 151 | 96.8% | 84.6% |
+| `src/compose.rs` | 336 | 331 | 98.5% | 96.4% |
+| `src/fps.rs` | 150 | 148 | 98.7% | 96.2% |
 
 ## Critical paths not yet covered
 
-- `src/home.rs` (0%): the neutral home and hostname a public recording shows; a gap here can leak a real path into a frame.
-- `src/main.rs` (5%): the command line, its parse errors and exit codes.
-- `src/replay.rs` (9%) and `src/cdp.rs` (37%): frame timing and the headless browser link; the integration tests reach them, the unit tests barely do.
-- `src/render.rs` (32%): the render pipeline end to end, reached mostly through the integration tests.
-- `src/config.rs` (47%) and `src/paths.rs` (64%): the machine config, the session environment and where child processes run.
+- `src/home.rs` (0% by unit tests, 74% whole suite): the neutral home and hostname a public recording shows; a gap here can leak a real path into a frame.
+- `src/doctor.rs` (0%) and `src/theme.rs` (47%): the machine check's reports and exit codes, and the themes' colours.
+- `src/config.rs` (63%), `src/paths.rs` (78%) and `src/app.rs` (70%): the machine config, the session environment, where child processes run, and the shots file.
+- `src/main.rs` (5% by unit tests): the command line, its parse errors and exit codes, reached only through the integration tests.
+- `src/replay.rs` (9% by unit tests) and `src/cdp.rs` (37%): frame timing and the headless browser link; the integration tests reach them, the unit tests barely do.
+- `src/encode.rs` (61% of functions): the encoder's failure paths.
