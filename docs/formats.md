@@ -114,5 +114,5 @@ The same object is stored as the manifest's `archive.catalog`.
 
 ## 5. The rest
 
-- **Job records** go through [pito-jobs](https://github.com/gmrdad82/pito-jobs), and README's Job records section names their stages and progress units.
+- **Job records** are written by prec itself, in the job-record format of pito-jobs v1.0.3 (byte for byte: the same folder, file names, keys and their order), and README's Job records section names their folder, variables, stages and progress units.
 - **`prec --version`** prints `prec <x.y.z>`.
