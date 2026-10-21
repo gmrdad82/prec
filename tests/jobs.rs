@@ -98,18 +98,82 @@ fn stderr(o: &Output) -> String {
     String::from_utf8_lossy(&o.stderr).into_owned()
 }
 
+fn top_level_keys(raw: &str) -> Vec<String> {
+    let mut keys = Vec::new();
+    let mut depth = 0;
+    let mut want_key = false;
+    let mut chars = raw.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '{' | '[' => {
+                depth += 1;
+                want_key = c == '{' && depth == 1;
+            }
+            '}' | ']' => depth -= 1,
+            ',' if depth == 1 => want_key = true,
+            '"' => {
+                let mut text = String::new();
+                while let Some(c) = chars.next() {
+                    match c {
+                        '\\' => {
+                            chars.next();
+                        }
+                        '"' => break,
+                        c => text.push(c),
+                    }
+                }
+                if want_key {
+                    keys.push(text);
+                    want_key = false;
+                }
+            }
+            _ => {}
+        }
+    }
+    keys
+}
+
 fn keys_in_order(raw: &str) {
     assert!(raw.starts_with("{\"v\":1,\"id\":\""), "{raw}");
     assert!(raw.ends_with('}'), "{raw}");
     assert!(!raw.contains('\n'), "{raw}");
-    let mut from = 0;
-    for key in KEYS.iter().copied() {
-        let token = format!("\"{key}\":");
-        let at = raw[from..]
-            .find(&token)
-            .unwrap_or_else(|| panic!("{key} missing or out of order in {raw}"));
-        from += at + token.len();
+    assert_eq!(top_level_keys(raw), KEYS, "{raw}");
+}
+
+#[test]
+fn the_key_scan_sees_extra_duplicate_and_nested_keys() {
+    assert_eq!(
+        top_level_keys(r#"{"a":{"b":1,"c":[{"d":2}]},"e":"x,\"f\":","a":[1,2]}"#),
+        ["a", "e", "a"]
+    );
+    assert_eq!(top_level_keys("{}"), Vec::<String>::new());
+}
+
+fn walk(dir: &Path, found: &mut Vec<PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap().flatten() {
+        let path = entry.path();
+        found.push(path.clone());
+        if entry.file_type().unwrap().is_dir() {
+            walk(&path, found);
+        }
     }
+}
+
+fn looks_like_a_record(path: &Path) -> bool {
+    let name = path.file_name().unwrap().to_string_lossy();
+    let name = name.trim_start_matches('.');
+    let Some(stem) = name
+        .strip_suffix(".json")
+        .or_else(|| name.strip_suffix(".json.tmp"))
+    else {
+        return false;
+    };
+    stem.split_once('-').is_some_and(|(pid, ms)| {
+        !pid.is_empty()
+            && !ms.is_empty()
+            && pid.bytes().all(|b| b.is_ascii_digit())
+            && ms.bytes().all(|b| b.is_ascii_digit())
+    })
 }
 
 fn finished_well(name: &str, raw: &str, rec: &Value, dir: &Path) {
@@ -218,9 +282,19 @@ fn pito_jobs_off_writes_no_record() {
 #[test]
 fn with_no_folder_named_there_is_no_record_and_the_recording_succeeds() {
     let (dir, app) = case("none");
-    let o = common::ok(record(&dir, &app));
+    let home = dir.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let mut c = record(&dir, &app);
+    c.env("HOME", &home);
+    let o = common::ok(c);
     assert!(dir.join("tmp/out/demo/clip/demo-clip-short.cast").is_file());
     assert!(!stderr(&o).contains("pito-jobs"), "{}", stderr(&o));
+    let mut found = Vec::new();
+    walk(&dir, &mut found);
+    for path in &found {
+        assert_ne!(path.file_name().unwrap(), "pito-jobs", "{}", path.display());
+        assert!(!looks_like_a_record(path), "{}", path.display());
+    }
 }
 
 #[test]

@@ -499,6 +499,39 @@ fn a_record_far_over_the_limit_is_shrunk_to_fit() {
 }
 
 #[test]
+fn with_the_preferred_fields_empty_the_largest_other_field_shrinks_first() {
+    let (clock, _) = manual(1);
+    let dir = scratch("unfit-extra");
+    let job = start_with("prec", None, "", settings(&dir), clock);
+    drop(job);
+    let mut rec = only(&dir);
+    rec.error = None;
+    rec.pgpu = Some(super::record::Pgpu {
+        pid: 7,
+        as_name: "a".repeat(1_500),
+    });
+    rec.stage = Some("s".repeat(1_500));
+    rec.progress = Some(super::record::Progress {
+        done: 1,
+        total: None,
+        unit: "u".repeat(1_500),
+    });
+    rec.host = "h".repeat(1_500);
+    rec.id = "i".repeat(1_500);
+    let bytes = super::fit::encode(&rec);
+    assert_eq!(bytes.len(), super::fit::LIMIT);
+    let back: Record = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(back.pgpu.unwrap().as_name, "");
+    assert_eq!(back.stage.as_deref(), Some(""));
+    let unit = back.progress.unwrap().unit;
+    assert!(!unit.is_empty() && unit.len() < 1_500, "{}", unit.len());
+    assert!(unit.bytes().all(|b| b == b'u'));
+    assert_eq!(back.host, rec.host);
+    assert_eq!(back.id, rec.id);
+    assert_eq!(back.tool, "prec");
+}
+
+#[test]
 fn off_writes_nothing() {
     let dir = scratch("off");
     let mut cfg = settings(&dir);

@@ -84,4 +84,17 @@ mod tests {
         #[cfg(unix)]
         assert!(super::os_host_name().is_some_and(|name| !name.trim().is_empty()));
     }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_start_time_and_the_host_are_the_machine_s() {
+        let stat = std::fs::read_to_string("/proc/self/stat").unwrap();
+        let after = &stat[stat.rfind(')').unwrap() + 2..];
+        let field_22: u64 = after.split(' ').nth(19).unwrap().parse().unwrap();
+        assert!(field_22 > 0);
+        assert_eq!(super::pid_start(), field_22);
+        let kernel = std::fs::read_to_string("/proc/sys/kernel/hostname").unwrap();
+        assert_eq!(super::host_name(), kernel.trim());
+        assert_eq!(super::os_host_name().as_deref(), Some(kernel.trim()));
+    }
 }

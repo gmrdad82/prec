@@ -309,7 +309,7 @@ An archive is optional and off unless `archive` (or `PITO_ARCHIVE`) names a root
 
 ## Job records
 
-Every `clip`, `still`, `record` and `render` publishes a live job record, in RAM only, in `$XDG_RUNTIME_DIR/pito-jobs/` (or `PITO_JOBS_DIR`; on macOS without `XDG_RUNTIME_DIR`, `$TMPDIR/pito-jobs/`), with its stages (`build`, `record`, `replay`, `master` or `derive`, `archive`) and progress, for a dashboard to show. prec writes the record itself, in the job-record format of pito-jobs v1.0.3: one JSON file per render, `<pid>-<started ms>.json`, rewritten atomically, at most once a second for progress, and at most 4 KiB. It reads `PITO_JOB_ID` as its parent job, `PITO_INVOKER` as its invoker and `GPU_QUEUE_PID` as its GPU queue. With none of those folders there is none, `PITO_JOBS=off` turns it off, and a record that can't be written never fails the render.
+Every `clip`, `still`, `record` and `render` publishes a live job record, in RAM only, in `$XDG_RUNTIME_DIR/pito-jobs/` (or `PITO_JOBS_DIR`; on macOS without `XDG_RUNTIME_DIR`, `$TMPDIR/pito-jobs/`), with its stages (`build`, `record`, `replay`, `master` or `derive`, `archive`) and progress, for a dashboard to show. prec writes the record itself, in the job-record format of pito-jobs v1.0.3: one JSON file per render, `<pid>-<started ms>.json`, rewritten atomically, at most once a second for progress, and at most 4 KiB. It reads `PITO_JOB_ID` as its parent job, `PITO_INVOKER` as its invoker and `GPU_QUEUE_PID` as its GPU queue. With neither `PITO_JOBS_DIR` nor `XDG_RUNTIME_DIR` (nor `TMPDIR` on macOS) there is none, `PITO_JOBS=off` turns it off, and a record that can't be written never fails the render.
 
 ## Part of PITO MD
 

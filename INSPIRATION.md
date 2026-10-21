@@ -25,7 +25,10 @@ v1.0.3), so the records it writes stay byte for byte those pito-jobs wrote.
   time; the host name asks the OS through nix's `gethostname` instead of
   calling libc directly.
 - `src/jobs/util.rs` from `src/util.rs`: `Clock`, `atomic_write`, `filled`
-  and `process_id`; `read_capped` is left out.
+  and `process_id`; `read_capped` is left out. `atomic_write` creates its
+  temporary file new (`create_new`, removing and creating it again if one is
+  there) instead of `std::fs::write`, so it never follows a link planted at
+  that name; the bytes, the file mode and the rename stay the same.
 - `src/jobs/tests.rs` from `src/tests.rs`: the tests of the parts above.
 
 The heartbeats, the readers and the progress lines of `live.rs`, `op.rs` and
