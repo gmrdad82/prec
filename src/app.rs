@@ -879,13 +879,7 @@ mod tests {
             check("hostname = \"box\"\n").unwrap_err(),
             "hostname needs home"
         );
-        for bad in [
-            "/alpha",
-            "srv/alpha",
-            "/srv/al pha",
-            "/srv/../x",
-            "/srv//x",
-        ] {
+        for bad in ["/alpha", "srv/alpha", "/srv/al pha", "/srv/../x", "/srv//x"] {
             let e = check(&format!("home = {bad:?}\n")).unwrap_err();
             assert!(e.starts_with(&format!("home {bad:?}: ")), "{bad}: {e}");
         }

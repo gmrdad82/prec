@@ -5,3 +5,8 @@ src/private.rs:276 a made-up home path and email the private-data scan's unit te
 src/private.rs:352 a made-up email the private-data scan's unit test must match
 tests/environment.rs:272 the made-up neutral home the integration test runs its session under
 commit/becd0845980a:src/mask.rs:174 a made-up home path in the mask unit test of that commit, replaced by /srv/x in the next one
+commit/2b17f591c28a:src/app.rs:842 a made-up home path in the app model unit test of that commit, replaced by /srv/alpha in the next one
+commit/2b17f591c28a:src/app.rs:885 a made-up home path in the app model unit test of that commit, replaced by /srv/alpha in the next one
+commit/2b17f591c28a:src/app.rs:894 a made-up home path in the app model unit test of that commit, replaced by /srv/alpha in the next one
+commit/2b17f591c28a:src/app.rs:898 a made-up home path in the app model unit test of that commit, replaced by /srv/alpha in the next one
+commit/2b17f591c28a:src/app.rs:903 a made-up home path in the app model unit test of that commit, replaced by /srv/alpha in the next one
