@@ -610,6 +610,15 @@ fn settle(
         &mut job.manifest,
         &job.files,
     );
+    conclude(job, &made, entry, outcome)
+}
+
+fn conclude(
+    job: &mut Queued,
+    made: &str,
+    entry: Option<&Path>,
+    outcome: Outcome,
+) -> Result<Outcome, String> {
     let state = match &outcome {
         Outcome::Retry(_) => return Ok(outcome),
         Outcome::Archived(_) => None,
@@ -617,10 +626,16 @@ fn settle(
         Outcome::Refused(e) => Some(("refused", e)),
     };
     if let Some((state, error)) = state {
+        if !job.manifest.is_object() {
+            job.manifest = json!({});
+        }
+        if !job.manifest["archive"].is_object() {
+            job.manifest["archive"] = json!({});
+        }
         job.manifest["archive"]["state"] = json!(state);
         job.manifest["archive"]["error"] = json!(error);
     }
-    refresh_local(&job.local, &made, &job.manifest)?;
+    refresh_local(&job.local, made, &job.manifest)?;
     if let Some(entry) = entry
         && let Err(e) = remove(entry, fs::remove_dir_all(entry))
     {
@@ -744,10 +759,38 @@ fn retry_entry(dir: &Path, lock_file: &Path, online: &mut dyn FnMut(&Path) -> bo
         Ok(job) => job,
         Err(e) => return Outcome::Retry(format!("{}: {e}", dir.display())),
     };
+    if let Err(e) = contained(&job) {
+        let made = job.manifest["made"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let refused = Outcome::Refused(format!("{}: {e}", dir.display()));
+        return conclude(&mut job, &made, Some(dir), refused).unwrap_or_else(Outcome::Retry);
+    }
     if !online(&job.root) {
         return Outcome::Retry(format!("{} is unavailable", job.root.display()));
     }
     settle(&mut job, dir, Some(dir), lock_file).unwrap_or_else(Outcome::Retry)
+}
+
+fn inside(path: &Path) -> bool {
+    let mut parts = path.components().peekable();
+    parts.peek().is_some()
+        && !path.as_os_str().as_encoded_bytes().contains(&0)
+        && parts.all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
+fn contained(job: &Queued) -> Result<(), String> {
+    if !inside(&job.base) {
+        return Err(format!(
+            "the queued leaf {:?} leaves the archive",
+            job.base.display().to_string()
+        ));
+    }
+    match job.files.iter().find(|f| !inside(Path::new(&f.name))) {
+        Some(f) => Err(format!("the queued file {:?} leaves its leaf", f.name)),
+        None => Ok(()),
+    }
 }
 
 fn read_queued(dir: &Path) -> Result<Queued, String> {
@@ -1925,5 +1968,33 @@ mod tests {
         assert!(reindex_at(&root, &lock_file).is_err());
         assert_eq!(fs::read(catalog.join("catalog.jsonl")).unwrap(), old);
         assert!(!masters(&root).join("catalog.jsonl.partial").exists());
+    }
+
+    #[test]
+    fn only_a_relative_path_with_no_root_or_dots_stays_inside() {
+        assert!(inside(Path::new(
+            "prec/alpha/shot/2026-10-02_091407_v1.2.3_site"
+        )));
+        for path in [
+            "shot.master.png",
+            "alpha-still-shot-1280x720-web-640@2x.png",
+            "alpha-still-shot-1280x720-web-640.png",
+            "frames/shot 01.png",
+        ] {
+            assert!(inside(Path::new(path)), "{path}");
+        }
+        for path in [
+            "",
+            "..",
+            ".",
+            "./alpha",
+            "../alpha",
+            "prec/../../alpha",
+            "prec/alpha/..",
+            "/srv/archive/alpha",
+            "shot\0.png",
+        ] {
+            assert!(!inside(Path::new(path)), "{path}");
+        }
     }
 }

@@ -1,9 +1,60 @@
 assets/xterm/xterm.js:1 vendored xterm.js 5.5.0 as published (sha256 in assets/xterm/VERSIONS); gitleaks' generic-api-key rule matches a minified identifier, not a secret
 assets/xterm/addon-canvas.js:1 vendored @xterm/addon-canvas 0.7.0 as published (sha256 in assets/xterm/VERSIONS); gitleaks' generic-api-key rule matches a minified identifier, not a secret
-src/private.rs:258 a made-up home path the private-data scan's unit test must find
-src/private.rs:276 a made-up home path and email the private-data scan's unit test must find
-src/private.rs:352 a made-up email the private-data scan's unit test must match
 tests/environment.rs:272 the made-up neutral home the integration test runs its session under
+commit/becd0845980a:src/mask.rs:174 a made-up home path in the mask unit test of that commit, replaced by /srv/x in the next one
+tests/paths.rs:424 the made-up neutral home the integration test runs its session under
+commit/1d3b98c1863a:src/private.rs:263 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/1d3b98c1863a:src/private.rs:281 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/1d3b98c1863a:src/private.rs:357 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/1d3b98c1863a:src/private.rs:376 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/1d3b98c1863a:src/private.rs:377 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/1d3b98c1863a:src/private.rs:405 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/1d3b98c1863a:src/private.rs:453 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/1d3b98c1863a:tests/paths.rs:344 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/1d3b98c1863a:tests/paths.rs:347 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/1d3b98c1863a:tests/paths.rs:367 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/1d3b98c1863a:tests/paths.rs:378 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/1d3b98c1863a:tests/paths.rs:384 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/1d3b98c1863a:tests/paths.rs:386 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/1d3b98c1863a:tests/paths.rs:399 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/237d704c5989:src/config.rs:213 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/237d704c5989:src/config.rs:214 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/237d704c5989:src/config.rs:217 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/237d704c5989:src/config.rs:221 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/237d704c5989:src/config.rs:231 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/237d704c5989:src/private.rs:305 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/237d704c5989:src/private.rs:323 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/237d704c5989:src/private.rs:399 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/237d704c5989:src/private.rs:418 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/237d704c5989:src/private.rs:419 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/237d704c5989:src/private.rs:447 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/237d704c5989:src/private.rs:495 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/237d704c5989:tests/paths.rs:344 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/237d704c5989:tests/paths.rs:347 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/237d704c5989:tests/paths.rs:367 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/237d704c5989:tests/paths.rs:378 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/237d704c5989:tests/paths.rs:384 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/237d704c5989:tests/paths.rs:386 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/237d704c5989:tests/paths.rs:399 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/ab0ad8d19ad0:src/config.rs:216 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/ab0ad8d19ad0:src/config.rs:217 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/ab0ad8d19ad0:src/config.rs:220 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/ab0ad8d19ad0:src/config.rs:224 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/ab0ad8d19ad0:src/config.rs:236 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/ab0ad8d19ad0:src/private.rs:306 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/ab0ad8d19ad0:src/private.rs:324 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/ab0ad8d19ad0:src/private.rs:400 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/ab0ad8d19ad0:src/private.rs:420 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/ab0ad8d19ad0:src/private.rs:423 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/ab0ad8d19ad0:src/private.rs:455 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/ab0ad8d19ad0:src/private.rs:510 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/ab0ad8d19ad0:tests/paths.rs:366 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/ab0ad8d19ad0:tests/paths.rs:369 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/ab0ad8d19ad0:tests/paths.rs:389 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/ab0ad8d19ad0:tests/paths.rs:400 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/ab0ad8d19ad0:tests/paths.rs:406 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/ab0ad8d19ad0:tests/paths.rs:409 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/ab0ad8d19ad0:tests/paths.rs:424 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
 commit/2b17f591c28a:src/app.rs:842 a made-up home path in the app model unit test of that commit, replaced by /srv/alpha in the next one
 commit/2b17f591c28a:src/app.rs:885 a made-up home path in the app model unit test of that commit, replaced by /srv/alpha in the next one
 commit/2b17f591c28a:src/app.rs:894 a made-up home path in the app model unit test of that commit, replaced by /srv/alpha in the next one

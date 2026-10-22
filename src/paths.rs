@@ -182,15 +182,29 @@ pub enum Lock {
 }
 
 pub fn lock(path: &Path, how: Lock, what: &str) -> Result<File, String> {
+    lock_with(path, how, what, &mut |said| eprintln!("{said}"))
+}
+
+fn lock_with(
+    path: &Path,
+    how: Lock,
+    what: &str,
+    waiting: &mut dyn FnMut(&str),
+) -> Result<File, String> {
     loop {
-        let f = lock_once(path, how, what)?;
+        let f = lock_once(path, how, what, waiting)?;
         if same_file(&f, path) {
             return Ok(f);
         }
     }
 }
 
-fn lock_once(path: &Path, how: Lock, what: &str) -> Result<File, String> {
+fn lock_once(
+    path: &Path,
+    how: Lock,
+    what: &str,
+    waiting: &mut dyn FnMut(&str),
+) -> Result<File, String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }
@@ -210,7 +224,7 @@ fn lock_once(path: &Path, how: Lock, what: &str) -> Result<File, String> {
         Err(TryLockError::WouldBlock) => {
             let holder = std::fs::read_to_string(path).unwrap_or_default();
             let holder = holder.trim();
-            eprintln!(
+            waiting(&format!(
                 "waiting for {} to finish with {what} ({})…",
                 if holder.is_empty() {
                     "another prec"
@@ -218,7 +232,7 @@ fn lock_once(path: &Path, how: Lock, what: &str) -> Result<File, String> {
                     holder
                 },
                 path.display()
-            );
+            ));
             match how {
                 Lock::Shared => f.lock_shared(),
                 Lock::Exclusive => f.lock(),
@@ -274,8 +288,18 @@ pub fn confined(bin: &str, memory_max: &str) -> Command {
 }
 
 fn wrapped(bin: &str, memory_max: &str, tail: &[&str]) -> Command {
-    let confine = crate::config::get().confine.as_ref();
-    let (Some(confine), false) = (confine, direct()) else {
+    let confine = crate::config::get().confine.as_ref().filter(|_| !direct());
+    wrap(bin, memory_max, tail, confine, build_cpus)
+}
+
+fn wrap(
+    bin: &str,
+    memory_max: &str,
+    tail: &[&str],
+    confine: Option<&crate::config::Confine>,
+    cpus: impl FnOnce() -> Option<String>,
+) -> Command {
+    let Some(confine) = confine else {
         return Command::new(bin);
     };
     let mut c = Command::new("systemd-run");
@@ -294,7 +318,7 @@ fn wrapped(bin: &str, memory_max: &str, tail: &[&str]) -> Command {
         "MemorySwapMax=0",
         "--",
     ]);
-    if let Some(cpus) = build_cpus() {
+    if let Some(cpus) = cpus() {
         c.args(["taskset", "-c", &cpus]);
     }
     c.args(["prlimit", "--nice=10", "nice", "-n", "10"]);
@@ -338,21 +362,48 @@ static BUILD_CPUS: OnceLock<Option<String>> = OnceLock::new();
 
 fn build_cpus() -> Option<String> {
     BUILD_CPUS
-        .get_or_init(|| {
-            let confine = crate::config::get().confine.as_ref()?;
-            if let Some(cpus) = confine.cpus.as_deref() {
-                return Some(cpus.to_string()).filter(|v| !v.trim().is_empty());
-            }
-            let from = confine.cpus_from.as_deref()?;
-            let key = confine.cpus_key.as_deref().unwrap_or("BUILD_CPUS");
-            let text = std::fs::read_to_string(from).ok();
-            let cpus = file_cpus(text.as_deref(), key);
-            if cpus.is_none() {
-                eprintln!("prec: {} names no {key}; running unpinned", from.display());
-            }
-            cpus
-        })
+        .get_or_init(|| cpus_of(crate::config::get().confine.as_ref()?))
         .clone()
+}
+
+fn cpus_of(confine: &crate::config::Confine) -> Option<String> {
+    let (cpus, warning) = cpus_said(confine);
+    if let Some(w) = warning {
+        eprintln!("{w}");
+    }
+    cpus
+}
+
+fn cpus_said(confine: &crate::config::Confine) -> (Option<String>, Option<String>) {
+    if let Some(cpus) = confine.cpus.as_deref() {
+        return (
+            Some(cpus.to_string()).filter(|v| !v.trim().is_empty()),
+            None,
+        );
+    }
+    let Some(from) = confine.cpus_from.as_deref() else {
+        return (None, None);
+    };
+    let key = confine.cpus_key.as_deref().unwrap_or("BUILD_CPUS");
+    let text = match std::fs::read_to_string(from) {
+        Ok(text) => text,
+        Err(e) => {
+            return (
+                None,
+                Some(format!("prec: {}: {e}; running unpinned", from.display())),
+            );
+        }
+    };
+    match file_cpus(Some(&text), key) {
+        Some(cpus) => (Some(cpus), None),
+        None => (
+            None,
+            Some(format!(
+                "prec: {} names no {key}; running unpinned",
+                from.display()
+            )),
+        ),
+    }
 }
 
 fn file_cpus(text: Option<&str>, key: &str) -> Option<String> {
@@ -435,7 +486,7 @@ pub fn absolute(p: &Path) -> Result<PathBuf, String> {
 pub fn inside_tmp(p: &Path) -> Result<PathBuf, String> {
     let tmp = caller_tmp()?;
     let abs = absolute(p)?;
-    if !abs.starts_with(&tmp) {
+    if !resolved(&abs).starts_with(resolved(&tmp)) {
         return Err(format!(
             "{} is outside the caller's tmp/ ({}); prec writes nowhere else",
             abs.display(),
@@ -443,6 +494,38 @@ pub fn inside_tmp(p: &Path) -> Result<PathBuf, String> {
         ));
     }
     Ok(abs)
+}
+
+fn resolved(abs: &Path) -> PathBuf {
+    resolved_within(abs, 40)
+}
+
+fn resolved_within(abs: &Path, hops: usize) -> PathBuf {
+    let mut rest = Vec::new();
+    let mut at = abs;
+    loop {
+        let base = match std::fs::canonicalize(at) {
+            Ok(real) => Some(real),
+            Err(_) if hops > 0 => std::fs::read_link(at).ok().map(|target| {
+                let target = at.parent().map_or(target.clone(), |p| p.join(&target));
+                resolved_within(&target, hops - 1)
+            }),
+            Err(_) => None,
+        };
+        if let Some(base) = base {
+            return rest.iter().rev().fold(base, |p, c| p.join(c));
+        }
+        match (at.parent(), at.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_os_string());
+                at = parent;
+            }
+            _ => {
+                let lexical = rest.iter().rev().fold(at.to_path_buf(), |p, c| p.join(c));
+                return absolute(&lexical).unwrap_or(lexical);
+            }
+        }
+    }
 }
 
 pub fn scratch(parts: &[&str]) -> Result<PathBuf, String> {
@@ -714,5 +797,475 @@ mod tests {
         assert_eq!(file_cpus(Some("OTHER=1\n"), "BUILD_CPUS"), None);
         assert_eq!(file_cpus(Some("BUILD_CPUS=\n"), "BUILD_CPUS"), None);
         assert_eq!(file_cpus(None, "BUILD_CPUS"), None);
+    }
+
+    fn test_dir(name: &str) -> PathBuf {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tmp/test-paths")
+            .join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn argv(c: &Command) -> Vec<String> {
+        std::iter::once(c.get_program())
+            .chain(c.get_args())
+            .map(|a| a.to_string_lossy().to_string())
+            .collect()
+    }
+
+    fn confine(slice: Option<&str>) -> crate::config::Confine {
+        crate::config::Confine {
+            slice: slice.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn an_unconfined_child_runs_bare_and_never_asks_for_cpus() {
+        let c = wrap("ffmpeg", "4G", &["ffmpeg"], None, || {
+            panic!("the cpus are read only to confine")
+        });
+        assert_eq!(argv(&c), ["ffmpeg"]);
+    }
+
+    #[test]
+    fn a_confined_child_runs_in_the_slice_with_its_memory_cap_pinned_and_niced() {
+        let c = wrap("ffmpeg", "4G", &["ffmpeg"], Some(&confine(None)), || {
+            Some("2-3,6".into())
+        });
+        assert_eq!(
+            argv(&c),
+            [
+                "systemd-run",
+                "--user",
+                "--quiet",
+                "--scope",
+                "--collect",
+                "--slice=build.slice",
+                "-p",
+                "MemoryMax=4G",
+                "-p",
+                "MemorySwapMax=0",
+                "--",
+                "taskset",
+                "-c",
+                "2-3,6",
+                "prlimit",
+                "--nice=10",
+                "nice",
+                "-n",
+                "10",
+                "ffmpeg",
+            ]
+        );
+        let unpinned = wrap(
+            "chromium",
+            "8G",
+            &["chromium"],
+            Some(&confine(Some("render.slice"))),
+            || None,
+        );
+        let got = argv(&unpinned);
+        assert!(got.contains(&"--slice=render.slice".to_string()), "{got:?}");
+        assert!(got.contains(&"MemoryMax=8G".to_string()), "{got:?}");
+        assert!(!got.contains(&"taskset".to_string()), "{got:?}");
+        assert_eq!(got.last().map(String::as_str), Some("chromium"));
+    }
+
+    #[test]
+    fn the_cpus_come_from_the_config_or_its_env_file_and_a_file_without_them_runs_unpinned() {
+        let dir = test_dir("cpus-of");
+        let named = |cpus: &str| crate::config::Confine {
+            cpus: Some(cpus.into()),
+            ..Default::default()
+        };
+        assert_eq!(cpus_of(&named("4-7")).as_deref(), Some("4-7"));
+        assert_eq!(cpus_of(&named("  ")), None);
+        let from = |file: &Path, key: Option<&str>| crate::config::Confine {
+            cpus_from: Some(file.to_path_buf()),
+            cpus_key: key.map(str::to_string),
+            ..Default::default()
+        };
+        let env = dir.join("machine.env");
+        std::fs::write(&env, "QUEUE=2\nBUILD_CPUS=\"8-15\"\nRENDER_CPUS=16-23\n").unwrap();
+        assert_eq!(cpus_of(&from(&env, None)).as_deref(), Some("8-15"));
+        assert_eq!(
+            cpus_of(&from(&env, Some("RENDER_CPUS"))).as_deref(),
+            Some("16-23")
+        );
+        assert_eq!(cpus_of(&from(&env, Some("OTHER_CPUS"))), None);
+        let blank = dir.join("blank.env");
+        std::fs::write(&blank, "BUILD_CPUS=\n").unwrap();
+        assert_eq!(cpus_of(&from(&blank, None)), None);
+        assert_eq!(cpus_of(&from(&dir.join("absent.env"), None)), None);
+        assert_eq!(cpus_of(&crate::config::Confine::default()), None);
+    }
+
+    #[test]
+    fn a_cpus_file_missing_its_key_or_missing_itself_says_which_and_runs_unpinned() {
+        let dir = test_dir("cpus-said");
+        let from = |file: &Path, key: Option<&str>| crate::config::Confine {
+            cpus_from: Some(file.to_path_buf()),
+            cpus_key: key.map(str::to_string),
+            ..Default::default()
+        };
+        let env = dir.join("machine.env");
+        std::fs::write(&env, "BUILD_CPUS=8-15\nRENDER_CPUS=\n").unwrap();
+        assert_eq!(cpus_said(&from(&env, None)), (Some("8-15".into()), None));
+        for key in ["OTHER_CPUS", "RENDER_CPUS"] {
+            assert_eq!(
+                cpus_said(&from(&env, Some(key))),
+                (
+                    None,
+                    Some(format!(
+                        "prec: {} names no {key}; running unpinned",
+                        env.display()
+                    ))
+                )
+            );
+        }
+        let absent = dir.join("absent.env");
+        let (cpus, said) = cpus_said(&from(&absent, None));
+        assert_eq!(cpus, None);
+        let said = said.unwrap();
+        assert!(
+            said.starts_with(&format!("prec: {}: ", absent.display())),
+            "{said}"
+        );
+        assert!(said.ends_with("; running unpinned"), "{said}");
+        assert!(!said.contains("names no"), "{said}");
+        assert_eq!(cpus_said(&crate::config::Confine::default()), (None, None));
+        let pinned = crate::config::Confine {
+            cpus: Some("1-2".into()),
+            cpus_from: Some(absent.clone()),
+            ..Default::default()
+        };
+        assert_eq!(cpus_said(&pinned), (Some("1-2".into()), None));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_cpu_list_becomes_the_set_it_names() {
+        let set = cpu_set("0-1, 3").unwrap();
+        assert!(set.is_set(0).unwrap() && set.is_set(1).unwrap() && set.is_set(3).unwrap());
+        assert!(!set.is_set(2).unwrap());
+        for bad in ["", " , ", "a", "1-b", "3-1"] {
+            assert!(cpu_set(bad).is_none(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_path_is_made_absolute_and_its_dots_resolved_without_touching_the_disk() {
+        assert_eq!(
+            absolute(Path::new("/a/./b/../c")).unwrap(),
+            PathBuf::from("/a/c")
+        );
+        assert_eq!(absolute(Path::new("/..")).unwrap(), PathBuf::from("/"));
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(absolute(Path::new("x/../y/./z")).unwrap(), cwd.join("y/z"));
+    }
+
+    #[test]
+    fn an_out_folder_is_taken_only_inside_the_callers_tmp() {
+        let tree = caller_tree().unwrap();
+        let tmp = caller_tmp().unwrap();
+        assert_eq!(tmp, tree.join("tmp"));
+        assert!(tmp.is_dir());
+        assert_eq!(inside_tmp(&tmp.join("a/../b")).unwrap(), tmp.join("b"));
+        assert_eq!(inside_tmp(&tmp).unwrap(), tmp);
+        for outside in [tmp.join("../src"), tree.join("tmpx/out"), tree.clone()] {
+            let e = inside_tmp(&outside).unwrap_err();
+            assert!(
+                e.ends_with(&format!(
+                    "is outside the caller's tmp/ ({}); prec writes nowhere else",
+                    tmp.display()
+                )),
+                "{e}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_out_folder_through_a_link_is_judged_by_where_the_link_leads() {
+        let dir = test_dir("inside-link");
+        let away = std::fs::canonicalize(env!("CARGO_MANIFEST_DIR"))
+            .unwrap()
+            .join("src");
+        std::os::unix::fs::symlink(&away, dir.join("out")).unwrap();
+        std::fs::create_dir_all(dir.join("real")).unwrap();
+        std::os::unix::fs::symlink(dir.join("real"), dir.join("near")).unwrap();
+        let tmp = caller_tmp().unwrap();
+        for escaping in [dir.join("out/x"), dir.join("out"), dir.join("out/a/b")] {
+            let e = inside_tmp(&escaping).unwrap_err();
+            assert_eq!(
+                e,
+                format!(
+                    "{} is outside the caller's tmp/ ({}); prec writes nowhere else",
+                    escaping.display(),
+                    tmp.display()
+                )
+            );
+        }
+        assert_eq!(inside_tmp(&dir.join("near/x")).unwrap(), dir.join("near/x"));
+        assert_eq!(
+            inside_tmp(&dir.join("not-yet/deep/x")).unwrap(),
+            dir.join("not-yet/deep/x")
+        );
+    }
+
+    #[test]
+    fn a_path_resolves_through_its_deepest_existing_part() {
+        let dir = std::fs::canonicalize(test_dir("resolved")).unwrap();
+        std::fs::create_dir_all(dir.join("real/inner")).unwrap();
+        std::os::unix::fs::symlink(dir.join("real"), dir.join("link")).unwrap();
+        assert_eq!(
+            resolved(&dir.join("link/inner/new/x")),
+            dir.join("real/inner/new/x")
+        );
+        assert_eq!(resolved(&dir.join("link")), dir.join("real"));
+        assert_eq!(resolved(&dir.join("absent/y")), dir.join("absent/y"));
+        assert_eq!(resolved(Path::new("/")), PathBuf::from("/"));
+        std::os::unix::fs::symlink(dir.join("gone/new"), dir.join("dangling")).unwrap();
+        assert_eq!(resolved(&dir.join("dangling/x")), dir.join("gone/new/x"));
+        std::os::unix::fs::symlink("real/inner/later", dir.join("relative")).unwrap();
+        assert_eq!(
+            resolved(&dir.join("relative/y")),
+            dir.join("real/inner/later/y")
+        );
+        std::os::unix::fs::symlink(dir.join("looped"), dir.join("looped")).unwrap();
+        assert_eq!(resolved(&dir.join("looped/z")), dir.join("looped/z"));
+    }
+
+    #[test]
+    fn an_out_folder_through_a_dangling_link_is_judged_by_where_it_would_lead() {
+        let dir = test_dir("inside-dangling");
+        let away = std::fs::canonicalize(env!("CARGO_MANIFEST_DIR"))
+            .unwrap()
+            .join("src/prec-paths-never");
+        std::os::unix::fs::symlink(&away, dir.join("dang")).unwrap();
+        std::os::unix::fs::symlink(dir.join("later"), dir.join("near")).unwrap();
+        let tmp = caller_tmp().unwrap();
+        for escaping in [dir.join("dang"), dir.join("dang/x"), dir.join("dang/a/b")] {
+            assert_eq!(
+                inside_tmp(&escaping).unwrap_err(),
+                format!(
+                    "{} is outside the caller's tmp/ ({}); prec writes nowhere else",
+                    escaping.display(),
+                    tmp.display()
+                )
+            );
+        }
+        assert_eq!(inside_tmp(&dir.join("near/x")).unwrap(), dir.join("near/x"));
+    }
+
+    #[test]
+    fn scratch_folders_live_under_the_callers_tmp_prec() {
+        let dir = scratch(&["test-paths-scratch", "a", "b"]).unwrap();
+        assert_eq!(
+            dir,
+            caller_tmp().unwrap().join("prec/test-paths-scratch/a/b")
+        );
+        assert!(dir.is_dir());
+        let _ = std::fs::remove_dir_all(dir.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn a_fresh_folder_is_empty_whether_it_existed_or_not() {
+        let dir = test_dir("fresh");
+        let old = dir.join("old");
+        std::fs::create_dir_all(old.join("deep")).unwrap();
+        std::fs::write(old.join("deep/file"), "x").unwrap();
+        fresh(&old).unwrap();
+        assert!(old.is_dir());
+        assert_eq!(std::fs::read_dir(&old).unwrap().count(), 0);
+        let new = dir.join("new/nested");
+        fresh(&new).unwrap();
+        assert!(new.is_dir());
+        std::fs::write(dir.join("file"), "x").unwrap();
+        assert!(fresh(&dir.join("file/below")).is_err());
+    }
+
+    #[test]
+    fn a_tree_hashes_to_its_sorted_relative_files() {
+        let dir = test_dir("hash-tree");
+        std::fs::create_dir_all(dir.join("b/c")).unwrap();
+        std::fs::create_dir_all(dir.join("empty")).unwrap();
+        std::fs::write(dir.join("z"), "zed").unwrap();
+        std::fs::write(dir.join("b/c/a"), "deep").unwrap();
+        std::fs::write(dir.join("a"), "").unwrap();
+        assert_eq!(
+            hash_tree(&dir).unwrap(),
+            vec![
+                ("a".to_string(), hash_bytes(b"")),
+                ("b/c/a".to_string(), hash_bytes(b"deep")),
+                ("z".to_string(), hash_bytes(b"zed")),
+            ]
+        );
+        assert_eq!(
+            hash_bytes(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert!(hash_tree(&dir.join("empty")).unwrap().is_empty());
+        assert!(hash_tree(&dir.join("absent")).is_err());
+    }
+
+    #[test]
+    fn a_safe_name_is_one_plain_path_part() {
+        for good in ["demo", "a-b_c.1", "v1.2.3", "..x"] {
+            assert!(safe_name(good), "{good:?}");
+        }
+        for bad in ["", ".", "..", "a/b", "a b", "a\\b", "é", "a\0b", "~"] {
+            assert!(!safe_name(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_slug_is_lowercase_words_joined_by_single_dashes() {
+        assert_eq!(slug("Hello, World!"), "hello-world");
+        assert_eq!(slug("--a__b--"), "a-b");
+        assert_eq!(slug("v1.2+dirty"), "v1-2-dirty");
+        assert_eq!(slug("Été 3"), "t-3");
+        assert_eq!(slug("!!!"), "");
+    }
+
+    #[test]
+    fn a_lock_makes_its_folder_and_two_shared_holders_share_it() {
+        let dir = test_dir("lock");
+        let path = dir.join("deep/a.lock");
+        let first = lock(&path, Lock::Shared, "a test").unwrap();
+        let second = lock(&path, Lock::Shared, "a test").unwrap();
+        assert!(same_file(&first, &path) && same_file(&second, &path));
+        std::fs::remove_file(&path).unwrap();
+        assert!(!same_file(&first, &path));
+        std::fs::write(dir.join("file"), "x").unwrap();
+        let e = lock(&dir.join("file/b.lock"), Lock::Exclusive, "a test").unwrap_err();
+        assert!(
+            e.starts_with(&dir.join("file").display().to_string()),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn a_taken_lock_says_who_holds_it_and_is_had_once_they_let_go() {
+        let dir = test_dir("lock-wait");
+        let path = dir.join("a.lock");
+        let mut held = lock(&path, Lock::Exclusive, "a test").unwrap();
+        writeln!(held, "prec 1 (record demo s)").unwrap();
+        let (said_tx, said_rx) = std::sync::mpsc::channel();
+        let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+        let p = path.clone();
+        let waiter = std::thread::spawn(move || {
+            lock_with(&p, Lock::Shared, "demo in this tree", &mut |said| {
+                said_tx.send(said.to_string()).unwrap();
+                go_rx.recv().unwrap();
+            })
+        });
+        let said = said_rx.recv().unwrap();
+        assert_eq!(
+            said,
+            format!(
+                "waiting for prec 1 (record demo s) to finish with demo in this tree ({})…",
+                path.display()
+            )
+        );
+        drop(held);
+        go_tx.send(()).unwrap();
+        let got = waiter.join().unwrap().unwrap();
+        assert!(same_file(&got, &path));
+        assert!(said_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_waiter_with_no_named_holder_waits_for_another_prec() {
+        let dir = test_dir("lock-anon");
+        let path = dir.join("a.lock");
+        let held = lock(&path, Lock::Shared, "a test").unwrap();
+        let (said_tx, said_rx) = std::sync::mpsc::channel();
+        let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+        let p = path.clone();
+        let waiter = std::thread::spawn(move || {
+            lock_with(&p, Lock::Exclusive, "x", &mut |said| {
+                said_tx.send(said.to_string()).unwrap();
+                go_rx.recv().unwrap();
+            })
+        });
+        assert_eq!(
+            said_rx.recv().unwrap(),
+            format!(
+                "waiting for another prec to finish with x ({})…",
+                path.display()
+            )
+        );
+        drop(held);
+        go_tx.send(()).unwrap();
+        assert!(same_file(&waiter.join().unwrap().unwrap(), &path));
+    }
+
+    #[test]
+    fn a_lock_file_replaced_while_waiting_is_locked_again_by_its_new_self() {
+        let dir = test_dir("lock-replaced");
+        let path = dir.join("a.lock");
+        let held = lock(&path, Lock::Exclusive, "a test").unwrap();
+        let (said_tx, said_rx) = std::sync::mpsc::channel();
+        let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+        let p = path.clone();
+        let waiter = std::thread::spawn(move || {
+            let mut times = 0;
+            let f = lock_with(&p, Lock::Exclusive, "x", &mut |said| {
+                times += 1;
+                said_tx.send(said.to_string()).unwrap();
+                go_rx.recv().unwrap();
+            });
+            (f, times)
+        });
+        said_rx.recv().unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, "").unwrap();
+        let replaced = std::fs::File::open(&path).unwrap();
+        assert!(!same_file(&held, &path));
+        drop(held);
+        go_tx.send(()).unwrap();
+        let (got, times) = waiter.join().unwrap();
+        let got = got.unwrap();
+        assert_eq!(times, 1);
+        assert!(same_file(&got, &path));
+        assert!(same_file(&replaced, &path));
+        assert!(matches!(
+            replaced.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+    }
+
+    #[test]
+    fn a_held_lock_names_this_prec_and_what_it_does() {
+        let f = hold("test-paths-hold", "record demo s").unwrap();
+        let path = scratch(&["locks"]).unwrap().join("test-paths-hold.lock");
+        assert!(same_file(&f, &path));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            format!("prec {} (record demo s)\n", std::process::id())
+        );
+        drop(f);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_waited_child_gives_its_output_and_status_and_a_missing_one_is_an_error() {
+        let out =
+            output(Command::new("sh").args(["-c", "echo out; echo err >&2; exit 3"])).unwrap();
+        assert_eq!(out.stdout, b"out\n");
+        assert_eq!(out.stderr, b"err\n");
+        assert_eq!(out.status.code(), Some(3));
+        let st = status(
+            Command::new("sh")
+                .args(["-c", "exit 0"])
+                .stdout(Stdio::null()),
+        )
+        .unwrap();
+        assert!(st.success());
+        let e = spawn(&mut Command::new("prec-test-no-such-program")).unwrap_err();
+        assert_eq!(e.kind(), std::io::ErrorKind::NotFound);
     }
 }
