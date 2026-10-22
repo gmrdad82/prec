@@ -324,10 +324,11 @@ Issues are welcome at [github.com/gmrdad82/prec/issues](https://github.com/gmrda
 ```
 cargo build --release
 bin/gate
+bin/gate --fast
 bin/gate --render
 ```
 
-`bin/gate` runs the checks every change passes before it merges: ShellCheck, rustfmt, clippy with warnings as errors, and the unit tests. `bin/gate --render` runs the integration tests, which drive the prec binary through Chromium on Linux, and decode its masters with ffmpeg to check them (they need the prerequisites above and a systemd user session for the confinement tests). Each release carries the Linux and macOS binaries and the docs bundle, `docs-vX.Y.Z.tar.gz`, which `bin/docs-bundle` makes from `docs/site/`, the binary's `--help`, `docs/formats.md` and `CHANGELOG.md`. The README's GIFs are prec's own shot in `render/terminal.toml` and the clip it records, made GIFs by pcod; its stills are prec renders of `examples/demo`'s palette, laid side by side with ImageMagick, and its charts are pito-compare's from `docs/bench/` ([NOTICE](NOTICE)).
+`bin/gate` runs ShellCheck (when it is installed), rustfmt, clippy with warnings as errors, and the unit tests with cargo test. `bin/gate --fast` runs the same checks with cargo-nextest when it is installed (cargo test otherwise) and ends with `fast gate: green`, the line a change must reach before it merges. `bin/gate --render` runs the integration tests, which drive the prec binary through Chromium on Linux, and decode its masters with ffmpeg to check them (they need the prerequisites above and a systemd user session for the confinement tests). Each release carries the Linux and macOS binaries and the docs bundle, `docs-vX.Y.Z.tar.gz`, which `bin/docs-bundle` makes from `docs/site/`, the binary's `--help`, `docs/formats.md` and `CHANGELOG.md`. The README's GIFs are prec's own shot in `render/terminal.toml` and the clip it records, made GIFs by pcod; its stills are prec renders of `examples/demo`'s palette, laid side by side with ImageMagick, and its charts are pito-compare's from `docs/bench/` ([NOTICE](NOTICE)).
 
 ## Licence
 
