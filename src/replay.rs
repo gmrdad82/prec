@@ -2,9 +2,10 @@ use crate::cdp::Browser;
 use crate::compose::{self, Layout};
 use crate::fps::Fps;
 use crate::paths;
-use crate::record::{Cast, Event, Kind, Timeline};
+use crate::record::{self, Cast, Event, Kind, Timeline};
 use base64::Engine;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub const XTERM: &str = "5.5.0";
@@ -111,6 +112,14 @@ const cover = (rects) => {
     box.appendChild(d);
   }
 };
+window.resize = async (cols, rows, rects) => {
+  term.resize(cols, rows);
+  if (rects) cover(rects);
+  term.refresh(0, term.rows - 1);
+  await frame2();
+  const r = term.element.querySelector('.xterm-screen').getBoundingClientRect();
+  return { w: r.width, h: r.height, cols: term.cols, rows: term.rows };
+};
 window.feed = (b64, rects) => new Promise(res => {
   const bin = atob(b64);
   const a = new Uint8Array(bin.length);
@@ -140,6 +149,7 @@ pub struct Output {
     pub frames: Vec<PathBuf>,
     pub captured: usize,
     pub canvas: [u32; 2],
+    pub max: Option<([u32; 2], [u32; 2])>,
     pub font_px: f64,
     pub cell: Option<[f64; 2]>,
     pub bg: [u8; 3],
@@ -195,49 +205,145 @@ fn b64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
-fn outputs(events: &[Event]) -> Vec<(f64, Vec<u8>)> {
+#[derive(Clone, Debug, PartialEq)]
+enum Piece {
+    Bytes(Vec<u8>),
+    Grid([u32; 2]),
+}
+
+fn pieces(events: &[Event]) -> Vec<(f64, Piece)> {
     events
         .iter()
-        .filter(|e| e.kind == Kind::Output)
-        .map(|e| (e.t, e.data.as_bytes().to_vec()))
+        .filter_map(|e| match e.kind {
+            Kind::Output => Some((e.t, Piece::Bytes(e.data.as_bytes().to_vec()))),
+            Kind::Resize => record::grid_of(&e.data).map(|g| (e.t, Piece::Grid(g))),
+            _ => None,
+        })
         .collect()
 }
 
 struct Feeder<'a> {
-    out: Vec<(f64, Vec<u8>)>,
+    out: Vec<(f64, Piece)>,
     next: usize,
     masks: &'a crate::mask::Masks,
     screen: vt100::Parser,
     covered: Vec<[u32; 4]>,
+    grid: [u32; 2],
+    canvas: [u32; 2],
 }
 
-impl Feeder<'_> {
-    fn due(&mut self, t: f64) -> Result<Option<(Vec<u8>, String)>, String> {
-        let mut chunk = vec![];
+impl<'a> Feeder<'a> {
+    fn new(events: &[Event], masks: &'a crate::mask::Masks, grid: [u32; 2]) -> Feeder<'a> {
+        Feeder {
+            out: pieces(events),
+            next: 0,
+            masks,
+            screen: vt100::Parser::new(grid[1] as u16, grid[0] as u16, 0),
+            covered: vec![],
+            grid,
+            canvas: [0, 0],
+        }
+    }
+
+    fn due(&mut self, t: f64) -> Result<Option<(Vec<Piece>, String)>, String> {
+        let mut found: Vec<Piece> = vec![];
         while self.next < self.out.len() && self.out[self.next].0 <= t + 1e-9 {
-            chunk.extend_from_slice(&self.out[self.next].1);
+            match (&self.out[self.next].1, found.last_mut()) {
+                (Piece::Bytes(b), Some(Piece::Bytes(chunk))) => chunk.extend_from_slice(b),
+                (Piece::Grid(g), Some(Piece::Grid(last))) => *last = *g,
+                (p, _) => found.push(p.clone()),
+            }
             self.next += 1;
         }
-        if chunk.is_empty() {
+        found.retain(|p| !matches!(p, Piece::Bytes(b) if b.is_empty()));
+        if found.is_empty() {
             return Ok(None);
+        }
+        for p in &found {
+            match p {
+                Piece::Grid(g) => {
+                    self.grid = *g;
+                    if !self.masks.is_empty() {
+                        self.screen.screen_mut().set_size(g[1] as u16, g[0] as u16);
+                    }
+                }
+                Piece::Bytes(b) if !self.masks.is_empty() => self.screen.process(b),
+                Piece::Bytes(_) => {}
+            }
         }
         let mut rects = "null".to_string();
         if !self.masks.is_empty() {
-            self.screen.process(&chunk);
             let now = self.masks.cells(self.screen.screen());
             if now != self.covered {
                 rects = serde_json::to_string(&now).map_err(|e| e.to_string())?;
                 self.covered = now;
             }
         }
-        Ok(Some((chunk, rects)))
+        Ok(Some((found, rects)))
     }
 
     fn until(&mut self, b: &mut Browser, t: f64) -> Result<bool, String> {
-        let Some((chunk, rects)) = self.due(t)? else {
+        let Some((found, rects)) = self.due(t)? else {
             return Ok(false);
         };
-        b.eval(&format!("window.feed({:?}, {rects})", b64(&chunk)))?;
+        let last = found.len() - 1;
+        for (i, p) in found.iter().enumerate() {
+            let r = if i == last { rects.as_str() } else { "null" };
+            match p {
+                Piece::Bytes(bytes) => {
+                    b.eval(&format!("window.feed({:?}, {r})", b64(bytes)))?;
+                }
+                Piece::Grid(g) => self.resize(b, *g, r)?,
+            }
+        }
+        Ok(true)
+    }
+
+    fn resize(&mut self, b: &mut Browser, g: [u32; 2], rects: &str) -> Result<(), String> {
+        let m = b.eval(&format!("window.resize({}, {}, {rects})", g[0], g[1]))?;
+        if m["cols"].as_u64() != Some(g[0] as u64) || m["rows"].as_u64() != Some(g[1] as u64) {
+            return Err(format!("xterm.js would not resize to {}x{}", g[0], g[1]));
+        }
+        self.canvas = [
+            m["w"].as_f64().unwrap_or(0.0).round() as u32,
+            m["h"].as_f64().unwrap_or(0.0).round() as u32,
+        ];
+        Ok(())
+    }
+}
+
+struct Backdrop {
+    dev: Layout,
+    largest: [u32; 2],
+    bg: [u8; 3],
+    ground: [u8; 3],
+    dir: PathBuf,
+    drawn: HashMap<[u32; 2], String>,
+    shown: Option<[u32; 2]>,
+}
+
+impl Backdrop {
+    fn file(&mut self, grid: [u32; 2], canvas: [u32; 2]) -> Result<String, String> {
+        if let Some(name) = self.drawn.get(&grid) {
+            return Ok(name.clone());
+        }
+        let (win, _) = self.dev.anchored(self.largest, canvas);
+        let pm = compose::background(&self.dev, win, self.bg, self.ground)?;
+        let name = format!("background-{}x{}.png", grid[0], grid[1]);
+        pm.save_png(self.dir.join(&name))
+            .map_err(|e| e.to_string())?;
+        self.drawn.insert(grid, name.clone());
+        Ok(name)
+    }
+
+    fn show(&mut self, b: &mut Browser, grid: [u32; 2], canvas: [u32; 2]) -> Result<bool, String> {
+        if self.shown == Some(grid) {
+            return Ok(false);
+        }
+        let name = self.file(grid, canvas)?;
+        let (_, at) = self.dev.anchored(self.largest, canvas);
+        b.eval(&format!("window.place({}, {}, {name:?})", at[0], at[1]))?;
+        self.shown = Some(grid);
         Ok(true)
     }
 }
@@ -311,7 +417,8 @@ pub fn render(
     let [vw, vh] = size;
     let dev = Layout::new(size[0], size[1], look.window).boxed(look.inset)?;
     let avail = dev.avail();
-    let grid = [cast.cols, cast.rows];
+    let start = [cast.cols, cast.rows];
+    let grid = cast.max_grid();
     let theme = xterm_theme(&look.theme);
     let theme_bg = look
         .theme
@@ -367,23 +474,22 @@ pub fn render(
         size_px = ((size_px - 0.1) * 10.0).round() / 10.0;
         m = boot(&mut b, size_px)?;
     }
-    let canvas = [
+    let largest = [
         (m["w"].as_f64().unwrap_or(0.0)).round() as u32,
         (m["h"].as_f64().unwrap_or(0.0)).round() as u32,
     ];
     let cell = m["cell"]
         .as_array()
         .map(|a| [a[0].as_f64().unwrap_or(0.0), a[1].as_f64().unwrap_or(0.0)]);
-    let (_, at) = dev.place(canvas);
+    let (_, at) = dev.place(largest);
     b.eval(&format!("window.place({}, {}, null)", at[0], at[1]))?;
     let timeline = Timeline::of(&cast.events);
-    let mut feeder = Feeder {
-        out: outputs(&cast.events),
-        next: 0,
-        masks: &look.masks,
-        screen: vt100::Parser::new(grid[1] as u16, grid[0] as u16, 0),
-        covered: vec![],
-    };
+    let mut feeder = Feeder::new(&cast.events, &look.masks, start);
+    feeder.canvas = largest;
+    if start != grid {
+        feeder.resize(&mut b, start, "null")?;
+    }
+    let canvas = feeder.canvas;
     let first = match take {
         Take::Still(at) => at,
         Take::Clip { .. } => timeline.at(0.0),
@@ -391,15 +497,18 @@ pub fn render(
     feeder.until(&mut b, first)?;
     let probe = b.screenshot()?;
     check_size(&probe, size)?;
-    let bg = corners(&probe, [at[0], at[1], canvas[0], canvas[1]])?;
+    let bg = corners(&probe, [at[0], at[1], feeder.canvas[0], feeder.canvas[1]])?;
     let ground = look.ground.unwrap_or_else(|| compose::default_ground(bg));
-    let pm = compose::background(&dev, canvas, bg, ground)?;
-    let bg_path = page_dir.join("background.png");
-    pm.save_png(&bg_path).map_err(|e| e.to_string())?;
-    b.eval(&format!(
-        "window.place({}, {}, 'background.png')",
-        at[0], at[1]
-    ))?;
+    let mut backdrop = Backdrop {
+        dev,
+        largest,
+        bg,
+        ground,
+        dir: page_dir.clone(),
+        drawn: HashMap::new(),
+        shown: None,
+    };
+    backdrop.show(&mut b, feeder.grid, feeder.canvas)?;
     let mut frames = vec![];
     let mut captured = 0;
     match take {
@@ -414,7 +523,8 @@ pub fn render(
             let mut last: Option<PathBuf> = None;
             for k in 0..n {
                 let t = timeline.at(fps.seconds(k));
-                let changed = feeder.until(&mut b, t)?;
+                let mut changed = feeder.until(&mut b, t)?;
+                changed |= backdrop.show(&mut b, feeder.grid, feeder.canvas)?;
                 if changed || last.is_none() {
                     let png = b.screenshot()?;
                     let p = frames_dir.join(format!("frame-{k:06}.png"));
@@ -431,6 +541,7 @@ pub fn render(
         frames,
         captured,
         canvas,
+        max: cast.resizes().then_some((grid, largest)),
         font_px: size_px,
         cell,
         bg,
@@ -477,12 +588,15 @@ mod tests {
     }
 
     fn feeder<'a>(events: &[Event], masks: &'a crate::mask::Masks, grid: [u32; 2]) -> Feeder<'a> {
-        Feeder {
-            out: outputs(events),
-            next: 0,
-            masks,
-            screen: vt100::Parser::new(grid[1] as u16, grid[0] as u16, 0),
-            covered: vec![],
+        Feeder::new(events, masks, grid)
+    }
+
+    fn play(screen: &mut vt100::Parser, found: &[Piece]) {
+        for p in found {
+            match p {
+                Piece::Bytes(b) => screen.process(b),
+                Piece::Grid(g) => screen.screen_mut().set_size(g[1] as u16, g[0] as u16),
+            }
         }
     }
 
@@ -511,9 +625,9 @@ mod tests {
         let mut screen = vt100::Parser::new(2, 8, 0);
         let mut seen = vec![];
         for n in 0..16 {
-            if let Some((chunk, rects)) = f.due(tl.at(fps.seconds(n))).unwrap() {
+            if let Some((found, rects)) = f.due(tl.at(fps.seconds(n))).unwrap() {
                 assert_eq!(rects, "null");
-                screen.process(&chunk);
+                play(&mut screen, &found);
             }
             seen.push(screen.screen().contents());
         }
@@ -538,9 +652,15 @@ mod tests {
         ];
         let masks = none();
         let mut f = feeder(&events, &masks, [8, 2]);
-        assert_eq!(f.due(0.3).unwrap().unwrap().0, b"123");
+        assert_eq!(
+            f.due(0.3).unwrap().unwrap().0,
+            vec![Piece::Bytes(b"123".to_vec())]
+        );
         assert!(f.due(0.3).unwrap().is_none());
-        assert_eq!(f.due(5.0).unwrap().unwrap().0, b"4");
+        assert_eq!(
+            f.due(5.0).unwrap().unwrap().0,
+            vec![Piece::Bytes(b"4".to_vec())]
+        );
     }
 
     #[test]
@@ -609,5 +729,103 @@ mod tests {
         assert_eq!(fonts_of("Mono")[0], "Mono");
         assert_eq!(fonts_of("Mono").len(), 3);
         assert!(assets_ok().unwrap().contains(XTERM));
+    }
+
+    #[test]
+    fn a_frame_between_two_resizes_shows_the_earlier_grid_and_hidden_resizes_still_apply() {
+        let events = vec![
+            ev(0.0, Kind::Marker, "show"),
+            ev(0.1, Kind::Output, "a"),
+            ev(0.3, Kind::Resize, "6x2"),
+            ev(0.35, Kind::Output, "b"),
+            ev(0.6, Kind::Resize, "5x2"),
+            ev(0.7, Kind::Marker, "hide"),
+            ev(0.8, Kind::Resize, "4x2"),
+            ev(0.85, Kind::Output, "c"),
+            ev(0.9, Kind::Resize, "3x2"),
+            ev(1.0, Kind::Marker, "show"),
+            ev(1.5, Kind::Marker, "end"),
+        ];
+        let tl = Timeline::of(&events);
+        let fps = Fps::new(10, 1);
+        let masks = none();
+        let mut f = feeder(&events, &masks, [8, 2]);
+        let mut screen = vt100::Parser::new(2, 8, 0);
+        let mut grids = vec![];
+        let mut sizes = vec![];
+        for n in 0..12 {
+            if let Some((found, _)) = f.due(tl.at(fps.seconds(n))).unwrap() {
+                play(&mut screen, &found);
+            }
+            grids.push(f.grid);
+            sizes.push(screen.screen().size());
+        }
+        assert_eq!(grids[0], [8, 2]);
+        assert_eq!(grids[2], [8, 2]);
+        assert_eq!(grids[3], [6, 2]);
+        assert_eq!(grids[5], [6, 2]);
+        assert_eq!(grids[6], [5, 2]);
+        assert_eq!(grids[7], [3, 2]);
+        assert_eq!(grids[11], [3, 2]);
+        assert_eq!(sizes[4], (2, 6));
+        assert_eq!(sizes[7], (2, 3));
+        assert!(screen.screen().contents().starts_with("abc"));
+    }
+
+    #[test]
+    fn a_chunk_keeps_outputs_and_resizes_in_their_order_and_folds_runs() {
+        let events = vec![
+            ev(0.1, Kind::Output, "a"),
+            ev(0.2, Kind::Output, "b"),
+            ev(0.3, Kind::Resize, "7x2"),
+            ev(0.4, Kind::Resize, "6x2"),
+            ev(0.5, Kind::Output, "c"),
+            ev(0.6, Kind::Resize, "5x3"),
+            ev(0.7, Kind::Marker, "end"),
+        ];
+        let masks = none();
+        let mut f = feeder(&events, &masks, [8, 2]);
+        assert_eq!(
+            f.due(1.0).unwrap().unwrap().0,
+            vec![
+                Piece::Bytes(b"ab".to_vec()),
+                Piece::Grid([6, 2]),
+                Piece::Bytes(b"c".to_vec()),
+                Piece::Grid([5, 3]),
+            ]
+        );
+        assert_eq!(f.grid, [5, 3]);
+        assert!(f.due(2.0).unwrap().is_none());
+        assert_eq!(
+            pieces(&[ev(0.1, Kind::Input, "x"), ev(0.2, Kind::Marker, "end")]),
+            vec![]
+        );
+    }
+
+    #[test]
+    fn a_resize_sends_the_rectangles_clipped_to_the_new_grid() {
+        let masks = crate::mask::Masks::new(
+            &[crate::mask::Mask {
+                pattern: None,
+                rect: Some([4, 0, 4, 2]),
+            }],
+            [8, 2],
+        )
+        .unwrap();
+        let events = vec![
+            ev(0.1, Kind::Output, "x"),
+            ev(0.2, Kind::Resize, "6x2"),
+            ev(0.3, Kind::Resize, "4x2"),
+            ev(0.4, Kind::Resize, "8x2"),
+        ];
+        let mut f = feeder(&events, &masks, [8, 2]);
+        let rects = |f: &mut Feeder, t: f64| -> Vec<[u32; 4]> {
+            serde_json::from_str(&f.due(t).unwrap().unwrap().1).unwrap()
+        };
+        assert_eq!(rects(&mut f, 0.1), vec![[4, 0, 4, 2]]);
+        assert_eq!(rects(&mut f, 0.2), vec![[4, 0, 2, 2]]);
+        assert_eq!(rects(&mut f, 0.3), Vec::<[u32; 4]>::new());
+        assert_eq!(rects(&mut f, 0.4), vec![[4, 0, 4, 2]]);
+        assert_eq!(f.screen.screen().size(), (2, 8));
     }
 }

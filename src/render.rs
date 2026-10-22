@@ -1311,6 +1311,9 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
         "frames": frames_record,
         "encodes": encodes,
     });
+    if let Some((g, c)) = rendered.max {
+        manifest["max_grid"] = json!({"cols": g[0], "rows": g[1], "canvas": [c[0], c[1]]});
+    }
     let manifest_path = dir.join(format!("{manifest_stem}.json"));
     let skip = archive::skip_reason(
         &archive::Run {

@@ -82,6 +82,19 @@ impl Layout {
         let wy = y + (h.saturating_sub(wh)) / 2;
         ([wx, wy, ww, wh], [wx + self.pad, wy + self.bar + self.pad])
     }
+
+    pub fn anchored(&self, largest: [u32; 2], canvas: [u32; 2]) -> ([u32; 4], [u32; 2]) {
+        let ([wx, wy, _, _], at) = self.place(largest);
+        (
+            [
+                wx,
+                wy,
+                canvas[0] + 2 * self.pad,
+                canvas[1] + 2 * self.pad + self.bar,
+            ],
+            at,
+        )
+    }
 }
 
 pub fn mix(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
@@ -123,7 +136,7 @@ fn paint(c: [u8; 3]) -> Paint<'static> {
 
 pub fn background(
     layout: &Layout,
-    canvas: [u32; 2],
+    win: [u32; 4],
     bg: [u8; 3],
     ground: [u8; 3],
 ) -> Result<Pixmap, String> {
@@ -133,7 +146,6 @@ pub fn background(
         return Ok(pm);
     }
     pm.fill(Color::from_rgba8(ground[0], ground[1], ground[2], 255));
-    let (win, _) = layout.place(canvas);
     let [wx, wy, ww, wh] = win.map(|v| v as f32);
     let shadow = mix(ground, [0, 0, 0], 0.35);
     for i in 0..6 {
@@ -442,7 +454,7 @@ mod tests {
     fn a_bare_frame_is_the_theme_background_edge_to_edge() {
         let bg = [10, 20, 30];
         let l = Layout::new(64, 36, false);
-        let pm = background(&l, [40, 20], bg, [200, 0, 0]).unwrap();
+        let pm = background(&l, l.place([40, 20]).0, bg, [200, 0, 0]).unwrap();
         assert_eq!((pm.width(), pm.height()), (64, 36));
         for (x, y) in [(0, 0), (63, 0), (0, 35), (63, 35), (32, 18)] {
             assert_eq!(px(&pm, x, y), bg, "({x}, {y})");
@@ -468,7 +480,7 @@ mod tests {
             at[1] > win[1] && at[1] + canvas[1] < win[1] + win[3],
             "{at:?} in {win:?}"
         );
-        let pm = background(&l, canvas, bg, ground).unwrap();
+        let pm = background(&l, win, bg, ground).unwrap();
         let mid = win[1] + win[3] / 2;
         let right = win[0] + win[2];
         let below = win[1] + win[3];
@@ -508,7 +520,7 @@ mod tests {
             ..Layout::new(10, 10, false)
         };
         assert_eq!(
-            background(&l, [1, 1], [0; 3], [0; 3]).unwrap_err(),
+            background(&l, [0, 0, 1, 1], [0; 3], [0; 3]).unwrap_err(),
             "bad frame size"
         );
     }
@@ -645,5 +657,47 @@ mod tests {
             ([64, 64], 4, Some(Fps::new(30, 1)))
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_smaller_canvas_keeps_the_largest_windows_top_left_and_the_largest_is_centred() {
+        let l = Layout::new(400, 300, true);
+        let largest = [300, 180];
+        let (big, at) = l.place(largest);
+        assert_eq!(l.anchored(largest, largest), (big, at));
+        assert!((2 * big[0] + big[2]).abs_diff(400) <= 1, "{big:?}");
+        assert!((2 * big[1] + big[3]).abs_diff(300) <= 1, "{big:?}");
+        let (small, small_at) = l.anchored(largest, [150, 90]);
+        assert_eq!(small_at, at);
+        assert_eq!([small[0], small[1]], [big[0], big[1]]);
+        assert_eq!(small[2], 150 + 2 * l.pad);
+        assert_eq!(small[3], 90 + 2 * l.pad + l.bar);
+        assert!(small[0] + small[2] < big[0] + big[2]);
+        let bare = Layout::new(400, 300, false);
+        let (bwin, bat) = bare.anchored([300, 180], [100, 50]);
+        assert_eq!(bat, bare.place([300, 180]).1);
+        assert_eq!(bwin, [43, 53, 100 + 2 * bare.pad, 50 + 2 * bare.pad]);
+    }
+
+    #[test]
+    fn a_window_drawn_for_a_smaller_canvas_ends_where_the_canvas_does() {
+        let bg = [30, 30, 46];
+        let ground = [200, 210, 220];
+        let l = Layout::new(400, 300, true);
+        let largest = [300, 180];
+        let (big, _) = l.anchored(largest, largest);
+        let (small, at) = l.anchored(largest, [150, 90]);
+        let pm = background(&l, small, bg, ground).unwrap();
+        let row = at[1] + 10;
+        assert_eq!(px(&pm, at[0] + 149, row), bg);
+        assert_eq!(px(&pm, small[0] + small[2] - 2, row), bg);
+        assert_ne!(px(&pm, small[0] + small[2] + 4, row), bg);
+        assert_eq!(px(&pm, big[0] + big[2] - 4, row), ground);
+        assert_eq!(px(&pm, at[0] + 10, small[1] + small[3] + 10), ground);
+        let lit = (small[1]..at[1])
+            .flat_map(|y| (small[0]..small[0] + small[2] / 3).map(move |x| (x, y)))
+            .map(|(x, y)| px(&pm, x, y))
+            .any(|c| c[0] > 200 && c[2] < 150);
+        assert!(lit, "no red light in the bar of {small:?}");
     }
 }

@@ -52,6 +52,10 @@ pub enum Step {
         gap: Option<Duration>,
         ignore: Option<String>,
     },
+    Resize {
+        grid: [u32; 2],
+        over: Option<Duration>,
+    },
 }
 
 pub fn duration(s: &str) -> Result<Duration, String> {
@@ -174,6 +178,60 @@ fn ctrl_key(k: &str, c: char) -> Result<char, String> {
 
 const MAX_REPEAT: u32 = 9999;
 
+const RESIZE_FORM: &str = "Resize <cols>x<rows> [duration]";
+
+pub const SIDES: std::ops::RangeInclusive<u32> = 2..=1000;
+
+fn resize(t: &str, rest: &str) -> Result<Step, String> {
+    let mut words = rest.split_whitespace();
+    let size = words.next().unwrap_or_default();
+    let over = words.next();
+    if words.next().is_some() {
+        return Err(format!("{t}: takes {RESIZE_FORM}"));
+    }
+    let side = |s: &str| {
+        if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(format!("{t}: takes {RESIZE_FORM}"));
+        }
+        s.parse::<u32>()
+            .ok()
+            .filter(|n| SIDES.contains(n))
+            .ok_or_else(|| {
+                format!(
+                    "{t}: each side is {} to {}, as in {RESIZE_FORM}",
+                    SIDES.start(),
+                    SIDES.end()
+                )
+            })
+    };
+    let (c, r) = size
+        .split_once('x')
+        .ok_or_else(|| format!("{t}: takes {RESIZE_FORM}"))?;
+    let grid = [side(c)?, side(r)?];
+    let over = over
+        .map(|d| duration(d).map_err(|e| format!("{t}: {e}, as in {RESIZE_FORM}")))
+        .transpose()?
+        .filter(|d| !d.is_zero());
+    Ok(Step::Resize { grid, over })
+}
+
+pub fn schedule(from: [u32; 2], to: [u32; 2], over: Duration) -> Vec<(Duration, [u32; 2])> {
+    let delta = [0, 1].map(|i| to[i] as i64 - from[i] as i64);
+    let n = delta[0].unsigned_abs().max(delta[1].unsigned_abs());
+    (1..=n)
+        .map(|i| {
+            if i == n {
+                return (over, to);
+            }
+            let f = i as f64 / n as f64;
+            let u = (1.0 - 2.0 * f).acos() / std::f64::consts::PI;
+            let grid =
+                [0, 1].map(|k| (from[k] as i64 + (delta[k] as f64 * f).round() as i64) as u32);
+            (over.mul_f64(u), grid)
+        })
+        .collect()
+}
+
 fn bare(t: &str, name: &str, rest: &str, speed: Option<Duration>) -> Result<(), String> {
     if speed.is_some() {
         return Err(format!("{t}: {name} takes no @speed"));
@@ -235,6 +293,8 @@ pub fn parse_line(line: &str) -> Result<Option<Step>, String> {
                 ignore,
             }))
         }
+        "Resize" if speed.is_some() => Err(format!("{t}: Resize takes no @speed")),
+        "Resize" => resize(t, rest).map(Some),
         "Copy" | "Paste" => Err(format!(
             "{name}: the clipboard has no replay; type the text"
         )),
@@ -843,6 +903,180 @@ mod tests {
             load(&gone)
                 .unwrap_err()
                 .starts_with(&gone.display().to_string())
+        );
+    }
+
+    #[test]
+    fn a_resize_takes_a_size_and_an_optional_travel_time() {
+        assert_eq!(
+            one("Resize 60x16"),
+            Step::Resize {
+                grid: [60, 16],
+                over: None
+            }
+        );
+        assert_eq!(
+            one("  Resize 38x16 3s  "),
+            Step::Resize {
+                grid: [38, 16],
+                over: Some(Duration::from_secs(3))
+            }
+        );
+        assert_eq!(
+            one("Resize 2x1000 250ms"),
+            Step::Resize {
+                grid: [2, 1000],
+                over: Some(Duration::from_millis(250))
+            }
+        );
+        assert_eq!(
+            one("Resize 1000x2 0s"),
+            Step::Resize {
+                grid: [1000, 2],
+                over: None
+            }
+        );
+        let s = parse("Sleep 1.2s\nResize 38x16 3s\nSleep 1.5s\nResize 96x16 3s\nSleep 1.2s\n")
+            .unwrap();
+        assert_eq!(s.len(), 5);
+        assert_eq!(
+            s[3],
+            Step::Resize {
+                grid: [96, 16],
+                over: Some(Duration::from_secs(3))
+            }
+        );
+    }
+
+    #[test]
+    fn a_resize_refuses_a_bad_size_a_side_out_of_range_a_bad_time_and_a_speed() {
+        let form = "Resize <cols>x<rows> [duration]";
+        for bad in [
+            "Resize",
+            "Resize 60",
+            "Resize 60x",
+            "Resize x16",
+            "Resize 60*16",
+            "Resize 60X16",
+            "Resize 60x16x2",
+            "Resize -60x16",
+            "Resize +60x16",
+            "Resize 6.5x16",
+            "Resize sixtyx16",
+            "Resize 60x16 1s now",
+        ] {
+            assert_eq!(
+                refused(&format!("Enter\n{bad}\n")),
+                format!("line 2: {bad}: takes {form}"),
+                "{bad}"
+            );
+        }
+        for bad in [
+            "Resize 0x16",
+            "Resize 60x0",
+            "Resize 1x16",
+            "Resize 60x1",
+            "Resize 1001x16",
+            "Resize 60x1001",
+            "Resize 99999999999x16",
+        ] {
+            assert_eq!(
+                refused(&format!("{bad}\n")),
+                format!("line 1: {bad}: each side is 2 to 1000, as in {form}"),
+                "{bad}"
+            );
+        }
+        assert_eq!(
+            refused("Resize 60x16 soon\n"),
+            format!(
+                "line 1: Resize 60x16 soon: soon: a duration like 500ms, 1.5s or 2, as in {form}"
+            )
+        );
+        assert_eq!(
+            refused("Resize 60x16 -1s\n"),
+            format!("line 1: Resize 60x16 -1s: -1s: a duration is never negative, as in {form}")
+        );
+        assert_eq!(
+            refused("Resize@1s 60x16\n"),
+            "line 1: Resize@1s 60x16: Resize takes no @speed"
+        );
+    }
+
+    fn ms(d: Duration) -> f64 {
+        d.as_secs_f64() * 1e3
+    }
+
+    #[test]
+    fn a_resize_travels_through_every_whole_step_on_an_eased_curve() {
+        let over = Duration::from_secs(2);
+        let s = schedule([96, 16], [38, 16], over);
+        assert_eq!(s.len(), 58);
+        let cols: Vec<u32> = s.iter().map(|(_, g)| g[0]).collect();
+        assert_eq!(cols, (38..96).rev().collect::<Vec<u32>>());
+        assert!(s.iter().all(|(_, g)| g[1] == 16));
+        assert_eq!(s.last().unwrap(), &(over, [38, 16]));
+        assert!(s.windows(2).all(|w| w[0].0 < w[1].0), "{s:?}");
+        let gaps: Vec<f64> = std::iter::once(ms(s[0].0))
+            .chain(s.windows(2).map(|w| ms(w[1].0) - ms(w[0].0)))
+            .collect();
+        let mid = gaps[gaps.len() / 2];
+        assert!(gaps[0] > 3.0 * mid, "{gaps:?}");
+        assert!(gaps[gaps.len() - 1] > 3.0 * mid, "{gaps:?}");
+        assert!((ms(s[28].0) - 1000.0).abs() < 30.0, "{:?}", s[28]);
+        let half: Vec<f64> = gaps[..29].to_vec();
+        assert!(half.windows(2).all(|w| w[0] >= w[1] - 1e-9), "{half:?}");
+        let u1 = (1.0 - 2.0 / 58.0f64).acos() / std::f64::consts::PI;
+        assert!((s[0].0.as_secs_f64() - 2.0 * u1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_resize_moves_both_sides_on_one_curve_and_grows_as_it_shrinks() {
+        let grow = schedule([20, 6], [40, 10], Duration::from_secs(1));
+        assert_eq!(grow.len(), 20);
+        assert_eq!(
+            grow.iter().map(|(_, g)| g[0]).collect::<Vec<u32>>(),
+            (21..=40).collect::<Vec<u32>>()
+        );
+        let rows: Vec<u32> = grow.iter().map(|(_, g)| g[1]).collect();
+        assert!(rows.windows(2).all(|w| w[0] <= w[1]), "{rows:?}");
+        assert_eq!((rows[0], rows[19]), (6, 10));
+        for r in 7..=10 {
+            assert!(rows.contains(&r), "{rows:?}");
+        }
+        let shrink = schedule([40, 10], [20, 6], Duration::from_secs(1));
+        assert_eq!(
+            shrink.iter().map(|(t, _)| *t).collect::<Vec<_>>(),
+            grow.iter().map(|(t, _)| *t).collect::<Vec<_>>()
+        );
+        assert_eq!(shrink[0].1, [39, 10]);
+        assert_eq!(shrink[19], (Duration::from_secs(1), [20, 6]));
+        let tall = schedule([10, 4], [12, 20], Duration::from_secs(1));
+        assert_eq!(tall.len(), 16);
+        assert_eq!(
+            tall.iter().map(|(_, g)| g[1]).collect::<Vec<u32>>(),
+            (5..=20).collect::<Vec<u32>>()
+        );
+        assert_eq!(tall.last().unwrap().1, [12, 20]);
+    }
+
+    #[test]
+    fn a_resize_to_the_same_grid_has_no_steps_and_one_step_lands_at_the_end() {
+        assert!(schedule([60, 16], [60, 16], Duration::from_secs(3)).is_empty());
+        assert_eq!(
+            schedule([60, 16], [61, 16], Duration::from_secs(3)),
+            vec![(Duration::from_secs(3), [61, 16])]
+        );
+        assert_eq!(
+            schedule([60, 16], [60, 15], Duration::from_millis(5)),
+            vec![(Duration::from_millis(5), [60, 15])]
+        );
+        let two = schedule([2, 2], [4, 2], Duration::from_secs(1));
+        assert_eq!(
+            two,
+            vec![
+                (Duration::from_millis(500), [3, 2]),
+                (Duration::from_secs(1), [4, 2])
+            ]
         );
     }
 }
