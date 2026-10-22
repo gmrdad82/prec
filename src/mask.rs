@@ -206,4 +206,159 @@ mod tests {
             );
         }
     }
+
+    fn rect(r: [u32; 4]) -> Mask {
+        Mask {
+            pattern: None,
+            rect: Some(r),
+        }
+    }
+
+    fn matching(p: &str) -> Mask {
+        Mask {
+            pattern: Some(p.into()),
+            rect: None,
+        }
+    }
+
+    #[test]
+    fn no_mask_hides_nothing() {
+        let p = screen("alpha beta\r\ngamma");
+        let m = Masks::new(&[], [30, 3]).unwrap();
+        assert!(m.is_empty());
+        assert!(m.cells(p.screen()).is_empty());
+        let text = m.text(p.screen());
+        assert_eq!(text.lines().count(), 3);
+        assert!(text.lines().all(|l| l.chars().count() == 30));
+        assert!(text.starts_with("alpha beta") && text.contains("\ngamma"));
+        assert!(
+            !Masks::new(&[rect([0, 0, 1, 1])], [30, 3])
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!Masks::new(&[matching("a")], [30, 3]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_rectangle_reaching_the_grid_edge_fits_and_one_past_it_is_refused() {
+        assert!(Masks::new(&[rect([0, 0, 30, 3])], [30, 3]).is_ok());
+        assert!(Masks::new(&[rect([29, 2, 1, 1])], [30, 3]).is_ok());
+        for r in [
+            [0, 0, 31, 3],
+            [0, 0, 30, 4],
+            [30, 0, 1, 1],
+            [0, 3, 1, 1],
+            [u32::MAX, 0, 2, 1],
+            [0, u32::MAX, 1, 2],
+            [0, 0, 1, 0],
+        ] {
+            let e = Masks::new(&[rect(r)], [30, 3]).unwrap_err();
+            assert!(e.starts_with("mask rect ["), "{r:?}: {e}");
+        }
+        assert_eq!(
+            Masks::new(&[rect([25, 0, 6, 1])], [30, 3]).unwrap_err(),
+            "mask rect [25, 0, 6, 1]: outside the 30x3 grid"
+        );
+        assert_eq!(
+            Masks::new(&[matching("")], [30, 3]).unwrap_err(),
+            "mask match: an empty pattern hides nothing"
+        );
+    }
+
+    #[test]
+    fn overlapping_masks_hide_their_union_once() {
+        let p = screen("0123456789\r\nabcdefghij\r\nKLMNOPQRST");
+        let m = Masks::new(
+            &[
+                rect([2, 0, 4, 2]),
+                rect([4, 1, 4, 2]),
+                matching("4567"),
+                matching("56"),
+            ],
+            [30, 3],
+        )
+        .unwrap();
+        let text = m.text(p.screen());
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(&lines[0][..10], "01      89");
+        assert_eq!(&lines[1][..10], "ab      ij");
+        assert_eq!(&lines[2][..10], "KLMN    ST");
+        assert_eq!(
+            m.cells(p.screen()),
+            vec![[2, 0, 4, 2], [4, 1, 4, 2], [4, 0, 4, 1], [5, 0, 2, 1]]
+        );
+    }
+
+    #[test]
+    fn a_match_on_a_wide_character_covers_both_its_cells_and_stops_at_the_edge() {
+        let p = screen("ab三cd\r\n");
+        let m = Masks::new(&[matching("三")], [30, 3]).unwrap();
+        assert_eq!(m.cells(p.screen()), vec![[2, 0, 2, 1]]);
+        let text = m.text(p.screen());
+        assert!(text.starts_with("ab  cd"), "{text:?}");
+        let mut edge = vt100::Parser::new(1, 4, 0);
+        edge.process("ab三".as_bytes());
+        let m = Masks::new(&[matching("三")], [4, 1]).unwrap();
+        assert_eq!(m.cells(edge.screen()), vec![[2, 0, 2, 1]]);
+        assert_eq!(m.text(edge.screen()), "ab  \n");
+    }
+
+    #[test]
+    fn a_pattern_that_can_match_nothing_hides_only_what_it_matches() {
+        let p = screen("xx yy\r\n");
+        let m = Masks::new(&[matching("y*")], [30, 3]).unwrap();
+        assert_eq!(m.cells(p.screen()), vec![[3, 0, 2, 1]]);
+        assert!(m.text(p.screen()).starts_with("xx   "));
+    }
+
+    #[test]
+    fn a_cast_carries_its_masks_strictly() {
+        let grid = [30, 3];
+        assert!(
+            Masks::of_meta(&serde_json::json!({}), grid)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            Masks::of_meta(&serde_json::json!({"mask": null}), grid)
+                .unwrap()
+                .is_empty()
+        );
+        let m = Masks::of_meta(
+            &serde_json::json!({"mask": [{"rect": [0, 0, 2, 1]}, {"match": "b"}]}),
+            grid,
+        )
+        .unwrap();
+        let p = screen("abc");
+        assert_eq!(m.cells(p.screen()), vec![[0, 0, 2, 1], [1, 0, 1, 1]]);
+        for bad in [
+            serde_json::json!({"mask": [{"rect": [0, 0, 2, 1], "colour": "red"}]}),
+            serde_json::json!({"mask": {"rect": [0, 0, 2, 1]}}),
+            serde_json::json!({"mask": [{"rect": [0, 0, 2]}]}),
+            serde_json::json!({"mask": "abc"}),
+        ] {
+            let e = Masks::of_meta(&bad, grid).unwrap_err();
+            assert!(e.starts_with("the cast's mask: "), "{bad}: {e}");
+        }
+        assert!(
+            Masks::of_meta(
+                &serde_json::json!({"mask": [{"rect": [0, 0, 31, 1]}]}),
+                grid
+            )
+            .unwrap_err()
+            .contains("outside the 30x3 grid")
+        );
+    }
+
+    #[test]
+    fn a_mask_writes_back_as_the_toml_it_was_read_from() {
+        let m: Vec<Mask> =
+            serde_json::from_value(serde_json::json!([{"match": "a+"}, {"rect": [1, 2, 3, 4]}]))
+                .unwrap();
+        assert_eq!(m, vec![matching("a+"), rect([1, 2, 3, 4])]);
+        assert_eq!(
+            serde_json::to_value(&m).unwrap(),
+            serde_json::json!([{"match": "a+"}, {"rect": [1, 2, 3, 4]}])
+        );
+    }
 }

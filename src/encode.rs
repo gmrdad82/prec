@@ -506,4 +506,207 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), b"whole");
         assert!(!temp_of(&target).exists());
     }
+
+    fn png_info(path: &Path) -> (png::BitDepth, [u32; 2], bool) {
+        let bytes = std::fs::read(path).unwrap();
+        let r = png::Decoder::new(std::io::Cursor::new(bytes))
+            .read_info()
+            .unwrap();
+        let i = r.info();
+        (i.bit_depth, [i.width, i.height], i.srgb.is_some())
+    }
+
+    #[test]
+    fn every_rate_encodes_with_two_second_keyframes_and_no_b_frames() {
+        for (f, gop) in [
+            (Fps::new(24, 1), 48),
+            (Fps::new(30, 1), 60),
+            (Fps::new(48, 1), 96),
+            (Fps::new(60, 1), 120),
+            (Fps::new(120, 1), 240),
+            (Fps::new(24000, 1001), 48),
+            (Fps::new(30000, 1001), 60),
+            (Fps::new(48000, 1001), 96),
+            (Fps::new(60000, 1001), 120),
+        ] {
+            let s = settings(f);
+            assert!(s.contains(&format!("gop {gop}")), "{f}: {s:?}");
+            assert!(s.contains(&"bframes 0".to_string()), "{f}: {s:?}");
+            assert!(s.contains(&format!("crf {CRF}")), "{f}: {s:?}");
+            assert!(s.contains(&format!("pito-codecs {CODECS}")), "{f}: {s:?}");
+        }
+        assert_eq!(B_FRAMES, 0);
+        assert!(master_what().contains(&format!("pito-codecs {CODECS}, CRF {CRF}")));
+    }
+
+    #[test]
+    fn a_master_with_no_pictures_is_refused_and_writes_nothing() {
+        let dir = work("empty");
+        let out = dir.join("a.master.mp4");
+        assert_eq!(
+            master(&[], [64, 64], Fps::new(30, 1), &out).unwrap_err(),
+            "the clip has no frames"
+        );
+        assert!(names(&dir).is_empty());
+    }
+
+    #[test]
+    fn a_frame_of_the_wrong_size_fails_the_master_and_leaves_no_file() {
+        let dir = work("wrong-size");
+        let a = dir.join("a.png");
+        write_png8(&a, [32, 32], &[9; 32 * 32 * 3]).unwrap();
+        let out = dir.join("a.master.mp4");
+        let e = master(&[Pic::One(&a)], [64, 64], Fps::new(30, 1), &out).unwrap_err();
+        assert_eq!(e, "a frame is 32x32, the master is 64x64");
+        assert_eq!(names(&dir), ["a.png"]);
+    }
+
+    #[test]
+    fn a_blend_of_two_sizes_fails_the_master_and_leaves_no_file() {
+        let dir = work("blend-size");
+        let a = dir.join("a.png");
+        let b = dir.join("b.png");
+        write_png8(&a, [64, 64], &[9; 64 * 64 * 3]).unwrap();
+        write_png8(&b, [32, 32], &[9; 32 * 32 * 3]).unwrap();
+        let out = dir.join("a.master.mp4");
+        let e = master(&[Pic::Blend(&a, &b, 0.5)], [64, 64], Fps::new(30, 1), &out).unwrap_err();
+        assert_eq!(
+            e,
+            format!("{}: not the size of {}", b.display(), a.display())
+        );
+        assert_eq!(names(&dir), ["a.png", "b.png"]);
+    }
+
+    #[test]
+    fn a_master_that_fails_late_removes_what_it_had_written() {
+        let dir = work("late");
+        let a = dir.join("a.png");
+        write_png8(&a, [64, 64], &[90; 64 * 64 * 3]).unwrap();
+        let bad = dir.join("bad.png");
+        std::fs::write(&bad, b"not a png").unwrap();
+        let mut pics: Vec<Pic> = (0..40).map(|_| Pic::One(&a)).collect();
+        pics.extend((0..3).map(|i| if i == 1 { Pic::One(&bad) } else { Pic::One(&a) }));
+        let out = dir.join("a.master.mp4");
+        let e = master(&pics, [64, 64], Fps::new(30, 1), &out).unwrap_err();
+        assert!(e.contains("bad.png"), "{e}");
+        assert!(!out.exists());
+        assert!(!temp_of(&out).exists());
+        assert_eq!(names(&dir), ["a.png", "bad.png"]);
+    }
+
+    #[test]
+    fn a_blend_lands_between_its_two_pictures() {
+        let dir = work("blend");
+        let a = dir.join("a.png");
+        let b = dir.join("b.png");
+        write_png8(&a, [64, 64], &[40; 64 * 64 * 3]).unwrap();
+        write_png8(&b, [64, 64], &[200; 64 * 64 * 3]).unwrap();
+        let mut d = Decoded {
+            png: pito_codecs::png::Decoder::new(),
+            rgba: Rgba::new(0, 0),
+            other: Rgba::new(0, 0),
+            bytes: Vec::new(),
+        };
+        d.frame(Pic::Blend(&a, &b, 0.25), [64, 64]).unwrap();
+        let rgb: Vec<u8> = d
+            .rgba
+            .data
+            .chunks(4)
+            .take(3)
+            .flat_map(|p| [p[0], p[1], p[2]])
+            .collect();
+        assert_eq!(rgb, [80; 9]);
+        d.frame(Pic::One(&a), [64, 64]).unwrap();
+        assert_eq!(&d.rgba.data[..3], [40, 40, 40]);
+        let gone = dir.join("gone.png");
+        let e = d.frame(Pic::One(&gone), [64, 64]).unwrap_err();
+        assert!(e.starts_with(&gone.display().to_string()), "{e}");
+    }
+
+    #[test]
+    fn a_file_that_is_not_an_mp4_cannot_be_probed() {
+        let dir = work("probe");
+        let not = dir.join("a.master.mp4");
+        std::fs::write(&not, b"text").unwrap();
+        let e = probe(&not).unwrap_err();
+        assert!(e.starts_with(&not.display().to_string()), "{e}");
+        assert!(probe(&dir.join("missing.mp4")).is_err());
+    }
+
+    #[test]
+    fn a_rename_onto_a_folder_fails_and_leaves_no_temporary() {
+        let dir = work("onto-dir");
+        let target = dir.join("a.png");
+        std::fs::create_dir_all(target.join("inside")).unwrap();
+        let e = atomic(&target, |t| {
+            std::fs::write(t, b"whole").map_err(|e| e.to_string())
+        })
+        .unwrap_err();
+        assert!(e.starts_with(&target.display().to_string()), "{e}");
+        assert!(!temp_of(&target).exists());
+        assert!(target.join("inside").is_dir());
+        assert_eq!(names(&dir), ["a.png"]);
+    }
+
+    #[test]
+    fn a_still_master_is_16_bit_and_its_deliveries_and_poster_8_bit_srgb() {
+        let dir = work("depths");
+        let rgb: Vec<u8> = (0..16 * 8 * 3).map(|i| (i * 13 % 256) as u8).collect();
+        let master = dir.join("m.png");
+        write_png16(&master, [16, 8], &rgb).unwrap();
+        assert_eq!(png_info(&master), (png::BitDepth::Sixteen, [16, 8], true));
+        let delivery = dir.join("d.png");
+        write_png8(&delivery, [16, 8], &rgb).unwrap();
+        assert_eq!(png_info(&delivery), (png::BitDepth::Eight, [16, 8], true));
+        let poster_png = dir.join("p.png");
+        poster(&master, &poster_png).unwrap();
+        assert_eq!(png_info(&poster_png), (png::BitDepth::Eight, [16, 8], true));
+        assert_eq!(image::open(&poster_png).unwrap().to_rgb8().into_raw(), rgb);
+        let e = poster(&dir.join("gone.png"), &dir.join("q.png")).unwrap_err();
+        assert!(e.contains("gone.png"), "{e}");
+        assert!(!dir.join("q.png").exists());
+    }
+
+    #[test]
+    fn a_resize_in_linear_light_keeps_a_flat_colour_and_the_size_asked() {
+        for v in [0u8, 1, 30, 128, 254, 255] {
+            let img = image::RgbImage::from_pixel(20, 10, image::Rgb([v, v / 2, 255 - v]));
+            let out = resize8(&linear(&img), [7, 3]);
+            assert_eq!(out.len(), 7 * 3 * 3);
+            for px in out.chunks(3) {
+                assert_eq!(px, [v, v / 2, 255 - v], "{v}");
+            }
+        }
+        assert_eq!(to8(0), 0);
+        assert_eq!(to8(65535), 255);
+        assert_eq!(to8(257 * 100), 100);
+        assert_eq!(to8(257 * 100 + 128), 100);
+        assert_eq!(to8(257 * 100 + 129), 101);
+    }
+
+    #[test]
+    fn a_file_entry_names_the_file_from_its_folder_with_its_hash_and_size() {
+        let dir = work("entry");
+        let sub = dir.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let f = sub.join("a.cast");
+        std::fs::write(&f, b"abc").unwrap();
+        let e = file_entry(&dir, &f, "cast", json!({"role": "cast", "what": "kept"})).unwrap();
+        assert_eq!(
+            e,
+            json!({
+                "file": "sub/a.cast",
+                "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                "bytes": 3,
+                "what": "kept",
+                "role": "cast",
+            })
+        );
+        let outside = file_entry(&sub, &dir.join("sub/a.cast"), "x", Value::Null).unwrap();
+        assert_eq!(outside["file"], "a.cast");
+        let elsewhere = file_entry(Path::new("/nowhere"), &f, "x", json!([1])).unwrap();
+        assert_eq!(elsewhere["file"], f.display().to_string());
+        assert_eq!(elsewhere.as_object().unwrap().len(), 4);
+        assert!(file_entry(&dir, &dir.join("gone"), "x", Value::Null).is_err());
+    }
 }

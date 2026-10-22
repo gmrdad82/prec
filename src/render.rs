@@ -110,6 +110,12 @@ pub fn validate(kind: &str, opts: &Opts) -> Result<(), String> {
             return Err("--web makes still web copies; use pcod for clips".into());
         }
     }
+    if let Some(size) = &opts.size {
+        parse_size(size, kind)?;
+    }
+    for d in &opts.derive {
+        parse_size(d, kind)?;
+    }
     Ok(())
 }
 
@@ -1489,5 +1495,419 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    fn opts() -> Opts {
+        Opts::default()
+    }
+
+    #[test]
+    fn a_bad_size_or_a_clip_only_flag_is_refused_before_anything_records() {
+        assert!(validate("clip", &opts()).is_ok());
+        assert!(validate("still", &opts()).is_ok());
+        for (kind, o, said) in [
+            (
+                "still",
+                Opts {
+                    poster: Some("first".into()),
+                    ..opts()
+                },
+                "--poster is for clip and render",
+            ),
+            (
+                "clip",
+                Opts {
+                    poster: Some("middle".into()),
+                    ..opts()
+                },
+                "--poster middle: first, before-closure, or seconds of shown time",
+            ),
+            (
+                "clip",
+                Opts {
+                    profile: vec!["web".into()],
+                    ..opts()
+                },
+                "--profile for clips belongs to pcod",
+            ),
+            (
+                "clip",
+                Opts {
+                    youtube: true,
+                    ..opts()
+                },
+                "--youtube for clips belongs to pcod",
+            ),
+            (
+                "clip",
+                Opts {
+                    derive: vec!["320x180".into()],
+                    ..opts()
+                },
+                "--derive for clips belongs to pcod",
+            ),
+            (
+                "clip",
+                Opts {
+                    web: vec![320],
+                    ..opts()
+                },
+                "--web makes still web copies; use pcod for clips",
+            ),
+            (
+                "still",
+                Opts {
+                    size: Some("0".into()),
+                    ..opts()
+                },
+                "size 0: a width and height above 0",
+            ),
+            (
+                "clip",
+                Opts {
+                    size: Some("321x180".into()),
+                    ..opts()
+                },
+                "size 321x180: even width and height, for 4:2:0 video",
+            ),
+            (
+                "still",
+                Opts {
+                    size: Some("wide".into()),
+                    ..opts()
+                },
+                "size wide: N, WxH, 720p, 1080p, 1440p or 2160p",
+            ),
+            (
+                "still",
+                Opts {
+                    size: Some("640x360".into()),
+                    derive: vec!["320x0".into()],
+                    ..opts()
+                },
+                "size 320x0: a width and height above 0",
+            ),
+        ] {
+            assert_eq!(validate(kind, &o).unwrap_err(), said, "{kind}");
+        }
+        let fine = Opts {
+            size: Some("321x181".into()),
+            derive: vec!["160x90".into()],
+            web: vec![100],
+            poster: None,
+            ..opts()
+        };
+        assert!(validate("still", &fine).is_ok());
+        let clip = Opts {
+            size: Some("320x180".into()),
+            poster: Some("1.5".into()),
+            ..opts()
+        };
+        assert!(validate("clip", &clip).is_ok());
+    }
+
+    #[test]
+    fn a_size_is_a_preset_a_square_or_wxh_with_digits_only() {
+        for (s, want) in [
+            ("1080p", [1920, 1080]),
+            ("1440p", [2560, 1440]),
+            ("4k", [3840, 2160]),
+            ("4K", [3840, 2160]),
+            ("2x2", [2, 2]),
+            ("1x1", [1, 1]),
+        ] {
+            assert_eq!(parse_size(s, "still"), Ok(want), "{s}");
+        }
+        for s in [
+            "",
+            "x",
+            "1x",
+            "x1",
+            "-2x2",
+            "2x-2",
+            "1.5x2",
+            "2x2x2",
+            "720P",
+            " 720p",
+            "4294967296x2",
+        ] {
+            assert_eq!(
+                parse_size(s, "still").unwrap_err(),
+                format!("size {s}: N, WxH, 720p, 1080p, 1440p or 2160p"),
+                "{s:?}"
+            );
+        }
+        assert!(parse_size("1x1", "clip").is_err());
+        assert!(parse_size("2x0", "clip").unwrap_err().contains("above 0"));
+        assert_eq!(parse_size("720p", "clip"), Ok([1280, 720]));
+    }
+
+    #[test]
+    fn an_inset_takes_one_to_four_sides_in_percent_or_pixels() {
+        let size = [1000, 500];
+        assert_eq!(inset_px("10", size), Ok([10; 4]));
+        assert_eq!(inset_px("10px", size), Ok([10; 4]));
+        assert_eq!(inset_px("10%", size), Ok([50, 100, 50, 100]));
+        assert_eq!(inset_px("10px, 5%", size), Ok([10, 50, 10, 50]));
+        assert_eq!(inset_px("1,2,3", size), Ok([1, 2, 3, 2]));
+        assert_eq!(inset_px("1,2,3,4", size), Ok([1, 2, 3, 4]));
+        assert_eq!(inset_px("0.4,0.6,99.9%,0", size), Ok([0, 1, 500, 0]));
+        let bad = |spec: &str| format!("inset {spec}: 1 to 4 of N% or Npx, top,right,bottom,left");
+        for spec in [
+            "",
+            "1,2,3,4,5",
+            "100%",
+            "-1",
+            "-1%",
+            "a",
+            "NaN",
+            "inf",
+            "1em",
+            "%",
+            "px",
+            "1,,2",
+        ] {
+            assert_eq!(inset_px(spec, size).unwrap_err(), bad(spec), "{spec:?}");
+        }
+    }
+
+    #[test]
+    fn a_set_is_a_known_key_and_a_value_and_the_last_one_wins() {
+        let with = |set: &[&str]| {
+            sets(&Opts {
+                set: set.iter().map(|s| s.to_string()).collect(),
+                ..opts()
+            })
+        };
+        assert_eq!(
+            with(&[" grid = 10x4 ", "inset=5%"]).unwrap(),
+            vec![
+                ("grid".to_string(), "10x4".to_string()),
+                ("inset".to_string(), "5%".to_string())
+            ]
+        );
+        assert_eq!(with(&["grid"]).unwrap_err(), "--set grid: key=value");
+        assert_eq!(
+            with(&["zoom=2"]).unwrap_err(),
+            format!("--set zoom: known keys are {}", SET_KEYS.join(", "))
+        );
+        for k in ["camera", "camera.x", "keys", "key"] {
+            assert_eq!(
+                with(&[&format!("{k}=1")]).unwrap_err(),
+                format!("--set {k}: {}", app::NO_CAMERA)
+            );
+        }
+        let s = with(&[
+            "ground=#000000",
+            "closure=palindrome",
+            "ground=#ffffff",
+            "closure.crossfade=0.5",
+        ])
+        .unwrap();
+        assert_eq!(set_value(&s, "ground").as_deref(), Some("#ffffff"));
+        assert_eq!(set_value(&s, "inset"), None);
+        assert_eq!(
+            closure_from_sets(&s).unwrap(),
+            Some(app::Closure::Crossfade(0.5))
+        );
+        assert_eq!(closure_from_sets(&[]).unwrap(), None);
+        let none = with(&["closure.crossfade=1", "closure=none"]).unwrap();
+        assert_eq!(closure_from_sets(&none).unwrap(), Some(app::Closure::Open));
+        assert!(closure_from_sets(&with(&["closure=loop"]).unwrap()).is_err());
+        assert!(closure_from_sets(&with(&["closure.crossfade=0"]).unwrap()).is_err());
+    }
+
+    #[test]
+    fn a_derived_size_fits_inside_the_master_and_is_listed_once() {
+        let p = plan(
+            "still",
+            Some("640x360".into()),
+            None,
+            &[
+                "320x180".into(),
+                "640x360".into(),
+                "320x180".into(),
+                "160".into(),
+            ],
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(p.sizes, vec![[640, 360], [320, 180], [160, 160]]);
+        assert_eq!(p.size_arg, "640x360");
+        assert_eq!(
+            plan(
+                "still",
+                Some("640x360".into()),
+                None,
+                &["641x10".into()],
+                None,
+                None
+            )
+            .err()
+            .unwrap(),
+            "--derive 641x10 is larger than --size 640x360"
+        );
+        assert!(
+            plan(
+                "still",
+                Some("640x360".into()),
+                None,
+                &["10x361".into()],
+                None,
+                None
+            )
+            .is_err()
+        );
+        assert!(
+            plan(
+                "still",
+                Some("640x360".into()),
+                None,
+                &["x".into()],
+                None,
+                None
+            )
+            .is_err()
+        );
+        let d = plan("still", None, None, &[], None, None).unwrap();
+        assert_eq!(
+            (d.master_size, d.size_arg.as_str()),
+            ([1920, 1080], "1080p")
+        );
+        assert!(plan("clip", None, Some("321x180".into()), &[], None, None).is_err());
+    }
+
+    #[test]
+    fn a_cast_names_its_rate_its_closure_and_its_poster_or_is_refused() {
+        assert_eq!(cast_fps(&json!({})).unwrap(), None);
+        assert_eq!(cast_fps(&json!({"fps": null})).unwrap(), None);
+        assert_eq!(
+            cast_fps(&json!({"fps": "24000/1001"})).unwrap(),
+            Some(Fps::new(24000, 1001))
+        );
+        assert_eq!(
+            cast_fps(&json!({"fps": 30})).unwrap(),
+            Some(Fps::new(30, 1))
+        );
+        assert!(
+            cast_fps(&json!({"fps": 25}))
+                .unwrap_err()
+                .starts_with("cast: fps 25: ")
+        );
+        assert!(cast_fps(&json!({"fps": [30]})).is_err());
+        assert_eq!(closure_of_cast(&json!({})).unwrap(), app::Closure::Open);
+        assert_eq!(
+            closure_of_cast(&json!({"closure": "palindrome"})).unwrap(),
+            app::Closure::Palindrome
+        );
+        assert!(closure_of_cast(&json!({"closure": "loop"})).is_err());
+        let first = resolve_poster(None, &Value::Null).unwrap();
+        assert_eq!(first.to_json(), json!("first"));
+        let recipe = resolve_poster(None, &json!("before-closure")).unwrap();
+        assert_eq!(recipe.to_json(), json!("before-closure"));
+        let flag = resolve_poster(Some("0.5"), &json!("before-closure")).unwrap();
+        assert_eq!(flag.to_json(), json!(0.5));
+        assert!(resolve_poster(None, &json!(-1)).is_err());
+        assert!(resolve_poster(Some("-1"), &Value::Null).is_err());
+    }
+
+    #[test]
+    fn names_colours_and_the_environment_are_spelled_as_written() {
+        let o = Opts {
+            product: "alpha".into(),
+            shot: "tour".into(),
+            ..opts()
+        };
+        assert_eq!(run_name(&o, "clip", None), "alpha-clip-tour");
+        assert_eq!(run_name(&o, "still", Some("cast")), "alpha-still-tour-cast");
+        assert_eq!(hexs([0, 15, 255]), "#000fff");
+        assert_eq!(hex_opt(Some("#1e1e2e")), Some([0x1e, 0x1e, 0x2e]));
+        assert_eq!(hex_opt(None), None);
+        let env = vec![("A".to_string(), "1".to_string())];
+        let passed = vec![("T".to_string(), "x".to_string())];
+        assert_eq!(
+            with_passed(&env, &passed),
+            vec![
+                ("A".to_string(), "1".to_string()),
+                ("T".to_string(), "x".to_string())
+            ]
+        );
+        assert!(!archives(
+            "clip",
+            "alpha",
+            &Opts {
+                no_archive: true,
+                ..opts()
+            },
+            &json!({"rev": "v1"})
+        ));
+    }
+
+    fn work(name: &str) -> PathBuf {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tmp/unit-render")
+            .join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn listed(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn delivery_moves_every_listed_output_and_drops_the_old_manifest_first() {
+        let w = work("deliver");
+        let stage = w.join("stage");
+        let dir = w.join("out");
+        std::fs::create_dir_all(&stage).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(stage.join("a.png"), b"new a").unwrap();
+        std::fs::write(stage.join("a.cast"), b"cast").unwrap();
+        std::fs::write(dir.join("a.png"), b"old a").unwrap();
+        let manifest = dir.join("a.json");
+        std::fs::write(&manifest, b"{}").unwrap();
+        let files = json!([{"file": "a.png"}, {"file": "a.cast"}]);
+        deliver(&stage, &dir, &files, &manifest).unwrap();
+        assert_eq!(listed(&dir), ["a.cast", "a.png"]);
+        assert_eq!(std::fs::read(dir.join("a.png")).unwrap(), b"new a");
+        assert!(listed(&stage).is_empty());
+        deliver(&stage, &dir, &json!([]), &manifest).unwrap();
+        let e = deliver(&stage, &dir, &json!([{"file": "gone.png"}]), &manifest).unwrap_err();
+        assert!(e.contains("gone.png"), "{e}");
+        assert_eq!(
+            deliver(&stage, &dir, &json!([{"role": "x"}]), &manifest).unwrap_err(),
+            "an output without a name"
+        );
+        std::fs::create_dir_all(dir.join("held.json/inside")).unwrap();
+        assert!(deliver(&stage, &dir, &json!([]), &dir.join("held.json")).is_err());
+    }
+
+    #[test]
+    fn a_derived_png_at_the_master_size_is_the_master_and_a_smaller_one_is_resampled() {
+        let w = work("derive");
+        let img =
+            image::RgbImage::from_fn(40, 20, |x, y| image::Rgb([x as u8 * 6, y as u8 * 12, 77]));
+        let linear = OnceCell::new();
+        let same = w.join("same.png");
+        derive_png(&same, &img, &linear, [40, 20]).unwrap();
+        assert!(linear.get().is_none());
+        assert_eq!(image::open(&same).unwrap().to_rgb8(), img);
+        let small = w.join("small.png");
+        derive_png(&small, &img, &linear, [20, 10]).unwrap();
+        assert!(linear.get().is_some());
+        let got = image::open(&small).unwrap().to_rgb8();
+        assert_eq!(got.dimensions(), (20, 10));
+        assert!(got.pixels().all(|p| p[2] == 77));
+        assert!(derive_png(&w.join("gone/x.png"), &img, &linear, [20, 10]).is_err());
+        assert_eq!(listed(&w), ["same.png", "small.png"]);
     }
 }
