@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.4.7 — 2026-10-22
+
+### Changed
+
+- prec writes its live job records itself, in exactly the same format as before, with one dependency fewer.
+- A job record is never written through a symlink planted where its temporary file goes.
+- The README has a line on where to ask questions (Discord).
+- Test coverage is measured with cargo-llvm-cov; docs/coverage.md has the numbers per file and how to run it.
+
 ## v1.4.6 — 2026-10-19
 
 ### Changed
