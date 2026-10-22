@@ -56,13 +56,8 @@ fn contains(hay: &[u8], needle: &str) -> bool {
 
 #[test]
 fn a_passed_value_reaches_the_still_app_and_no_file_the_render_wrote() {
-    use std::hash::{BuildHasher, Hasher};
     let dir = common::caller("privacy_still", "passed-still");
-    let secret = format!(
-        "s{:016x}{}",
-        std::hash::RandomState::new().build_hasher().finish(),
-        std::process::id()
-    );
+    let secret = "s3cr3t-still-7f1c9e".to_string();
     let app = common::demo_app(&dir, &format!("pass_env = [\"{VAR}\"]\n"));
     std::fs::write(
         app.join("render/terminal/quiet.tape"),
@@ -93,6 +88,7 @@ fn a_passed_value_reaches_the_still_app_and_no_file_the_render_wrote() {
         ],
     )
     .env("XDG_CACHE_HOME", dir.join("cache"))
+    .env_remove("PREC_CACHE")
     .env(VAR, &secret)
     .env_remove("PITO_JOBS")
     .env("PITO_JOBS_DIR", &jobs)
