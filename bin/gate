@@ -5,21 +5,38 @@ cd "$(dirname "$0")/.."
 mode=unit
 case "${1-}" in
   "") ;;
+  --fast) mode=fast ;;
   --render) mode=render ;;
   *)
-    echo "usage: bin/gate [--render]" >&2
+    echo "usage: bin/gate [--fast|--render]" >&2
     exit 2
     ;;
 esac
+if [ "$#" -gt 1 ]; then
+  echo "usage: bin/gate [--fast|--render]" >&2
+  exit 2
+fi
 
 if [ "$mode" = render ]; then
   cargo test --locked --tests
   exit 0
 fi
 
+if [ "$mode" = fast ]; then
+  export CARGO_NET_GIT_FETCH_WITH_CLI=true
+fi
 if command -v shellcheck >/dev/null; then
   shellcheck bin/gate bin/docs-bundle bin/marks
 fi
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked --bins
+if [ "$mode" = unit ]; then
+  cargo test --locked --bins
+  exit 0
+fi
+if cargo nextest --version >/dev/null 2>&1; then
+  cargo nextest run --workspace --bins --no-tests=pass
+else
+  cargo test --locked --bins
+fi
+echo "fast gate: green"
