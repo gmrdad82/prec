@@ -190,7 +190,12 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     fn ns(dir: &Path, home: &str) -> Result<Ns, String> {
-        Ns::new(home, "beta-box", &dir.join("scratch-home"), &dir.join("stash"))
+        Ns::new(
+            home,
+            "beta-box",
+            &dir.join("scratch-home"),
+            &dir.join("stash"),
+        )
     }
 
     #[test]
@@ -413,7 +418,10 @@ mod tests {
         let path = stub(&dir, "exit 1");
         assert_eq!(
             n.probe(&path, &dir),
-            Err("home: the user and mount namespace can't be made here: it exited without a word".to_string())
+            Err(
+                "home: the user and mount namespace can't be made here: it exited without a word"
+                    .to_string()
+            )
         );
     }
 }

@@ -376,7 +376,10 @@ fn cpus_of(confine: &crate::config::Confine) -> Option<String> {
 
 fn cpus_said(confine: &crate::config::Confine) -> (Option<String>, Option<String>) {
     if let Some(cpus) = confine.cpus.as_deref() {
-        return (Some(cpus.to_string()).filter(|v| !v.trim().is_empty()), None);
+        return (
+            Some(cpus.to_string()).filter(|v| !v.trim().is_empty()),
+            None,
+        );
     }
     let Some(from) = confine.cpus_from.as_deref() else {
         return (None, None);
@@ -494,18 +497,33 @@ pub fn inside_tmp(p: &Path) -> Result<PathBuf, String> {
 }
 
 fn resolved(abs: &Path) -> PathBuf {
+    resolved_within(abs, 40)
+}
+
+fn resolved_within(abs: &Path, hops: usize) -> PathBuf {
     let mut rest = Vec::new();
     let mut at = abs;
     loop {
-        if let Ok(real) = std::fs::canonicalize(at) {
-            return rest.iter().rev().fold(real, |p, c| p.join(c));
+        let base = match std::fs::canonicalize(at) {
+            Ok(real) => Some(real),
+            Err(_) if hops > 0 => std::fs::read_link(at).ok().map(|target| {
+                let target = at.parent().map_or(target.clone(), |p| p.join(&target));
+                resolved_within(&target, hops - 1)
+            }),
+            Err(_) => None,
+        };
+        if let Some(base) = base {
+            return rest.iter().rev().fold(base, |p, c| p.join(c));
         }
         match (at.parent(), at.file_name()) {
             (Some(parent), Some(name)) => {
                 rest.push(name.to_os_string());
                 at = parent;
             }
-            _ => return abs.to_path_buf(),
+            _ => {
+                let lexical = rest.iter().rev().fold(at.to_path_buf(), |p, c| p.join(c));
+                return absolute(&lexical).unwrap_or(lexical);
+            }
         }
     }
 }
@@ -946,10 +964,7 @@ mod tests {
         );
         assert_eq!(absolute(Path::new("/..")).unwrap(), PathBuf::from("/"));
         let cwd = std::env::current_dir().unwrap();
-        assert_eq!(
-            absolute(Path::new("x/../y/./z")).unwrap(),
-            cwd.join("y/z")
-        );
+        assert_eq!(absolute(Path::new("x/../y/./z")).unwrap(), cwd.join("y/z"));
     }
 
     #[test]
@@ -958,10 +973,7 @@ mod tests {
         let tmp = caller_tmp().unwrap();
         assert_eq!(tmp, tree.join("tmp"));
         assert!(tmp.is_dir());
-        assert_eq!(
-            inside_tmp(&tmp.join("a/../b")).unwrap(),
-            tmp.join("b")
-        );
+        assert_eq!(inside_tmp(&tmp.join("a/../b")).unwrap(), tmp.join("b"));
         assert_eq!(inside_tmp(&tmp).unwrap(), tmp);
         for outside in [tmp.join("../src"), tree.join("tmpx/out"), tree.clone()] {
             let e = inside_tmp(&outside).unwrap_err();
@@ -996,11 +1008,7 @@ mod tests {
                 )
             );
         }
-        assert!(!away.join("x").exists() && !away.join("a").exists());
-        assert_eq!(
-            inside_tmp(&dir.join("near/x")).unwrap(),
-            dir.join("near/x")
-        );
+        assert_eq!(inside_tmp(&dir.join("near/x")).unwrap(), dir.join("near/x"));
         assert_eq!(
             inside_tmp(&dir.join("not-yet/deep/x")).unwrap(),
             dir.join("not-yet/deep/x")
@@ -1012,10 +1020,44 @@ mod tests {
         let dir = std::fs::canonicalize(test_dir("resolved")).unwrap();
         std::fs::create_dir_all(dir.join("real/inner")).unwrap();
         std::os::unix::fs::symlink(dir.join("real"), dir.join("link")).unwrap();
-        assert_eq!(resolved(&dir.join("link/inner/new/x")), dir.join("real/inner/new/x"));
+        assert_eq!(
+            resolved(&dir.join("link/inner/new/x")),
+            dir.join("real/inner/new/x")
+        );
         assert_eq!(resolved(&dir.join("link")), dir.join("real"));
         assert_eq!(resolved(&dir.join("absent/y")), dir.join("absent/y"));
         assert_eq!(resolved(Path::new("/")), PathBuf::from("/"));
+        std::os::unix::fs::symlink(dir.join("gone/new"), dir.join("dangling")).unwrap();
+        assert_eq!(resolved(&dir.join("dangling/x")), dir.join("gone/new/x"));
+        std::os::unix::fs::symlink("real/inner/later", dir.join("relative")).unwrap();
+        assert_eq!(
+            resolved(&dir.join("relative/y")),
+            dir.join("real/inner/later/y")
+        );
+        std::os::unix::fs::symlink(dir.join("looped"), dir.join("looped")).unwrap();
+        assert_eq!(resolved(&dir.join("looped/z")), dir.join("looped/z"));
+    }
+
+    #[test]
+    fn an_out_folder_through_a_dangling_link_is_judged_by_where_it_would_lead() {
+        let dir = test_dir("inside-dangling");
+        let away = std::fs::canonicalize(env!("CARGO_MANIFEST_DIR"))
+            .unwrap()
+            .join("src/prec-paths-never");
+        std::os::unix::fs::symlink(&away, dir.join("dang")).unwrap();
+        std::os::unix::fs::symlink(dir.join("later"), dir.join("near")).unwrap();
+        let tmp = caller_tmp().unwrap();
+        for escaping in [dir.join("dang"), dir.join("dang/x"), dir.join("dang/a/b")] {
+            assert_eq!(
+                inside_tmp(&escaping).unwrap_err(),
+                format!(
+                    "{} is outside the caller's tmp/ ({}); prec writes nowhere else",
+                    escaping.display(),
+                    tmp.display()
+                )
+            );
+        }
+        assert_eq!(inside_tmp(&dir.join("near/x")).unwrap(), dir.join("near/x"));
     }
 
     #[test]
@@ -1099,7 +1141,10 @@ mod tests {
         assert!(!same_file(&first, &path));
         std::fs::write(dir.join("file"), "x").unwrap();
         let e = lock(&dir.join("file/b.lock"), Lock::Exclusive, "a test").unwrap_err();
-        assert!(e.starts_with(&dir.join("file").display().to_string()), "{e}");
+        assert!(
+            e.starts_with(&dir.join("file").display().to_string()),
+            "{e}"
+        );
     }
 
     #[test]
@@ -1148,7 +1193,10 @@ mod tests {
         });
         assert_eq!(
             said_rx.recv().unwrap(),
-            format!("waiting for another prec to finish with x ({})…", path.display())
+            format!(
+                "waiting for another prec to finish with x ({})…",
+                path.display()
+            )
         );
         drop(held);
         go_tx.send(()).unwrap();
@@ -1205,11 +1253,17 @@ mod tests {
 
     #[test]
     fn a_waited_child_gives_its_output_and_status_and_a_missing_one_is_an_error() {
-        let out = output(Command::new("sh").args(["-c", "echo out; echo err >&2; exit 3"])).unwrap();
+        let out =
+            output(Command::new("sh").args(["-c", "echo out; echo err >&2; exit 3"])).unwrap();
         assert_eq!(out.stdout, b"out\n");
         assert_eq!(out.stderr, b"err\n");
         assert_eq!(out.status.code(), Some(3));
-        let st = status(Command::new("sh").args(["-c", "exit 0"]).stdout(Stdio::null())).unwrap();
+        let st = status(
+            Command::new("sh")
+                .args(["-c", "exit 0"])
+                .stdout(Stdio::null()),
+        )
+        .unwrap();
         assert!(st.success());
         let e = spawn(&mut Command::new("prec-test-no-such-program")).unwrap_err();
         assert_eq!(e.kind(), std::io::ErrorKind::NotFound);

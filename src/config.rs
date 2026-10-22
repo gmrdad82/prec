@@ -188,7 +188,10 @@ mod tests {
         for kept in ["~other/x", "/abs/~/x", "rel/~", "a~/b"] {
             assert_eq!(expand_in(Path::new(kept), home()), PathBuf::from(kept));
         }
-        assert_eq!(expand_in(Path::new("~/arch"), None), PathBuf::from("~/arch"));
+        assert_eq!(
+            expand_in(Path::new("~/arch"), None),
+            PathBuf::from("~/arch")
+        );
     }
 
     #[test]
@@ -228,7 +231,11 @@ mod tests {
             c.confine.unwrap().cpus_from.as_deref(),
             Some(Path::new("~/m.env"))
         );
-        let c = parse_in("archive = \"/srv/~/a\"\n", Some(PathBuf::from("/home/alpha"))).unwrap();
+        let c = parse_in(
+            "archive = \"/srv/~/a\"\n",
+            Some(PathBuf::from("/home/alpha")),
+        )
+        .unwrap();
         assert_eq!(c.archive.as_deref(), Some(Path::new("/srv/~/a")));
     }
 
@@ -240,7 +247,10 @@ mod tests {
             ("[confin]\n", "confin"),
         ] {
             let e = parse(text).unwrap_err();
-            assert!(e.contains(&format!("unknown field `{names}`")), "{text}: {e}");
+            assert!(
+                e.contains(&format!("unknown field `{names}`")),
+                "{text}: {e}"
+            );
         }
         assert!(parse("archive = 3\n").is_err());
         assert!(parse("confine = \"yes\"\n").is_err());

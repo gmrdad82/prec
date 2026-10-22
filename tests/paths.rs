@@ -54,9 +54,13 @@ fn set_hooks(app: &Path, hooks: &str, env: &str) {
 }
 
 fn shots(dir: &Path, app: &Path) -> Output {
-    prec(dir, dir, &["shots", "demo", "--app-dir", app.to_str().unwrap()])
-        .output()
-        .unwrap()
+    prec(
+        dir,
+        dir,
+        &["shots", "demo", "--app-dir", app.to_str().unwrap()],
+    )
+    .output()
+    .unwrap()
 }
 
 fn record(dir: &Path, cwd: &Path, app: &Path, shot: &str, outdir: &str) -> (u32, Output) {
@@ -93,7 +97,13 @@ fn printed(cast: &str) -> String {
 fn lines(printed: &str) -> Vec<String> {
     printed
         .split('\n')
-        .map(|l| l.trim_end_matches('\r').rsplit('\r').next().unwrap_or("").to_string())
+        .map(|l| {
+            l.trim_end_matches('\r')
+                .rsplit('\r')
+                .next()
+                .unwrap_or("")
+                .to_string()
+        })
         .collect()
 }
 
@@ -160,7 +170,10 @@ fn only_the_built_environment_reaches_the_session_and_a_callers_variable_never_d
         }
     }
     let bash: BTreeSet<&str> = ["PWD", "SHLVL", "_", "OLDPWD"].into_iter().collect();
-    let extra: Vec<&&str> = names.difference(&want).filter(|n| !bash.contains(*n)).collect();
+    let extra: Vec<&&str> = names
+        .difference(&want)
+        .filter(|n| !bash.contains(*n))
+        .collect();
     assert!(extra.is_empty(), "leaked into the session: {extra:?}");
     let missing: Vec<&&str> = want.difference(&names).collect();
     assert!(missing.is_empty(), "missing in the session: {missing:?}");
@@ -246,7 +259,10 @@ fn a_passed_value_the_app_prints_is_named_never_shown_and_a_clip_of_it_is_refuse
         "{said}"
     );
     assert!(dir.join(run_cast).is_file(), "{said}");
-    assert!(!dir.join("tmp/clip").exists(), "a refused clip wrote {said}");
+    assert!(
+        !dir.join("tmp/clip").exists(),
+        "a refused clip wrote {said}"
+    );
 }
 
 #[test]
@@ -264,7 +280,10 @@ fn a_passed_value_in_a_failing_setup_is_masked_in_the_error() {
         said,
         "prec: test -n \"$PREC_PATHS_PASSED\" && exit 3; echo <PREC_PATHS_PASSED> failed"
     );
-    assert!(!dir.join("tmp/out/demo/still/demo-still-palette.cast").exists());
+    assert!(
+        !dir.join("tmp/out/demo/still/demo-still-palette.cast")
+            .exists()
+    );
 }
 
 #[test]
@@ -277,7 +296,10 @@ fn an_unset_passed_variable_is_refused_before_anything_runs() {
     let (_, o) = record(&dir, &dir, &app, "palette", "tmp/out");
     assert_eq!(refused(&o), "prec: pass_env PREC_PATHS_UNSET is not set");
     assert!(!dir.join("tmp/setup-ran").exists());
-    assert!(!dir.join("tmp/out/demo/still/demo-still-palette.cast").exists());
+    assert!(
+        !dir.join("tmp/out/demo/still/demo-still-palette.cast")
+            .exists()
+    );
 }
 
 #[test]
@@ -383,7 +405,10 @@ fn a_home_must_be_absolute_with_two_plain_parts_and_a_hostname_needs_it() {
     for hooks in [
         "home = \"/home/prec-alpha\"\n".to_string(),
         "home = \"/srv/prec/alpha.v2\"\nhostname = \"beta-box.lan\"\n".to_string(),
-        format!("home = \"/home/prec-alpha\"\nhostname = \"{}\"\n", "a".repeat(63)),
+        format!(
+            "home = \"/home/prec-alpha\"\nhostname = \"{}\"\n",
+            "a".repeat(63)
+        ),
     ] {
         set_hooks(&app, &hooks, "");
         let o = shots(&dir, &app);
@@ -480,7 +505,9 @@ fn the_out_folder_resolves_from_the_working_folder_and_must_stay_in_the_callers_
             ),
             "{flag}"
         );
-        assert!(!dir.join("out").exists() && !dir.join("tmpx").exists() && !app.join("tmp").exists());
+        assert!(
+            !dir.join("out").exists() && !dir.join("tmpx").exists() && !app.join("tmp").exists()
+        );
     }
 }
 
@@ -488,7 +515,12 @@ fn the_out_folder_resolves_from_the_working_folder_and_must_stay_in_the_callers_
 fn a_record_writes_only_in_the_callers_tmp_and_the_cache_and_names_its_folders() {
     let dir = common::caller(GROUP, "allowed-places");
     let app = common::demo_app(&dir, "");
-    common::add_shot(&app, "again", "Type \"demo show\"\nEnter\nSleep 600ms\n", "");
+    common::add_shot(
+        &app,
+        "again",
+        "Type \"demo show\"\nEnter\nSleep 600ms\n",
+        "",
+    );
     let home = dir.join("home");
     std::fs::create_dir_all(&home).unwrap();
     let skip = ["tmp", ".git", "cache"];
@@ -738,7 +770,9 @@ fn two_records_of_one_shot_at_once_take_turns_through_the_shots_lock() {
         assert_eq!(head["version"], 2, "{out}");
         assert!(!printed(&cast).is_empty(), "{out} recorded nothing");
         assert!(
-            cast.lines().skip(1).all(|l| serde_json::from_str::<Value>(l).is_ok()),
+            cast.lines()
+                .skip(1)
+                .all(|l| serde_json::from_str::<Value>(l).is_ok()),
             "{out}"
         );
     }
@@ -756,11 +790,75 @@ fn two_records_of_one_shot_at_once_take_turns_through_the_shots_lock() {
             .any(|pid| holder == format!("prec {pid} (record demo palette)\n")),
         "{holder}"
     );
-    let waited: Vec<bool> = outs
-        .iter()
-        .map(|o| err(o).contains("waiting for prec "))
-        .collect();
-    assert!(waited.iter().filter(|w| **w).count() <= 1, "{waited:?}");
+}
+
+#[test]
+fn a_record_waits_while_another_prec_holds_its_shot_and_records_once_it_is_free() {
+    use std::io::{BufRead, Read, Write};
+    let dir = common::caller(GROUP, "shot-held");
+    let app = common::demo_app(&dir, "");
+    let locks = dir.join("tmp/prec/locks");
+    std::fs::create_dir_all(&locks).unwrap();
+    let lock = locks.join("demo-palette.lock");
+    let mut held = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&lock)
+        .unwrap();
+    held.lock().unwrap();
+    writeln!(held, "prec 4242 (record demo palette)").unwrap();
+    let mut child = prec(
+        &dir,
+        &dir,
+        &[
+            "record",
+            "demo",
+            "palette",
+            "--app-dir",
+            app.to_str().unwrap(),
+            "--out",
+            "tmp/out",
+        ],
+    )
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .unwrap();
+    let mut stderr = std::io::BufReader::new(child.stderr.take().unwrap());
+    let waiting = format!(
+        "waiting for prec 4242 (record demo palette) to finish with demo-palette in this tree ({})…",
+        lock.display()
+    );
+    let mut before = String::new();
+    loop {
+        let mut line = String::new();
+        let read = stderr.read_line(&mut line).unwrap();
+        assert_ne!(read, 0, "prec ended without waiting: {before}");
+        before.push_str(&line);
+        if line.trim_end() == waiting {
+            break;
+        }
+    }
+    let cast = dir.join("tmp/out/demo/still/demo-still-palette.cast");
+    assert!(!cast.exists());
+    assert!(!dir.join("tmp/prec/run/demo-still-palette-record").exists());
+    drop(held);
+    let mut rest = String::new();
+    stderr.read_to_string(&mut rest).unwrap();
+    let pid = child.id();
+    let o = child.wait_with_output().unwrap();
+    assert_eq!(o.status.code(), Some(0), "{before}{rest}");
+    assert_eq!(common::last_path(&o), cast);
+    let text = std::fs::read_to_string(&cast).unwrap();
+    let head: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+    assert_eq!(head["version"], 2);
+    assert!(!printed(&text).is_empty());
+    assert_eq!(
+        std::fs::read_to_string(&lock).unwrap(),
+        format!("prec {pid} (record demo palette)\n")
+    );
+    assert!(!rest.contains("waiting for"), "{rest}");
 }
 
 #[test]
@@ -778,7 +876,10 @@ fn a_hook_that_prints_a_passed_value_shows_it_on_precs_own_output() {
         Some("prec: echo \"hook-saw-$PREC_PATHS_PASSED\"; exit 3 failed")
     );
     assert!(!err(&o).contains(PASSED), "{}", err(&o));
-    assert!(!dir.join("tmp/out/demo/still/demo-still-palette.cast").exists());
+    assert!(
+        !dir.join("tmp/out/demo/still/demo-still-palette.cast")
+            .exists()
+    );
 }
 
 #[test]
@@ -839,6 +940,7 @@ fn this_machines_hostname_on_screen_is_named_in_a_warning() {
     let host = std::fs::read_to_string("/proc/sys/kernel/hostname").unwrap();
     let host = host.trim();
     if host.is_empty() || host == "localhost" || host == "(none)" {
+        eprintln!("skipped: this machine's hostname {host:?} is one the scan leaves alone");
         return;
     }
     let dir = common::caller(GROUP, "scan-host");
@@ -867,7 +969,12 @@ fn an_empty_prec_config_means_the_default_file() {
     std::fs::create_dir_all(&from_config).unwrap();
     let path = config(&dir, &format!("archive = \"{}\"\n", from_config.display()));
     let o = doctor(&dir, &[("PREC_CONFIG", Path::new(""))]);
-    assert_eq!(detail(&o, "config"), Some(path.display().to_string()), "{}", out(&o));
+    assert_eq!(
+        detail(&o, "config"),
+        Some(path.display().to_string()),
+        "{}",
+        out(&o)
+    );
     assert_eq!(
         detail(&o, "archive root"),
         Some(format!("{} (reachable)", from_config.display()))
@@ -881,6 +988,7 @@ fn a_config_file_prec_cannot_read_is_refused_by_name() {
     let path = config(&dir, "archive = \"/srv\"\n");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
     if std::fs::read(&path).is_ok() {
+        eprintln!("skipped: a file with mode 000 is still readable here, as root");
         return;
     }
     let o = doctor(&dir, &[]);

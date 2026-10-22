@@ -242,9 +242,10 @@ pub fn redact(text: &str, passed: &[(String, String)]) -> String {
         }
     }
     let covered = |i: usize, (s, e, _): (usize, usize, &str)| {
-        spans.iter().enumerate().any(|(j, &(js, je, _))| {
-            j != i && js <= s && e <= je && (je - js > e - s || j < i)
-        })
+        spans
+            .iter()
+            .enumerate()
+            .any(|(j, &(js, je, _))| j != i && js <= s && e <= je && (je - js > e - s || j < i))
     };
     let mut kept: Vec<(usize, usize, &str)> = spans
         .iter()
@@ -415,7 +416,10 @@ mod tests {
     fn each_kind_of_private_text_is_named_and_neutral_text_is_not() {
         let n = needles();
         for (text, what) in [
-            ("cd /home/alpha/work", &["the home path", "the user name"][..]),
+            (
+                "cd /home/alpha/work",
+                &["the home path", "the user name"][..],
+            ),
             ("/home/alphabet/x", &["the home path"]),
             ("user@beta-box:~$", &["the hostname"]),
             ("BETA-BOX ready", &["the hostname"]),
@@ -437,7 +441,11 @@ mod tests {
             "a pro plan for the team",
             "limited edition",
         ] {
-            assert!(n.found(neutral).is_empty(), "{neutral:?}: {:?}", n.found(neutral));
+            assert!(
+                n.found(neutral).is_empty(),
+                "{neutral:?}: {:?}",
+                n.found(neutral)
+            );
         }
     }
 
@@ -468,9 +476,16 @@ mod tests {
                 ("EMPTY".into(), String::new()),
             ],
         );
-        assert_eq!(n.found("abc wxyz"), ["the user name", "a passed variable FOUR"]);
+        assert_eq!(
+            n.found("abc wxyz"),
+            ["the user name", "a passed variable FOUR"]
+        );
         assert!(n.found("").is_empty());
-        assert!(Needles::new(vec![], None, Some(String::new()), &[]).found("x").is_empty());
+        assert!(
+            Needles::new(vec![], None, Some(String::new()), &[])
+                .found("x")
+                .is_empty()
+        );
     }
 
     #[test]
@@ -536,7 +551,14 @@ mod tests {
     #[test]
     fn this_machines_user_is_user_else_logname() {
         let user = |u: Option<&str>, l: Option<&str>| {
-            Needles::of(None, u.map(str::to_string), l.map(str::to_string), None, &[]).user
+            Needles::of(
+                None,
+                u.map(str::to_string),
+                l.map(str::to_string),
+                None,
+                &[],
+            )
+            .user
         };
         assert_eq!(user(Some("alpha"), Some("beta")).as_deref(), Some("alpha"));
         assert_eq!(user(Some(""), Some("beta")).as_deref(), Some("beta"));
@@ -570,11 +592,17 @@ mod tests {
     fn redaction_replaces_exactly_each_passed_value_longest_first() {
         let passed = [
             ("KEY".to_string(), "abcd1234".to_string()),
-            ("URL".to_string(), "https://site/?k=abcd1234&s=zz9".to_string()),
+            (
+                "URL".to_string(),
+                "https://site/?k=abcd1234&s=zz9".to_string(),
+            ),
             ("EMPTY".to_string(), String::new()),
         ];
         assert_eq!(
-            redact("get https://site/?k=abcd1234&s=zz9 with abcd1234, abcd1234", &passed),
+            redact(
+                "get https://site/?k=abcd1234&s=zz9 with abcd1234, abcd1234",
+                &passed
+            ),
             "get <URL> with <KEY>, <KEY>"
         );
         assert_eq!(redact("pre-abcd1234-post", &passed), "pre-<KEY>-post");
@@ -613,8 +641,11 @@ mod tests {
             ("value-one and TOKEN", named.clone()),
         ] {
             let hidden = redact(text, &passed);
+            let bare = passed
+                .iter()
+                .fold(hidden.clone(), |h, (n, _)| h.replace(&format!("<{n}>"), ""));
             for (_, v) in &passed {
-                assert!(!hidden.contains(v.as_str()), "{v} in {hidden}");
+                assert!(!bare.contains(v.as_str()), "{v} in {hidden}");
             }
         }
     }
@@ -682,6 +713,12 @@ mod tests {
     #[test]
     fn a_cast_with_nothing_on_screen_has_no_findings() {
         assert!(whats(&cast(&[], &[(0.0, "show"), (1.0, "end")])).is_empty());
-        assert!(whats(&cast(&[(0.1, "neutral text\r\n")], &[(0.0, "show"), (1.0, "end")])).is_empty());
+        assert!(
+            whats(&cast(
+                &[(0.1, "neutral text\r\n")],
+                &[(0.0, "show"), (1.0, "end")]
+            ))
+            .is_empty()
+        );
     }
 }
