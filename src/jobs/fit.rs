@@ -317,8 +317,27 @@ mod tests {
     }
 
     #[test]
+    fn wide_characters_are_cut_to_the_limit_on_a_character_boundary() {
+        for unit in ["é", "😀"] {
+            let mut rec = base();
+            rec.stages.clear();
+            let long = unit.repeat(LIMIT);
+            rec.detail = Some(long.clone());
+            let bytes = encode(&rec);
+            assert!(bytes.len() <= LIMIT, "{unit:?}: {}", bytes.len());
+            assert!(
+                bytes.len() > LIMIT - unit.len(),
+                "{unit:?}: {}",
+                bytes.len()
+            );
+            let got = decode(&bytes).detail.unwrap();
+            assert!(long.starts_with(&got), "{unit:?}");
+        }
+    }
+
+    #[test]
     fn text_that_json_escapes_still_fits_and_stays_a_prefix() {
-        for unit in ["\"", "\\", "\u{1}", "é", "😀"] {
+        for unit in ["\"", "\\", "\u{1}"] {
             let mut rec = base();
             rec.stages.clear();
             let long = unit.repeat(LIMIT);

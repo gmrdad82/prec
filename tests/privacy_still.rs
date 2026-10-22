@@ -91,6 +91,9 @@ fn a_passed_value_reaches_the_still_app_and_no_file_the_render_wrote() {
     .env_remove("PREC_CACHE")
     .env(VAR, &secret)
     .env_remove("PITO_JOBS")
+    .env_remove("PITO_JOB_ID")
+    .env_remove("PITO_INVOKER")
+    .env_remove("GPU_QUEUE_PID")
     .env("PITO_JOBS_DIR", &jobs)
     .output()
     .unwrap();
