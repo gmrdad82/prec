@@ -74,7 +74,7 @@ Every `leaf` is relative to the archive's `Masters/` folder (since 0.21.0; befor
 
 ## 3. The archive catalog line
 
-Each archived render appends one JSON line to `<archive root>/Masters/catalog.jsonl`, the catalog it shares with pfx. The append holds `$XDG_RUNTIME_DIR/pito-archive/catalog.lock`, and `prec archive --reindex` rebuilds the file from both tools' leaves, `Masters/prec/` and `Masters/pfx/`.
+Each archived render appends one JSON line to `<archive root>/Masters/catalog.jsonl`, the catalog it shares with pfx. The append holds `$XDG_RUNTIME_DIR/pito-archive/catalog.lock`, and `prec archive --reindex` rebuilds the file from both tools' leaves, `Masters/prec/` and `Masters/pfx/`, taking each line from the `archive.catalog` its leaf's `manifest.json` stored (a leaf without one is left out) and reading no other file.
 
 `{"v": 1, "tool": "prec", "product", "shot", "version", "caller", "made", "path", "files": [{"name", "bytes", "sha256"}]}`
 
