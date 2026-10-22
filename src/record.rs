@@ -1,4 +1,6 @@
 use crate::tape::{self, Step};
+use nix::sys::signal::{Signal, killpg};
+use nix::unistd::Pid;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde_json::{Value, json};
 use std::io::{Read, Write};
@@ -302,6 +304,17 @@ pub fn record(spec: &Spec) -> Result<Vec<Event>, String> {
     let result = drive(&mut s, spec);
     s.pump();
     let end = s.now();
+    let groups: Vec<i32> = [
+        pair.master.process_group_leader(),
+        child.process_id().map(|p| p as i32),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|g| *g > 1)
+    .collect();
+    for g in &groups {
+        let _ = killpg(Pid::from_raw(*g), Signal::SIGHUP);
+    }
     let _ = child.kill();
     s.writer = Box::new(std::io::sink());
     drop(pair.master);
@@ -314,6 +327,9 @@ pub fn record(spec: &Spec) -> Result<Vec<Event>, String> {
             break;
         }
         std::thread::sleep(Duration::from_millis(20));
+    }
+    for g in &groups {
+        let _ = killpg(Pid::from_raw(*g), Signal::SIGKILL);
     }
     let _ = reader_thread.join();
     s.pump();
@@ -583,19 +599,54 @@ pub fn write(path: &Path, cast: &Cast) -> Result<(), String> {
 pub fn read(path: &Path) -> Result<Cast, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut lines = text.lines();
-    let header: Value = serde_json::from_str(lines.next().ok_or("an empty cast")?)
-        .map_err(|e| format!("{}: header: {e}", path.display()))?;
+    let first = lines
+        .next()
+        .ok_or_else(|| format!("{}: an empty cast", path.display()))?;
+    let header: Value =
+        serde_json::from_str(first).map_err(|e| format!("{}: header: {e}", path.display()))?;
     if header["version"] != 2 {
         return Err(format!("{}: an asciicast v2 file", path.display()));
     }
-    let mut events = vec![];
+    let side = |key: &str, default: u64| -> Result<u32, String> {
+        match &header[key] {
+            Value::Null => Ok(default as u32),
+            v => v
+                .as_u64()
+                .filter(|n| (1..=u16::MAX as u64).contains(n))
+                .map(|n| n as u32)
+                .ok_or_else(|| {
+                    format!(
+                        "{}: header: {key} {v} is not a size from 1 to {}",
+                        path.display(),
+                        u16::MAX
+                    )
+                }),
+        }
+    };
+    let cols = side("width", 80)?;
+    let rows = side("height", 24)?;
+    let mut events: Vec<Event> = vec![];
     for (i, line) in lines.enumerate() {
         if line.trim().is_empty() {
             continue;
         }
         let v: Value = serde_json::from_str(line)
             .map_err(|e| format!("{}: line {}: {e}", path.display(), i + 2))?;
-        let t = v[0].as_f64().ok_or("a cast event without a time")?;
+        let at = |why: &str| format!("{}: line {}: {why}", path.display(), i + 2);
+        let t = v[0]
+            .as_f64()
+            .ok_or_else(|| at("a cast event without a time"))?;
+        if t < 0.0 {
+            return Err(at(&format!("a time of {t}s is negative")));
+        }
+        if let Some(last) = events.last()
+            && t < last.t
+        {
+            return Err(at(&format!(
+                "a time of {t}s comes before the {}s above it",
+                last.t
+            )));
+        }
         let kind = match v[1].as_str() {
             Some("o") => Kind::Output,
             Some("i") => Kind::Input,
@@ -608,9 +659,12 @@ pub fn read(path: &Path) -> Result<Cast, String> {
             data: v[2].as_str().unwrap_or_default().to_string(),
         });
     }
+    if events.is_empty() {
+        return Err(format!("{}: a cast with no events", path.display()));
+    }
     Ok(Cast {
-        cols: header["width"].as_u64().unwrap_or(80) as u32,
-        rows: header["height"].as_u64().unwrap_or(24) as u32,
+        cols,
+        rows,
         meta: header["x_terminal_renderer"].clone(),
         events,
     })
@@ -852,5 +906,359 @@ mod tests {
         s.feed("\x1b[10;1H\x1b[2K\x1b[3;1Hgone");
         assert!(!s.matches(&wait, true));
         assert!(s.matches(&regex::Regex::new("^gone$").unwrap(), false));
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tmp")
+            .join(format!("unit-record-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn read_text(name: &str, text: &str) -> (std::path::PathBuf, Result<Cast, String>) {
+        let path = scratch(name).join("c.cast");
+        std::fs::write(&path, text).unwrap();
+        let got = read(&path);
+        (path, got)
+    }
+
+    #[test]
+    fn a_written_cast_is_asciicast_v2_with_rounded_times_and_every_kind() {
+        let path = scratch("shape").join("demo-clip-a.cast");
+        let cast = Cast {
+            cols: 60,
+            rows: 16,
+            meta: json!({"product": "demo", "shot": "a", "kind": "clip"}),
+            events: vec![
+                m(0.0, "show"),
+                Event {
+                    t: 0.123_456_789,
+                    kind: Kind::Input,
+                    data: "d".into(),
+                },
+                o(0.25, "\u{1b}[1mhi\r\n三"),
+                m(1.0, "end"),
+            ],
+        };
+        write(&path, &cast).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.ends_with('\n'));
+        let lines: Vec<Value> = text
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        let mut keys: Vec<&String> = lines[0].as_object().unwrap().keys().collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            ["env", "height", "version", "width", "x_terminal_renderer"]
+        );
+        assert_eq!(lines[0]["version"], 2);
+        assert_eq!(lines[0]["width"], 60);
+        assert_eq!(lines[0]["height"], 16);
+        assert_eq!(lines[0]["env"]["TERM"], "xterm-256color");
+        assert_eq!(lines[0]["x_terminal_renderer"]["product"], "demo");
+        assert_eq!(lines[1], json!([0.0, "m", "show"]));
+        assert_eq!(lines[2], json!([0.123457, "i", "d"]));
+        assert_eq!(lines[3], json!([0.25, "o", "\u{1b}[1mhi\r\n三"]));
+        assert_eq!(lines[4], json!([1.0, "m", "end"]));
+        let back = read(&path).unwrap();
+        assert_eq!((back.cols, back.rows), (60, 16));
+        assert_eq!(back.meta["shot"], "a");
+        let kinds: Vec<Kind> = back.events.iter().map(|e| e.kind.clone()).collect();
+        assert_eq!(
+            kinds,
+            [Kind::Marker, Kind::Input, Kind::Output, Kind::Marker]
+        );
+        assert_eq!(back.events[2].data, "\u{1b}[1mhi\r\n三");
+        assert!((back.events[1].t - 0.123457).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_cast_without_a_v2_header_is_refused() {
+        let (p, got) = read_text("empty", "");
+        assert_eq!(got.unwrap_err(), format!("{}: an empty cast", p.display()));
+        let (p, got) = read_text("garbled", "not json\n[0.1, \"o\", \"a\"]\n");
+        assert!(
+            got.unwrap_err()
+                .starts_with(&format!("{}: header: ", p.display()))
+        );
+        for version in ["1", "3", "\"2\"", "null"] {
+            let (p, got) = read_text(
+                "version",
+                &format!("{{\"version\": {version}, \"width\": 8, \"height\": 4}}\n"),
+            );
+            assert_eq!(
+                got.unwrap_err(),
+                format!("{}: an asciicast v2 file", p.display()),
+                "{version}"
+            );
+        }
+        let (p, got) = read_text(
+            "noversion",
+            "{\"width\": 8, \"height\": 4}\n[0.1, \"o\", \"a\"]\n",
+        );
+        assert_eq!(
+            got.unwrap_err(),
+            format!("{}: an asciicast v2 file", p.display())
+        );
+    }
+
+    #[test]
+    fn a_truncated_or_timeless_event_is_refused_by_its_line() {
+        let head = "{\"version\": 2, \"width\": 8, \"height\": 4}\n";
+        let (p, got) = read_text(
+            "truncated",
+            &format!("{head}[0.1, \"o\", \"a\"]\n[0.2, \"o\", \"b"),
+        );
+        assert!(
+            got.unwrap_err()
+                .starts_with(&format!("{}: line 3: ", p.display()))
+        );
+        let (p, got) = read_text(
+            "timeless",
+            &format!("{head}[0.1, \"o\", \"a\"]\n\n[\"soon\", \"o\", \"a\"]\n"),
+        );
+        assert_eq!(
+            got.unwrap_err(),
+            format!("{}: line 4: a cast event without a time", p.display())
+        );
+        let (p, got) = read_text("notarray", &format!("{head}{{}}\n"));
+        assert_eq!(
+            got.unwrap_err(),
+            format!("{}: line 2: a cast event without a time", p.display())
+        );
+    }
+
+    #[test]
+    fn a_cast_reader_skips_blank_lines_and_event_codes_it_does_not_replay() {
+        let (_, got) = read_text(
+            "lenient",
+            "{\"version\": 2}\n\n[0.1, \"r\", \"80x24\"]\n  \n[0.2, \"o\", \"a\"]\n[0.3, \"m\"]\n",
+        );
+        let cast = got.unwrap();
+        assert_eq!((cast.cols, cast.rows), (80, 24));
+        assert!(cast.meta.is_null());
+        assert_eq!(cast.events.len(), 2);
+        assert_eq!(cast.events[0].kind, Kind::Output);
+        assert_eq!(cast.events[1].data, "");
+    }
+
+    #[test]
+    fn a_cast_with_no_events_is_refused() {
+        let head = "{\"version\": 2, \"width\": 8, \"height\": 4}\n";
+        for (name, text) in [
+            ("bare", head.to_string()),
+            ("blank", format!("{head}\n  \n")),
+            ("unreplayed", format!("{head}[0.1, \"r\", \"80x24\"]\n")),
+        ] {
+            let (p, got) = read_text(name, &text);
+            assert_eq!(
+                got.unwrap_err(),
+                format!("{}: a cast with no events", p.display()),
+                "{name}"
+            );
+        }
+        let (_, got) = read_text("one", &format!("{head}[0.0, \"m\", \"end\"]\n"));
+        assert_eq!(got.unwrap().events.len(), 1);
+        let tl = Timeline::of(&[]);
+        assert!(tl.segments.is_empty());
+        assert_eq!(tl.shown(), 0.0);
+        assert_eq!(tl.at(1.0), 0.0);
+    }
+
+    #[test]
+    fn a_cast_header_size_out_of_range_is_refused() {
+        let event = "[0.0, \"m\", \"show\"]\n";
+        for (name, header, key, shown) in [
+            (
+                "zerow",
+                r#"{"version": 2, "width": 0, "height": 4}"#,
+                "width",
+                "0",
+            ),
+            (
+                "zeroh",
+                r#"{"version": 2, "width": 8, "height": 0}"#,
+                "height",
+                "0",
+            ),
+            (
+                "wide",
+                r#"{"version": 2, "width": 65536, "height": 4}"#,
+                "width",
+                "65536",
+            ),
+            (
+                "negative",
+                r#"{"version": 2, "width": -8, "height": 4}"#,
+                "width",
+                "-8",
+            ),
+            (
+                "text",
+                r#"{"version": 2, "width": "8", "height": 4}"#,
+                "width",
+                "\"8\"",
+            ),
+            (
+                "fraction",
+                r#"{"version": 2, "width": 8, "height": 4.5}"#,
+                "height",
+                "4.5",
+            ),
+        ] {
+            let (p, got) = read_text(name, &format!("{header}\n{event}"));
+            assert_eq!(
+                got.unwrap_err(),
+                format!(
+                    "{}: header: {key} {shown} is not a size from 1 to 65535",
+                    p.display()
+                ),
+                "{name}"
+            );
+        }
+        let (_, got) = read_text(
+            "edges",
+            &format!("{{\"version\": 2, \"width\": 65535, \"height\": 1}}\n{event}"),
+        );
+        let cast = got.unwrap();
+        assert_eq!((cast.cols, cast.rows), (65535, 1));
+    }
+
+    #[test]
+    fn a_cast_event_time_that_is_negative_or_goes_back_is_refused_by_its_line() {
+        let head = "{\"version\": 2, \"width\": 8, \"height\": 4}\n";
+        let (p, got) = read_text("negative", &format!("{head}[-0.5, \"o\", \"a\"]\n"));
+        assert_eq!(
+            got.unwrap_err(),
+            format!("{}: line 2: a time of -0.5s is negative", p.display())
+        );
+        let (p, got) = read_text(
+            "backwards",
+            &format!("{head}[0.0, \"m\", \"show\"]\n[2.0, \"o\", \"a\"]\n[1.5, \"o\", \"b\"]\n"),
+        );
+        assert_eq!(
+            got.unwrap_err(),
+            format!(
+                "{}: line 4: a time of 1.5s comes before the 2s above it",
+                p.display()
+            )
+        );
+        let (_, got) = read_text(
+            "ties",
+            &format!("{head}[0.0, \"m\", \"show\"]\n[0.0, \"o\", \"a\"]\n[0.0, \"m\", \"end\"]\n"),
+        );
+        assert_eq!(got.unwrap().events.len(), 3);
+    }
+
+    #[test]
+    fn a_tape_that_ends_hidden_shows_nothing_after_its_last_hide() {
+        let tl = Timeline::of(&[
+            m(0.0, "show"),
+            m(0.0, "show"),
+            m(2.0, "hide"),
+            m(2.5, "screenshot"),
+            m(4.0, "end"),
+        ]);
+        assert_eq!(tl.segments, vec![(0.0, 2.0)]);
+        assert_eq!(tl.end, 4.0);
+        assert_eq!(tl.shots, vec![2.5]);
+        assert!((tl.at(1.0) - 1.0).abs() < 1e-9);
+        assert_eq!(tl.at(3.0), 2.0);
+    }
+
+    #[test]
+    fn a_squeeze_cut_splits_the_shown_time_and_maps_times_across_it() {
+        let tl = Timeline::of(&[
+            m(0.0, "show"),
+            m(1.0, "cut"),
+            m(3.0, "resume"),
+            m(4.0, "cut"),
+            m(5.0, "end"),
+        ]);
+        assert_eq!(tl.segments, vec![(0.0, 1.0), (3.0, 5.0)]);
+        assert!((tl.shown() - 3.0).abs() < 1e-9);
+        assert!((tl.at(0.5) - 0.5).abs() < 1e-9);
+        assert!((tl.at(1.0) - 3.0).abs() < 1e-9);
+        assert!((tl.at(2.5) - 4.5).abs() < 1e-9);
+        let tail = Timeline::of(&[
+            m(0.0, "show"),
+            m(2.0, "cut"),
+            m(5.0, "resume"),
+            m(5.0, "end"),
+        ]);
+        assert_eq!(tail.segments, vec![(0.0, 2.0)]);
+        assert!((tail.shown() - 2.0).abs() < 1e-9);
+        assert!((tail.at(1.5) - 1.5).abs() < 1e-9);
+        assert_eq!(tail.at(2.0), 2.0);
+        assert_eq!(tail.at(9.0), 2.0);
+    }
+
+    #[test]
+    fn a_squeeze_needs_a_squeeze_marker_and_cuts_nothing_once_off() {
+        let plain = vec![m(0.0, "show"), o(0.1, "a"), o(9.0, "b")];
+        let mut ev = plain.clone();
+        squeeze(&mut ev, [10, 2], 10.0);
+        assert_eq!(ev.len(), plain.len());
+        let mut off = vec![
+            m(0.0, "show"),
+            m(0.0, "squeeze 0.5"),
+            m(0.1, "squeeze off"),
+            o(0.2, "a"),
+            o(9.0, "b"),
+        ];
+        squeeze(&mut off, [10, 2], 10.0);
+        assert!(!off.iter().any(|e| e.data == "cut" || e.data == "resume"));
+        let mut quiet = vec![
+            m(0.0, "show"),
+            m(0.0, "squeeze 1"),
+            o(0.5, "a"),
+            o(6.0, "b"),
+        ];
+        squeeze(&mut quiet, [10, 2], 6.2);
+        let cuts: Vec<(String, i64)> = quiet
+            .iter()
+            .filter(|e| e.data == "cut" || e.data == "resume")
+            .map(|e| (e.data.clone(), (e.t * 1e3).round() as i64))
+            .collect();
+        assert_eq!(
+            cuts,
+            vec![("cut".to_string(), 1000), ("resume".to_string(), 5500)]
+        );
+    }
+
+    #[test]
+    fn a_wait_on_the_last_line_sees_a_no_break_space_and_skips_blank_lines() {
+        let mut s = Screen::new([20, 5]);
+        s.feed("first\r\nready\u{a0}now\r\n\r\n");
+        assert!(s.matches(&regex::Regex::new("^ready now$").unwrap(), false));
+        assert!(!s.matches(&regex::Regex::new("first").unwrap(), false));
+        assert!(s.matches(&regex::Regex::new("first").unwrap(), true));
+        assert_eq!(s.shown(), "  1 | first\n  2 | ready now");
+        let blank = Screen::new([20, 5]);
+        assert!(!blank.matches(&regex::Regex::new("").unwrap(), false));
+        assert_eq!(blank.shown(), "");
+    }
+
+    #[test]
+    fn the_setup_line_quotes_any_path_for_bash() {
+        assert_eq!(shell_quote("plain"), "'plain'");
+        assert_eq!(shell_quote("it's here"), "'it'\\''s here'");
+        assert_eq!(round6(1.000_000_4), 1.0);
+        assert_eq!(round6(0.000_000_6), 0.000_001);
+    }
+
+    #[test]
+    fn a_utf8_decoder_holds_a_tail_and_replaces_what_is_broken() {
+        let mut d = Utf8 { pending: vec![] };
+        let wide = "三".as_bytes();
+        assert_eq!(d.push(&[b'a', wide[0], wide[1]]), "a");
+        assert_eq!(d.push(&[wide[2], b'b']), "三b");
+        assert_eq!(d.push(&[0xe4, b'x']), "\u{fffd}x");
+        assert_eq!(d.push(&[]), "");
+        assert!(d.pending.is_empty());
     }
 }

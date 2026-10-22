@@ -1,0 +1,408 @@
+mod common;
+
+use serde_json::Value;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+use std::time::Duration;
+
+fn case(name: &str, hooks: &str) -> (PathBuf, PathBuf) {
+    let dir = common::caller("record", name);
+    let app = common::demo_app(&dir, hooks);
+    (dir, app)
+}
+
+fn prec(dir: &Path, args: &[&str]) -> Command {
+    let mut c = common::prec(dir, &dir.join("archive"), args);
+    c.env("XDG_CACHE_HOME", dir.join("cache"));
+    c
+}
+
+fn record(dir: &Path, app: &Path, shot: &str) -> Output {
+    prec(
+        dir,
+        &[
+            "record",
+            "demo",
+            shot,
+            "--app-dir",
+            app.to_str().unwrap(),
+            "--out",
+            "tmp/out",
+        ],
+    )
+    .output()
+    .unwrap()
+}
+
+fn stderr(o: &Output) -> String {
+    String::from_utf8_lossy(&o.stderr).into_owned()
+}
+
+fn cast_of(dir: &Path, shot: &str) -> PathBuf {
+    dir.join(format!("tmp/out/demo/clip/demo-clip-{shot}.cast"))
+}
+
+fn refused(o: &Output) -> String {
+    assert_eq!(o.status.code(), Some(1), "{}", stderr(o));
+    let said = stderr(o);
+    assert!(said.contains("prec: "), "{said}");
+    said
+}
+
+fn gone(pid: i32) -> bool {
+    common::until(Duration::from_secs(5), || {
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_err()
+    })
+}
+
+#[test]
+fn a_recorded_shot_is_an_asciicast_v2_cast_its_header_and_events_read_back() {
+    let (dir, app) = case("cast", "");
+    common::add_shot(
+        &app,
+        "short",
+        "Sleep 100ms\nType \"demo tick\"\nEnter\nSleep 1.5s\n",
+        "",
+    );
+    let o = record(&dir, &app, "short");
+    common::expect_ok(&o, "prec record");
+    let text = std::fs::read_to_string(cast_of(&dir, "short")).unwrap();
+    let lines: Vec<Value> = text
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("{e}: {l}")))
+        .collect();
+    let header = &lines[0];
+    assert_eq!(header["version"], 2);
+    assert_eq!(header["width"], 60);
+    assert_eq!(header["height"], 16);
+    let meta = &header["x_terminal_renderer"];
+    assert_eq!(meta["product"], "demo");
+    assert_eq!(meta["shot"], "short");
+    assert_eq!(meta["kind"], "clip");
+    assert_eq!(meta["grid"], serde_json::json!([60, 16]));
+    let events = &lines[1..];
+    assert!(!events.is_empty());
+    let mut last = 0.0;
+    for e in events {
+        let a = e.as_array().unwrap_or_else(|| panic!("{e}"));
+        assert_eq!(a.len(), 3, "{e}");
+        let t = a[0].as_f64().unwrap();
+        assert!(t >= last, "events out of order at {e}");
+        last = t;
+        assert!(matches!(a[1].as_str(), Some("o" | "i" | "m")), "{e}");
+        assert!(a[2].is_string(), "{e}");
+    }
+    let of = |code: &str| -> Vec<&str> {
+        events
+            .iter()
+            .filter(|e| e[1] == code)
+            .map(|e| e[2].as_str().unwrap())
+            .collect()
+    };
+    let markers = of("m");
+    assert_eq!(markers.first(), Some(&"hide"));
+    assert!(markers.contains(&"show"), "{markers:?}");
+    assert_eq!(events.last().unwrap()[1], "m");
+    assert_eq!(events.last().unwrap()[2], "end");
+    let typed: String = of("i").concat();
+    assert!(typed.ends_with("demo tick\r"), "{typed:?}");
+    let shown: String = of("o").concat();
+    assert!(shown.contains('▇'), "{shown:?}");
+    assert!(
+        (1.5..30.0).contains(&last),
+        "a {last}s cast for a 1.6s tape"
+    );
+}
+
+fn shown_pid(said: &str, label: &str) -> i32 {
+    regex::Regex::new(&format!(r"{label}=(\d+)"))
+        .unwrap()
+        .captures_iter(said)
+        .find_map(|c| c[1].parse().ok())
+        .unwrap_or_else(|| panic!("no {label} pid on the screen:\n{said}"))
+}
+
+#[test]
+fn a_wait_that_never_matches_fails_at_its_timeout_and_leaves_no_shell_or_app() {
+    let (dir, app) = case("wait", "");
+    common::add_shot(
+        &app,
+        "stuck",
+        "Type@0ms \"echo shell=$$\"\nEnter\nType@0ms `sh -c 'trap \"\" HUP; echo app=$$; exec sleep 600'`\nEnter\nWait@3s /never-shown/\nType \"demo show\"\n",
+        "",
+    );
+    let started = std::time::Instant::now();
+    let o = record(&dir, &app, "stuck");
+    let took = started.elapsed();
+    let said = refused(&o);
+    assert!(
+        said.contains("prec: Wait /never-shown/ timed out after 3.0s; the screen showed:\n"),
+        "{said}"
+    );
+    assert!(
+        took >= Duration::from_secs(3),
+        "the 3s Wait failed after {took:?}"
+    );
+    let shell = shown_pid(&said, "shell");
+    let held = shown_pid(&said, "app");
+    assert_ne!(shell, held);
+    assert!(gone(shell), "the recording's shell {shell} outlived prec");
+    assert!(
+        gone(held),
+        "the app {held} that ignores SIGHUP outlived prec's recording"
+    );
+    assert!(!cast_of(&dir, "stuck").exists());
+    assert!(!said.contains("recorded "), "{said}");
+}
+
+#[test]
+fn a_malformed_tape_is_refused_by_its_line_before_anything_runs() {
+    let (dir, app) = case("tape", "setup = \"echo up > {tmp}/setup.marker\"\n");
+    common::add_shot(&app, "bad", "Type \"demo show\"\nSleep never\n", "");
+    let o = record(&dir, &app, "bad");
+    let said = refused(&o);
+    assert!(
+        said.contains("bad.tape: line 2: never: a duration like 500ms, 1.5s or 2"),
+        "{said}"
+    );
+    assert!(!dir.join("tmp/setup.marker").exists());
+    assert!(!cast_of(&dir, "bad").exists());
+}
+
+#[test]
+fn a_session_that_exits_non_zero_is_still_recorded() {
+    let (dir, app) = case("exits", "");
+    common::add_shot(
+        &app,
+        "quits",
+        "Type@0ms \"demo show; (exit 7); echo status=$?\"\nEnter\nSleep 500ms\nType@0ms \"exit 3\"\nEnter\nSleep 500ms\n",
+        "",
+    );
+    let o = record(&dir, &app, "quits");
+    common::expect_ok(&o, "prec record");
+    let text = std::fs::read_to_string(cast_of(&dir, "quits")).unwrap();
+    let shown: String = text
+        .lines()
+        .skip(1)
+        .map(|l| serde_json::from_str::<Value>(l).unwrap())
+        .filter(|e| e[1] == "o")
+        .map(|e| e[2].as_str().unwrap().to_string())
+        .collect();
+    assert!(shown.contains("status=7"), "{shown:?}");
+    assert!(shown.contains("truecolor"), "{shown:?}");
+    assert!(text.trim_end().ends_with(r#""m","end"]"#), "{text}");
+    let events: Vec<Value> = text
+        .lines()
+        .skip(1)
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let quit = events
+        .iter()
+        .filter(|e| e[1] == "i" && e[2] == "\r")
+        .map(|e| e[0].as_f64().unwrap())
+        .next_back()
+        .unwrap();
+    let end = events.last().unwrap()[0].as_f64().unwrap();
+    assert!(
+        end - quit >= 0.5,
+        "the cast ends {end}s, before the last Sleep after the shell quit at {quit}s"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| e[1] == "i" && e[0].as_f64().unwrap() > quit),
+        "a key was sent after the shell quit"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_step_typed_after_the_shell_quits_is_refused_on_linux() {
+    let (dir, app) = case("typed-late", "");
+    common::add_shot(
+        &app,
+        "late",
+        "Type@0ms \"exit 3\"\nEnter\nSleep 500ms\nType@0ms \"echo late\"\nEnter\n",
+        "",
+    );
+    let o = record(&dir, &app, "late");
+    let said = refused(&o);
+    assert!(said.contains("prec: writing to the terminal: "), "{said}");
+    assert!(!cast_of(&dir, "late").exists());
+}
+
+#[test]
+fn a_failing_setup_stops_the_shot_and_the_teardown_still_runs() {
+    let (dir, app) = case(
+        "setup",
+        "setup = \"exit 4\"\nteardown = \"echo down > {tmp}/teardown.marker\"\n",
+    );
+    common::add_shot(
+        &app,
+        "short",
+        "Type \"demo show\"\nEnter\nSleep 300ms\n",
+        "",
+    );
+    let o = record(&dir, &app, "short");
+    let said = refused(&o);
+    assert!(said.contains("prec: exit 4 failed"), "{said}");
+    assert!(!said.contains("recording demo short"), "{said}");
+    assert!(dir.join("tmp/teardown.marker").exists(), "{said}");
+    assert!(!cast_of(&dir, "short").exists());
+}
+
+#[test]
+fn a_failing_teardown_is_reported_and_the_cast_kept() {
+    let (dir, app) = case("teardown", "teardown = \"exit 5\"\n");
+    common::add_shot(
+        &app,
+        "short",
+        "Type \"demo show\"\nEnter\nSleep 300ms\n",
+        "",
+    );
+    let o = record(&dir, &app, "short");
+    common::expect_ok(&o, "prec record");
+    assert!(
+        stderr(&o).contains("teardown: exit 5 failed"),
+        "{}",
+        stderr(&o)
+    );
+    assert!(cast_of(&dir, "short").exists());
+}
+
+fn render(dir: &Path, cast: &Path) -> Command {
+    prec(
+        dir,
+        &[
+            "render",
+            cast.to_str().unwrap(),
+            "--size",
+            "320x180",
+            "--fps",
+            "30",
+            "--no-encode",
+            "--out",
+            "tmp/out",
+        ],
+    )
+}
+
+#[test]
+fn a_cast_that_is_empty_truncated_or_of_another_version_is_refused() {
+    let dir = common::caller("record", "casts");
+    let head = r#"{"version": 2, "width": 8, "height": 4, "x_terminal_renderer": {"product": "demo", "shot": "a", "kind": "clip"}}"#;
+    let cases = [
+        ("empty", String::new(), "empty.cast: an empty cast".to_string()),
+        (
+            "truncated",
+            format!("{head}\n[0.0, \"m\", \"show\"]\n[0.5, \"o\", \"ab"),
+            "truncated.cast: line 3: ".to_string(),
+        ),
+        (
+            "v1",
+            r#"{"version": 1, "width": 8, "height": 4}"#.to_string() + "\n",
+            "v1.cast: an asciicast v2 file".to_string(),
+        ),
+        (
+            "v3",
+            r#"{"version": 3, "term": {"cols": 8, "rows": 4}}"#.to_string() + "\n",
+            "v3.cast: an asciicast v2 file".to_string(),
+        ),
+        (
+            "garbled",
+            "{not json\n".to_string(),
+            "garbled.cast: header: ".to_string(),
+        ),
+        (
+            "bare",
+            format!("{head}\n"),
+            "bare.cast: a cast with no events".to_string(),
+        ),
+        (
+            "timeless",
+            format!("{head}\n[0.0, \"m\", \"show\"]\n[\"soon\", \"o\", \"a\"]\n"),
+            "timeless.cast: line 3: a cast event without a time".to_string(),
+        ),
+        (
+            "backwards",
+            format!("{head}\n[0.5, \"m\", \"show\"]\n[0.2, \"o\", \"a\"]\n"),
+            "backwards.cast: line 3: a time of 0.2s comes before the 0.5s above it".to_string(),
+        ),
+        (
+            "rowless",
+            r#"{"version": 2, "width": 8, "height": 0, "x_terminal_renderer": {"product": "demo", "shot": "a", "kind": "clip"}}"#.to_string()
+                + "\n[0.0, \"m\", \"show\"]\n[0.5, \"m\", \"end\"]\n",
+            "rowless.cast: header: height 0 is not a size from 1 to 65535".to_string(),
+        ),
+    ];
+    for (name, text, want) in cases {
+        let path = dir.join(format!("casts/{name}.cast"));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text).unwrap();
+        let o = render(&dir, &path).output().unwrap();
+        let said = refused(&o);
+        assert!(said.contains(&want), "{name}: {said}");
+        assert!(common::no_chromium(&dir, "demo-clip-a-replay"), "{name}");
+    }
+    assert!(!dir.join("tmp/out").exists());
+}
+
+fn fake_chromium(dir: &Path, body: &str) -> PathBuf {
+    let bin = dir.join("fake-chromium");
+    std::fs::write(&bin, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    bin
+}
+
+fn a_cast(dir: &Path) -> PathBuf {
+    let path = dir.join("cast/a.cast");
+    common::write_cast(
+        &path,
+        "demo",
+        "a",
+        "clip",
+        &[(0.1, "hello".to_string())],
+        0.5,
+    );
+    path
+}
+
+#[test]
+fn a_chromium_that_dies_at_start_fails_the_render_with_what_it_said() {
+    let dir = common::caller("record", "chromium-dies");
+    let bin = fake_chromium(&dir, "echo 'no display here' >&2\nexit 1");
+    let mut c = render(&dir, &a_cast(&dir));
+    c.env("PREC_CHROMIUM", &bin);
+    let o = c.output().unwrap();
+    let said = refused(&o);
+    assert!(
+        said.contains("did not start: chromium exited during Browser.getVersion ("),
+        "{said}"
+    );
+    assert!(said.contains("chromium said:\nno display here"), "{said}");
+}
+
+#[test]
+fn a_chromium_that_never_answers_times_out_and_is_killed() {
+    let dir = common::caller("record", "chromium-silent");
+    let pid_file = dir.join("fake.pid");
+    let bin = fake_chromium(
+        &dir,
+        &format!("echo $$ > '{}'\nexec sleep 600", pid_file.display()),
+    );
+    let mut c = render(&dir, &a_cast(&dir));
+    c.env("PREC_CHROMIUM", &bin);
+    let o = c.output().unwrap();
+    let said = refused(&o);
+    assert!(
+        said.contains("did not start: chromium did not answer Browser.getVersion within 60 s"),
+        "{said}"
+    );
+    let pid: i32 = std::fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(gone(pid), "the silent chromium {pid} outlived prec");
+}

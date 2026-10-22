@@ -212,14 +212,14 @@ struct Feeder<'a> {
 }
 
 impl Feeder<'_> {
-    fn until(&mut self, b: &mut Browser, t: f64) -> Result<bool, String> {
+    fn due(&mut self, t: f64) -> Result<Option<(Vec<u8>, String)>, String> {
         let mut chunk = vec![];
         while self.next < self.out.len() && self.out[self.next].0 <= t + 1e-9 {
             chunk.extend_from_slice(&self.out[self.next].1);
             self.next += 1;
         }
         if chunk.is_empty() {
-            return Ok(false);
+            return Ok(None);
         }
         let mut rects = "null".to_string();
         if !self.masks.is_empty() {
@@ -230,6 +230,13 @@ impl Feeder<'_> {
                 self.covered = now;
             }
         }
+        Ok(Some((chunk, rects)))
+    }
+
+    fn until(&mut self, b: &mut Browser, t: f64) -> Result<bool, String> {
+        let Some((chunk, rects)) = self.due(t)? else {
+            return Ok(false);
+        };
         b.eval(&format!("window.feed({:?}, {rects})", b64(&chunk)))?;
         Ok(true)
     }
@@ -459,5 +466,148 @@ mod tests {
             file_url(Path::new("/srv/åb?c/page.html")),
             "file:///srv/%C3%A5b%3Fc/page.html"
         );
+    }
+
+    fn ev(t: f64, kind: Kind, data: &str) -> Event {
+        Event {
+            t,
+            kind,
+            data: data.into(),
+        }
+    }
+
+    fn feeder<'a>(events: &[Event], masks: &'a crate::mask::Masks, grid: [u32; 2]) -> Feeder<'a> {
+        Feeder {
+            out: outputs(events),
+            next: 0,
+            masks,
+            screen: vt100::Parser::new(grid[1] as u16, grid[0] as u16, 0),
+            covered: vec![],
+        }
+    }
+
+    fn none() -> crate::mask::Masks {
+        crate::mask::Masks::new(&[], [8, 2]).unwrap()
+    }
+
+    #[test]
+    fn frame_n_shows_the_terminal_as_it_was_at_its_shown_time() {
+        let events = vec![
+            ev(0.0, Kind::Marker, "show"),
+            ev(0.1, Kind::Output, "a"),
+            ev(0.15, Kind::Input, "x"),
+            ev(0.5, Kind::Output, "b"),
+            ev(0.6, Kind::Marker, "hide"),
+            ev(0.8, Kind::Output, "c"),
+            ev(1.0, Kind::Marker, "show"),
+            ev(1.2, Kind::Output, "d"),
+            ev(2.0, Kind::Marker, "end"),
+        ];
+        let tl = Timeline::of(&events);
+        let fps = Fps::new(10, 1);
+        assert_eq!(frame_count(tl.shown(), fps, 0), 16);
+        let masks = none();
+        let mut f = feeder(&events, &masks, [8, 2]);
+        let mut screen = vt100::Parser::new(2, 8, 0);
+        let mut seen = vec![];
+        for n in 0..16 {
+            if let Some((chunk, rects)) = f.due(tl.at(fps.seconds(n))).unwrap() {
+                assert_eq!(rects, "null");
+                screen.process(&chunk);
+            }
+            seen.push(screen.screen().contents());
+        }
+        assert_eq!(seen[0], "");
+        assert_eq!(seen[1], "a");
+        assert_eq!(seen[4], "a");
+        assert_eq!(seen[5], "ab");
+        assert_eq!(seen[6], "abc");
+        assert_eq!(seen[7], "abc");
+        assert_eq!(seen[8], "abcd");
+        assert_eq!(seen[15], "abcd");
+        assert!(f.due(10.0).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_frame_takes_every_output_due_by_its_time_in_one_chunk() {
+        let events = vec![
+            ev(0.0, Kind::Output, "1"),
+            ev(0.2, Kind::Output, "2"),
+            ev(0.3 - 1e-12, Kind::Output, "3"),
+            ev(0.4, Kind::Output, "4"),
+        ];
+        let masks = none();
+        let mut f = feeder(&events, &masks, [8, 2]);
+        assert_eq!(f.due(0.3).unwrap().unwrap().0, b"123");
+        assert!(f.due(0.3).unwrap().is_none());
+        assert_eq!(f.due(5.0).unwrap().unwrap().0, b"4");
+    }
+
+    #[test]
+    fn a_mask_sends_its_cells_once_and_again_only_when_they_change() {
+        let masks = crate::mask::Masks::new(
+            &[crate::mask::Mask {
+                pattern: Some("secret".into()),
+                rect: None,
+            }],
+            [20, 2],
+        )
+        .unwrap();
+        let events = vec![
+            ev(0.1, Kind::Output, "a secret"),
+            ev(0.2, Kind::Output, "!"),
+            ev(0.3, Kind::Output, "\x1b[2J\x1b[H"),
+        ];
+        let mut f = feeder(&events, &masks, [20, 2]);
+        let (_, first) = f.due(0.1).unwrap().unwrap();
+        let cells: Vec<[u32; 4]> = serde_json::from_str(&first).unwrap();
+        assert_eq!(cells, vec![[2, 0, 6, 1]]);
+        assert_eq!(f.due(0.2).unwrap().unwrap().1, "null");
+        assert_eq!(f.due(0.3).unwrap().unwrap().1, "[]");
+    }
+
+    #[test]
+    fn an_xterm_theme_takes_the_scheme_and_falls_back_to_the_background() {
+        let t = xterm_theme(&json!({
+            "background": "#000000", "foreground": "#ffffff", "cursor": "#ff0000",
+            "selection": "#333333", "red": "#aa0000", "brightWhite": "#eeeeee"
+        }));
+        assert_eq!(t["cursorAccent"], "#000000");
+        assert_eq!(t["selectionBackground"], "#333333");
+        assert_eq!(t["red"], "#aa0000");
+        assert_eq!(t["brightWhite"], "#eeeeee");
+        assert!(t["green"].is_null());
+        assert_eq!(t.as_object().unwrap().len(), 21);
+        let own = xterm_theme(&json!({"background": "#000000", "cursorAccent": "#123456"}));
+        assert_eq!(own["cursorAccent"], "#123456");
+    }
+
+    #[test]
+    fn the_page_background_is_the_colour_most_corners_agree_on() {
+        let mut img = image::RgbImage::from_pixel(10, 10, image::Rgb([9, 9, 9]));
+        img.put_pixel(1, 1, image::Rgb([200, 0, 0]));
+        let mut png = vec![];
+        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        assert_eq!(corners(&png, [0, 0, 10, 10]).unwrap(), [9, 9, 9]);
+        assert_eq!(corners(&png, [0, 0, 400, 400]).unwrap(), [9, 9, 9]);
+        assert!(check_size(&png, [10, 10]).is_ok());
+        assert_eq!(
+            check_size(&png, [12, 10]).unwrap_err(),
+            "chromium drew 10x10, not 12x10"
+        );
+        assert!(corners(b"not a png", [0, 0, 1, 1]).is_err());
+        assert!(check_size(b"", [1, 1]).is_err());
+    }
+
+    #[test]
+    fn the_font_stack_falls_back_to_cjk_emoji_and_monospace() {
+        assert_eq!(
+            family_css("Mono"),
+            "\"Mono\", \"Noto Sans CJK JP\", \"Noto Color Emoji\", monospace"
+        );
+        assert_eq!(fonts_of("Mono")[0], "Mono");
+        assert_eq!(fonts_of("Mono").len(), 3);
+        assert!(assets_ok().unwrap().contains(XTERM));
     }
 }

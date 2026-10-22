@@ -69,10 +69,13 @@ pub fn duration(s: &str) -> Result<Duration, String> {
         .trim()
         .parse()
         .map_err(|_| format!("{s}: a duration like 500ms, 1.5s or 2"))?;
+    if !v.is_finite() {
+        return Err(format!("{s}: a duration like 500ms, 1.5s or 2"));
+    }
     if v < 0.0 {
         return Err(format!("{s}: a duration is never negative"));
     }
-    Ok(Duration::from_secs_f64(v * unit))
+    Duration::try_from_secs_f64(v * unit).map_err(|_| format!("{s}: a duration too long"))
 }
 
 fn unquote(rest: &str) -> Result<String, String> {
@@ -138,17 +141,43 @@ fn chord(k: &str) -> Result<Key, String> {
     };
     match (ctrl, alt) {
         (true, true) => one(last)
-            .map(Key::CtrlAlt)
-            .ok_or_else(|| format!("{k}: Ctrl+Alt takes one character")),
+            .ok_or_else(|| format!("{k}: Ctrl+Alt takes one character"))
+            .and_then(|c| ctrl_key(k, c))
+            .map(Key::CtrlAlt),
         (true, false) => one(last)
             .or(if last == "Space" { Some(' ') } else { None })
-            .map(Key::Ctrl)
-            .ok_or_else(|| format!("{k}: Ctrl takes one character")),
+            .ok_or_else(|| format!("{k}: Ctrl takes one character"))
+            .and_then(|c| ctrl_key(k, c))
+            .map(Key::Ctrl),
         (false, true) => Ok(Key::Alt(last.to_string())),
         _ => Err(format!(
             "{k}: a chord is Ctrl+, Alt+, Ctrl+Alt+ or Shift+Tab"
         )),
     }
+}
+
+const CTRL_MARKS: &str = " @2[3\\4]5^6_/7?8";
+
+fn ctrl_key(k: &str, c: char) -> Result<char, String> {
+    if c.is_ascii_alphabetic() || CTRL_MARKS.contains(c) {
+        Ok(c)
+    } else {
+        Err(format!(
+            "{k}: Ctrl takes a letter, Space, one of @ [ \\ ] ^ _ / ? or a digit from 2 to 8"
+        ))
+    }
+}
+
+const MAX_REPEAT: u32 = 9999;
+
+fn bare(t: &str, name: &str, rest: &str, speed: Option<Duration>) -> Result<(), String> {
+    if speed.is_some() {
+        return Err(format!("{t}: {name} takes no @speed"));
+    }
+    if !rest.is_empty() {
+        return Err(format!("{t}: {name} takes nothing after it"));
+    }
+    Ok(())
 }
 
 pub fn parse_line(line: &str) -> Result<Option<Step>, String> {
@@ -170,10 +199,11 @@ pub fn parse_line(line: &str) -> Result<Option<Step>, String> {
             text: unquote(rest)?,
             speed,
         })),
+        "Sleep" if speed.is_some() => Err(format!("{t}: Sleep takes no @speed")),
         "Sleep" => Ok(Some(Step::Sleep(duration(rest)?))),
-        "Hide" => Ok(Some(Step::Hide)),
-        "Show" => Ok(Some(Step::Show)),
-        "Screenshot" => Ok(Some(Step::Screenshot)),
+        "Hide" => bare(t, name, rest, speed).map(|_| Some(Step::Hide)),
+        "Show" => bare(t, name, rest, speed).map(|_| Some(Step::Show)),
+        "Screenshot" => bare(t, name, rest, speed).map(|_| Some(Step::Screenshot)),
         "Idle" => Ok(Some(Step::Idle {
             quiet: if rest.is_empty() {
                 Duration::from_secs(2)
@@ -182,6 +212,7 @@ pub fn parse_line(line: &str) -> Result<Option<Step>, String> {
             },
             timeout: speed.unwrap_or(Duration::from_secs(300)),
         })),
+        "Squeeze" if speed.is_some() => Err(format!("{t}: Squeeze takes no @speed")),
         "Squeeze" if rest == "off" => Ok(Some(Step::Squeeze {
             gap: None,
             ignore: None,
@@ -204,7 +235,11 @@ pub fn parse_line(line: &str) -> Result<Option<Step>, String> {
             "{name}: the clipboard has no replay; type the text"
         )),
         n if n == "Wait" || n.starts_with("Wait+") => {
-            let screen = n.ends_with("+Screen");
+            let screen = match n {
+                "Wait" | "Wait+Line" => false,
+                "Wait+Screen" => true,
+                _ => return Err(format!("{t}: a Wait is Wait, Wait+Line or Wait+Screen")),
+            };
             Ok(Some(Step::Wait {
                 pattern: slashed(t, rest)?,
                 timeout: speed.unwrap_or(Duration::from_secs(15)),
@@ -223,6 +258,9 @@ pub fn parse_line(line: &str) -> Result<Option<Step>, String> {
                 rest.parse::<u32>()
                     .map_err(|_| format!("{t}: the repeat count is a number"))?
             };
+            if !(1..=MAX_REPEAT).contains(&count) {
+                return Err(format!("{t}: the repeat count is 1 to {MAX_REPEAT}"));
+            }
             Ok(Some(Step::Key { key, count, speed }))
         }
     }
@@ -378,5 +416,415 @@ mod tests {
         assert!(parse("Set Width 10\n").is_err());
         assert!(parse("Frobnicate\n").is_err());
         assert_eq!(duration("1.5s").unwrap(), Duration::from_millis(1500));
+    }
+
+    fn one(line: &str) -> Step {
+        parse_line(line).unwrap().unwrap()
+    }
+
+    fn refused(text: &str) -> String {
+        parse(text).unwrap_err()
+    }
+
+    #[test]
+    fn every_named_key_parses_with_its_count_and_speed() {
+        let keys = [
+            ("Enter", Key::Enter),
+            ("Backspace", Key::Backspace),
+            ("Delete", Key::Delete),
+            ("Insert", Key::Insert),
+            ("Tab", Key::Tab),
+            ("Escape", Key::Escape),
+            ("Space", Key::Space),
+            ("Up", Key::Up),
+            ("Down", Key::Down),
+            ("Left", Key::Left),
+            ("Right", Key::Right),
+            ("Home", Key::Home),
+            ("End", Key::End),
+            ("PageUp", Key::PageUp),
+            ("PageDown", Key::PageDown),
+        ];
+        for (word, key) in keys {
+            assert_eq!(
+                one(word),
+                Step::Key {
+                    key: key.clone(),
+                    count: 1,
+                    speed: None
+                },
+                "{word}"
+            );
+            assert_eq!(
+                one(&format!("  {word}@10ms 4\r")),
+                Step::Key {
+                    key,
+                    count: 4,
+                    speed: Some(Duration::from_millis(10))
+                },
+                "{word}"
+            );
+        }
+    }
+
+    #[test]
+    fn chords_name_ctrl_alt_and_shift_tab() {
+        let key = |line: &str| match one(line) {
+            Step::Key { key, .. } => key,
+            s => panic!("{line}: {s:?}"),
+        };
+        assert_eq!(key("Ctrl+c"), Key::Ctrl('c'));
+        assert_eq!(key("Ctrl+Space"), Key::Ctrl(' '));
+        assert_eq!(key("Ctrl+Alt+x"), Key::CtrlAlt('x'));
+        assert_eq!(key("Alt+Up"), Key::Alt("Up".into()));
+        assert_eq!(key("Alt+x"), Key::Alt("x".into()));
+        assert_eq!(key("Shift+Tab"), Key::ShiftTab);
+        assert!(refused("Ctrl+ab\n").contains("Ctrl takes one character"));
+        assert!(refused("Ctrl+Alt+ab\n").contains("Ctrl+Alt takes one character"));
+        assert!(refused("Shift+A\n").contains("a chord is Ctrl+, Alt+, Ctrl+Alt+ or Shift+Tab"));
+        assert!(refused("Shift+Tab x\n").contains("the repeat count is a number"));
+    }
+
+    #[test]
+    fn type_takes_any_of_three_quotes_and_refuses_the_rest() {
+        assert_eq!(
+            one("Type 'it''s'"),
+            Step::Type {
+                text: "it''s".into(),
+                speed: None
+            }
+        );
+        assert_eq!(
+            one("Type@1s \"\""),
+            Step::Type {
+                text: String::new(),
+                speed: Some(Duration::from_secs(1))
+            }
+        );
+        assert!(refused("Type\n").contains("Type needs a quoted string"));
+        assert!(refused("Type plain\n").contains("quote the text"));
+        assert!(refused("Type \"open\n").contains("the closing \" is missing"));
+        assert!(refused("Type \"a\" b\n").contains("text after the closing quote"));
+    }
+
+    #[test]
+    fn wait_takes_a_regex_a_timeout_and_the_whole_screen() {
+        assert_eq!(
+            one("Wait /ready$/"),
+            Step::Wait {
+                pattern: "ready$".into(),
+                timeout: Duration::from_secs(15),
+                screen: false
+            }
+        );
+        assert_eq!(
+            one("Wait+Screen@2s /a\u{a0}b/"),
+            Step::Wait {
+                pattern: "a\u{a0}b".into(),
+                timeout: Duration::from_secs(2),
+                screen: true
+            }
+        );
+        assert_eq!(
+            one("Wait@500ms /x/"),
+            Step::Wait {
+                pattern: "x".into(),
+                timeout: Duration::from_millis(500),
+                screen: false
+            }
+        );
+        assert!(refused("Wait\n").contains("Wait: takes /regex/"));
+        assert!(refused("Wait ready\n").contains("takes /regex/"));
+        assert!(refused("Wait /ready\n").contains("takes /regex/"));
+        assert!(refused("Wait /(/\n").starts_with("line 1: Wait /(/: "));
+        assert!(refused("Wait@soon /x/\n").contains("soon: a duration like 500ms, 1.5s or 2"));
+        assert!(refused("Wait@ /x/\n").contains("a duration like"));
+    }
+
+    #[test]
+    fn sleep_idle_and_squeeze_read_their_durations() {
+        assert_eq!(one("Sleep 2"), Step::Sleep(Duration::from_secs(2)));
+        assert_eq!(one("Sleep 1m"), Step::Sleep(Duration::from_secs(60)));
+        assert_eq!(one("Sleep 250ms"), Step::Sleep(Duration::from_millis(250)));
+        assert!(refused("Sleep\n").contains("a duration like"));
+        assert!(refused("Sleep -1s\n").contains("a duration is never negative"));
+        assert!(refused("Sleep fast\n").contains("fast: a duration like"));
+        assert!(refused("Idle@x 1s\n").contains("a duration like"));
+        assert!(refused("Idle forever\n").contains("a duration like"));
+        assert_eq!(
+            one("Squeeze /^spin/"),
+            Step::Squeeze {
+                gap: Some(Duration::from_millis(500)),
+                ignore: Some("^spin".into())
+            }
+        );
+        assert_eq!(
+            one("Squeeze 1s"),
+            Step::Squeeze {
+                gap: Some(Duration::from_secs(1)),
+                ignore: None
+            }
+        );
+        assert!(refused("Squeeze soon\n").contains("a duration like"));
+        assert!(refused("Squeeze 1s /open\n").contains("takes /regex/"));
+    }
+
+    #[test]
+    fn a_refusal_names_its_line_and_why() {
+        assert_eq!(
+            refused("Enter\n\n# a note\nFrobnicate\n"),
+            "line 4: Frobnicate: an unknown step"
+        );
+        assert_eq!(
+            refused("Enter\nCopy\n"),
+            "line 2: Copy: the clipboard has no replay; type the text"
+        );
+        assert!(refused("Paste\n").starts_with("line 1: Paste: the clipboard"));
+        for word in ["Output", "Set", "Require", "Env", "Source"] {
+            assert_eq!(
+                refused(&format!("Hide\n{word} x\n")),
+                format!(
+                    "line 2: {word}: a tape holds steps only; the settings come from terminal.toml"
+                )
+            );
+        }
+        assert!(refused("Down -1\n").starts_with("line 1: Down -1: the repeat count"));
+        assert!(refused("Enter@\n").starts_with("line 1: "));
+    }
+
+    #[test]
+    fn an_empty_tape_has_no_steps_and_a_tape_may_end_hidden() {
+        assert_eq!(parse("").unwrap(), vec![]);
+        assert_eq!(parse("\n   \n# only notes\n\t\n").unwrap(), vec![]);
+        let s = parse("Show\nType \"a\"\nHide\n").unwrap();
+        assert_eq!(s.first(), Some(&Step::Show));
+        assert_eq!(s.last(), Some(&Step::Hide));
+        assert_eq!(parse("Screenshot").unwrap(), vec![Step::Screenshot]);
+    }
+
+    #[test]
+    fn every_key_sends_the_bytes_a_terminal_sends() {
+        let cases: [(Key, &[u8], &[u8]); 16] = [
+            (Key::Enter, b"\r", b"\r"),
+            (Key::Backspace, b"\x7f", b"\x7f"),
+            (Key::Delete, b"\x1b[3~", b"\x1b[3~"),
+            (Key::Insert, b"\x1b[2~", b"\x1b[2~"),
+            (Key::Tab, b"\t", b"\t"),
+            (Key::ShiftTab, b"\x1b[Z", b"\x1b[Z"),
+            (Key::Escape, b"\x1b", b"\x1b"),
+            (Key::Space, b" ", b" "),
+            (Key::Up, b"\x1b[A", b"\x1bOA"),
+            (Key::Down, b"\x1b[B", b"\x1bOB"),
+            (Key::Right, b"\x1b[C", b"\x1bOC"),
+            (Key::Left, b"\x1b[D", b"\x1bOD"),
+            (Key::Home, b"\x1b[H", b"\x1bOH"),
+            (Key::End, b"\x1b[F", b"\x1bOF"),
+            (Key::PageUp, b"\x1b[5~", b"\x1b[5~"),
+            (Key::PageDown, b"\x1b[6~", b"\x1b[6~"),
+        ];
+        for (key, normal, app) in cases {
+            assert_eq!(bytes(&key, false), normal, "{key:?}");
+            assert_eq!(bytes(&key, true), app, "{key:?}");
+        }
+        assert_eq!(bytes(&Key::Alt("x".into()), false), b"\x1bx");
+        assert_eq!(bytes(&Key::Alt("Enter".into()), false), b"\x1b\r");
+        assert_eq!(bytes(&Key::Alt("Up".into()), true), b"\x1b\x1bOA");
+        assert_eq!(bytes(&Key::CtrlAlt('c'), false), vec![0x1b, 3]);
+    }
+
+    #[test]
+    fn ctrl_maps_letters_and_the_punctuation_terminals_know() {
+        for (c, b) in [
+            ('a', 1),
+            ('C', 3),
+            ('z', 26),
+            (' ', 0),
+            ('@', 0),
+            ('2', 0),
+            ('[', 0x1b),
+            ('3', 0x1b),
+            ('\\', 0x1c),
+            ('4', 0x1c),
+            (']', 0x1d),
+            ('5', 0x1d),
+            ('^', 0x1e),
+            ('6', 0x1e),
+            ('_', 0x1f),
+            ('/', 0x1f),
+            ('7', 0x1f),
+            ('?', 0x7f),
+            ('8', 0x7f),
+        ] {
+            assert_eq!(bytes(&Key::Ctrl(c), false), vec![b], "Ctrl+{c}");
+        }
+    }
+
+    #[test]
+    fn a_duration_that_is_not_finite_or_too_long_is_refused_by_its_line() {
+        for v in ["inf", "infinity", "nan", "NaN", "-inf"] {
+            assert_eq!(
+                refused(&format!("Enter\nSleep {v}\n")),
+                format!("line 2: {v}: a duration like 500ms, 1.5s or 2"),
+                "{v}"
+            );
+        }
+        assert_eq!(refused("Sleep 1e30\n"), "line 1: 1e30: a duration too long");
+        assert_eq!(
+            refused("Sleep 1e30m\n"),
+            "line 1: 1e30m: a duration too long"
+        );
+        assert!(refused("Wait@infs /x/\n").starts_with("line 1: infs: a duration like"));
+        assert!(refused("Idle@nan 1s\n").starts_with("line 1: nan: a duration like"));
+        assert!(refused("Idle 1e300\n").starts_with("line 1: 1e300: a duration too long"));
+        assert!(refused("Squeeze nan\n").starts_with("line 1: nan: a duration like"));
+        assert!(refused("Type@1e300s \"a\"\n").starts_with("line 1: 1e300s: a duration too long"));
+        assert!(refused("Down@1e300ms\n").starts_with("line 1: 1e300ms: a duration too long"));
+        assert_eq!(duration("1e3ms").unwrap(), Duration::from_secs(1));
+        assert_eq!(duration("0").unwrap(), Duration::ZERO);
+    }
+
+    #[test]
+    fn a_wait_takes_only_the_line_or_the_screen_modifier() {
+        let wait = |line: &str| match one(line) {
+            Step::Wait { screen, .. } => screen,
+            s => panic!("{line}: {s:?}"),
+        };
+        assert!(!wait("Wait /x/"));
+        assert!(!wait("Wait+Line /x/"));
+        assert!(!wait("Wait+Line@2s /x/"));
+        assert!(wait("Wait+Screen /x/"));
+        for bad in [
+            "Wait+Scren /x/",
+            "Wait+Bogus@1s /x/",
+            "Wait+ /x/",
+            "Wait+Screen+Line /x/",
+        ] {
+            let e = refused(&format!("Hide\n{bad}\n"));
+            assert!(
+                e.starts_with("line 2: ")
+                    && e.ends_with(": a Wait is Wait, Wait+Line or Wait+Screen"),
+                "{bad}: {e}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_step_with_no_arguments_refuses_what_follows_it_and_a_speed() {
+        for line in ["Hide now", "Show x", "Screenshot out.png"] {
+            let name = line.split(' ').next().unwrap();
+            assert_eq!(
+                refused(&format!("Enter\n{line}\n")),
+                format!("line 2: {line}: {name} takes nothing after it")
+            );
+        }
+        for (line, name) in [
+            ("Hide@1s", "Hide"),
+            ("Show@1s", "Show"),
+            ("Screenshot@1s", "Screenshot"),
+            ("Sleep@1s 2", "Sleep"),
+            ("Squeeze@1s", "Squeeze"),
+            ("Squeeze@1s off", "Squeeze"),
+        ] {
+            assert_eq!(
+                refused(&format!("{line}\n")),
+                format!("line 1: {line}: {name} takes no @speed")
+            );
+        }
+        assert_eq!(one("  Hide  "), Step::Hide);
+        assert_eq!(
+            one("Squeeze off"),
+            Step::Squeeze {
+                gap: None,
+                ignore: None
+            }
+        );
+    }
+
+    #[test]
+    fn ctrl_refuses_a_character_no_terminal_sends() {
+        for k in [
+            "Ctrl+\u{e9}",
+            "Ctrl+\u{4e09}",
+            "Ctrl+1",
+            "Ctrl+9",
+            "Ctrl+0",
+            "Ctrl+!",
+            "Ctrl+Alt+1",
+            "Ctrl+Alt+\u{e9}",
+        ] {
+            let e = refused(&format!("Enter\n{k}\n"));
+            assert_eq!(
+                e,
+                format!(
+                    "line 2: {k}: Ctrl takes a letter, Space, one of @ [ \\ ] ^ _ / ? or a digit from 2 to 8"
+                ),
+                "{k}"
+            );
+        }
+        for c in "@2[3\\4]5^6_/7?8azAZ".chars() {
+            assert_eq!(
+                one(&format!("Ctrl+{c}")),
+                Step::Key {
+                    key: Key::Ctrl(c),
+                    count: 1,
+                    speed: None
+                },
+                "Ctrl+{c}"
+            );
+            assert_eq!(
+                one(&format!("Ctrl+Alt+{c}")),
+                Step::Key {
+                    key: Key::CtrlAlt(c),
+                    count: 1,
+                    speed: None
+                },
+                "Ctrl+Alt+{c}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_repeat_count_is_one_to_its_maximum() {
+        assert_eq!(
+            one("Down 9999"),
+            Step::Key {
+                key: Key::Down,
+                count: 9999,
+                speed: None
+            }
+        );
+        for count in ["0", "10000", "4000000000"] {
+            assert_eq!(
+                refused(&format!("Enter\nDown {count}\n")),
+                format!("line 2: Down {count}: the repeat count is 1 to 9999"),
+                "{count}"
+            );
+        }
+        assert!(refused("Enter 0\n").ends_with("the repeat count is 1 to 9999"));
+        assert!(refused("Ctrl+C 0\n").ends_with("the repeat count is 1 to 9999"));
+        assert!(refused("Down 99999999999\n").ends_with("the repeat count is a number"));
+    }
+
+    #[test]
+    fn a_tape_file_is_read_and_its_refusals_name_the_file() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tmp/unit-tape-load");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let good = dir.join("good.tape");
+        std::fs::write(&good, "Type \"demo\"\nEnter\n").unwrap();
+        assert_eq!(load(&good).unwrap().len(), 2);
+        let bad = dir.join("bad.tape");
+        std::fs::write(&bad, "Enter\nSleep never\n").unwrap();
+        let e = load(&bad).unwrap_err();
+        assert!(
+            e.starts_with(&format!("{}: line 2: ", bad.display())),
+            "{e}"
+        );
+        let gone = dir.join("gone.tape");
+        assert!(
+            load(&gone)
+                .unwrap_err()
+                .starts_with(&gone.display().to_string())
+        );
     }
 }
