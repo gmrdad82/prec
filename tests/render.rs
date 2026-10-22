@@ -632,6 +632,7 @@ fn a_clip_writes_its_master_poster_and_manifest_at_a_film_rate() {
     assert_eq!(s.codec, "h264");
     assert_eq!(s.profile, "High");
     assert_eq!(s.pix_fmt, "yuv420p");
+    assert_eq!(s.color, [1, 1, 1], "BT.709 primaries, transfer and matrix");
     assert_eq!((s.width, s.height), (320, 180));
     assert_eq!(s.track_size, [320, 180]);
     assert_eq!(s.r_frame_rate, "24000/1001");

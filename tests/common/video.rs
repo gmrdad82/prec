@@ -11,6 +11,7 @@ pub struct Facts {
     pub height: u32,
     pub track_size: [u32; 2],
     pub pix_fmt: String,
+    pub color: [u8; 3],
     pub r_frame_rate: String,
     pub avg_frame_rate: String,
     pub frames: u64,
@@ -105,7 +106,8 @@ pub fn decode(video: &Path) -> Video {
     }
     frames.extend(dec.flush().unwrap_or_else(|e| panic!("{}", named(&e))));
     frames.sort_by_key(|f| f.pts);
-    let full_range = dec.color().is_some_and(|c| c.full_range);
+    let tags = dec.color();
+    let full_range = tags.is_some_and(|c| c.full_range);
     let pix_fmt = match frames.first().map(|f| f.format) {
         Some(PixelFormat::Yuv420p8) if full_range => "yuvj420p",
         Some(PixelFormat::Yuv420p8) => "yuv420p",
@@ -123,6 +125,7 @@ pub fn decode(video: &Path) -> Video {
         height,
         track_size: [t.width, t.height],
         pix_fmt: pix_fmt.into(),
+        color: tags.map_or([2, 2, 2], |c| [c.primaries, c.transfer, c.matrix]),
         r_frame_rate: ratio(t.timescale as u64, modal(&durations) as u64),
         avg_frame_rate: ratio(t.samples.len() as u64 * t.timescale as u64, ticks),
         frames: frames.len() as u64,

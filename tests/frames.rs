@@ -3,7 +3,7 @@ mod common;
 use common::{paint, tree, video};
 use pito_codecs::h264::{Encoder, EncoderConfig, Preset, Profile};
 use pito_codecs::media::{Bitstream, Frame, PixelFormat, Rate, TimeBase};
-use pito_codecs::mp4::{AvcConfig, SampleEntry, TrackConfig, Writer};
+use pito_codecs::mp4::{AvcConfig, SampleEntry, TrackConfig, VpcConfig, Writer};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Output, Stdio};
@@ -98,19 +98,15 @@ fn cast_poster(path: &Path) -> Value {
     header["x_terminal_renderer"]["poster"].clone()
 }
 
-fn codes(video: &Path, size: [u32; 2]) -> Vec<[u8; 3]> {
-    video::decode(video)
-        .frames
+fn codes(v: &video::Video, size: [u32; 2]) -> Vec<[u8; 3]> {
+    v.frames
         .iter()
         .map(|f| video::codes(f, size[0] / 2, size[1] / 2))
         .collect()
 }
 
-fn centres(video: &Path, size: [u32; 2]) -> Vec<[u8; 3]> {
-    codes(video, size)
-        .into_iter()
-        .map(video::full_range)
-        .collect()
+fn centres(codes: &[[u8; 3]]) -> Vec<[u8; 3]> {
+    codes.iter().copied().map(video::full_range).collect()
 }
 
 fn bt709(px: [u8; 3]) -> [u8; 3] {
@@ -124,8 +120,8 @@ fn bt709(px: [u8; 3]) -> [u8; 3] {
     .map(|v| v.round() as u8)
 }
 
-fn on_nearest_codes(video: &Path, want: &[usize], what: &str) {
-    for (slot, (got, &k)) in codes(video, SIZE).into_iter().zip(want).enumerate() {
+fn on_nearest_codes(codes: &[[u8; 3]], want: &[usize], what: &str) {
+    for (slot, (&got, &k)) in codes.iter().zip(want).enumerate() {
         let near = bt709(colour(k));
         assert!(
             distance(got, near) <= 1,
@@ -133,11 +129,6 @@ fn on_nearest_codes(video: &Path, want: &[usize], what: &str) {
             colour(k)
         );
     }
-}
-
-fn probe(video: &Path) -> (u64, u64, usize) {
-    let f = video::probe(video);
-    (f.width as u64, f.height as u64, f.frames as usize)
 }
 
 fn distance(a: [u8; 3], b: [u8; 3]) -> u32 {
@@ -150,7 +141,9 @@ fn nearest(px: [u8; 3]) -> usize {
 
 type Job<'a> = (&'a Path, PathBuf, u32, &'a [&'a str]);
 
-fn renders(jobs: &[Job], work: &Path) -> Vec<(Value, PathBuf)> {
+type Rendered = (Value, PathBuf, Vec<[u8; 3]>);
+
+fn renders(jobs: &[Job], work: &Path) -> Vec<Rendered> {
     let size = format!("{}x{}", SIZE[0], SIZE[1]);
     let children: Vec<Child> = jobs
         .iter()
@@ -173,15 +166,16 @@ fn renders(jobs: &[Job], work: &Path) -> Vec<(Value, PathBuf)> {
     children.into_iter().map(|c| checked(&finish(c))).collect()
 }
 
-fn render(cast: &Path, out: &Path, fps: u32, extra: &[&str], work: &Path) -> (Value, PathBuf) {
+fn render(cast: &Path, out: &Path, fps: u32, extra: &[&str], work: &Path) -> Rendered {
     renders(&[(cast, out.to_path_buf(), fps, extra)], work).remove(0)
 }
 
-fn checked(path: &Path) -> (Value, PathBuf) {
+fn checked(path: &Path) -> Rendered {
     let m = manifest(path);
     let dir = path.parent().unwrap().to_path_buf();
     let master = role(&m, &dir, "master");
-    let (w, h, frames) = probe(&master);
+    let v = video::decode(&master);
+    let (w, h, frames) = (v.facts.width as u64, v.facts.height as u64, v.frames.len());
     assert_eq!(
         (w, h, frames),
         (
@@ -197,12 +191,13 @@ fn checked(path: &Path) -> (Value, PathBuf) {
         master.display()
     );
     assert_eq!([w as u32, h as u32], SIZE);
-    (m, dir)
+    let codes = codes(&v, SIZE);
+    (m, dir, codes)
 }
 
-fn shows(m: &Value, dir: &Path, want: &[usize], what: &str) {
-    on_nearest_codes(&role(m, dir, "master"), want, what);
-    let got = centres(&role(m, dir, "master"), SIZE);
+fn shows(codes: &[[u8; 3]], want: &[usize], what: &str) {
+    on_nearest_codes(codes, want, what);
+    let got = centres(codes);
     assert_eq!(got.len(), want.len(), "{what}: frame count");
     for (slot, (&px, &k)) in got.iter().zip(want).enumerate() {
         assert_eq!(
@@ -233,8 +228,8 @@ fn a_master_shows_frame_k_in_slot_k_at_every_rate() {
         .zip(&casts)
         .map(|(fps, cast)| (cast.as_path(), w.join(format!("out-{fps}")), *fps, &[][..]))
         .collect();
-    for ((m, dir), fps) in renders(&jobs, &w).iter().zip(rates) {
-        shows(m, dir, &(0..N).collect::<Vec<_>>(), &format!("{fps} fps"));
+    for ((_, _, codes), fps) in renders(&jobs, &w).iter().zip(rates) {
+        shows(codes, &(0..N).collect::<Vec<_>>(), &format!("{fps} fps"));
     }
 }
 
@@ -279,16 +274,16 @@ fn a_palindrome_and_a_crossfade_keep_their_order() {
         &w,
     )
     .into_iter();
-    let (m, dir) = done.next().unwrap();
+    let (_, _, codes) = done.next().unwrap();
     let want: Vec<usize> = (0..N).chain((1..N - 1).rev()).collect();
-    shows(&m, &dir, &want, "palindrome");
+    shows(&codes, &want, "palindrome");
 
     let k = 3;
-    let (m, dir) = done.next().unwrap();
-    let got = centres(&role(&m, &dir, "master"), SIZE);
+    let (m, dir, codes) = done.next().unwrap();
+    let got = centres(&codes);
     assert_eq!(got.len(), N - k, "crossfade: frame count");
     let clean: Vec<usize> = (k..N - k).collect();
-    on_nearest_codes(&role(&m, &dir, "master"), &clean, "crossfade");
+    on_nearest_codes(&codes, &clean, "crossfade");
     for (slot, &px) in got.iter().enumerate().take(N - 2 * k) {
         assert_eq!(nearest(px), slot + k, "crossfade: clean slot {slot} {px:?}");
         assert!(
@@ -318,8 +313,8 @@ fn a_palindrome_and_a_crossfade_keep_their_order() {
     assert_eq!(m["params"]["poster"], "first");
     assert_eq!(entry(&m, "poster")["frame"].as_u64(), Some(0));
 
-    let (m, dir) = done.next().unwrap();
-    let turned = centres(&role(&m, &dir, "master"), SIZE);
+    let (m, dir, codes) = done.next().unwrap();
+    let turned = centres(&codes);
     let p = poster_px(&m, &dir);
     assert_eq!(p, colour(N - 1), "before-closure is the turning frame");
     assert!(
@@ -331,8 +326,8 @@ fn a_palindrome_and_a_crossfade_keep_their_order() {
     assert_eq!(m["params"]["poster"], "before-closure");
     assert_eq!(entry(&m, "poster")["frame"].as_u64(), Some((N - 1) as u64));
 
-    let (m, dir) = done.next().unwrap();
-    let blended = centres(&role(&m, &dir, "master"), SIZE);
+    let (m, dir, codes) = done.next().unwrap();
+    let blended = centres(&codes);
     let last_clean = N - 2 * k - 1;
     let p = poster_px(&m, &dir);
     assert_eq!(
@@ -358,13 +353,13 @@ fn a_cast_rendered_through_a_link_to_its_own_folder_keeps_its_bytes() {
     let cast = w.join("cast/link.cast");
     write_cast(&cast, "link", "clip", 30);
     let out = w.join("out");
-    let (_, dir) = render(&cast, &out, 30, &[], &w);
+    let (_, dir, _) = render(&cast, &out, 30, &[], &w);
     let own = dir.join("frames-clip-link-320x180-30fps.cast");
     let before = std::fs::read(&own).unwrap();
     assert!(!before.is_empty());
     let link = w.join("linked");
     std::os::unix::fs::symlink(&dir, &link).unwrap();
-    let (m, _) = render(
+    let (m, _, _) = render(
         &link.join("frames-clip-link-320x180-30fps.cast"),
         &out,
         30,
@@ -526,7 +521,7 @@ fn a_poster_is_the_named_frame_and_the_flag_wins() {
         &w,
     )
     .into_iter();
-    let (m, dir) = done.next().unwrap();
+    let (m, dir, _) = done.next().unwrap();
     assert_eq!(
         poster_px(&m, &dir),
         colour(0),
@@ -535,12 +530,12 @@ fn a_poster_is_the_named_frame_and_the_flag_wins() {
     assert_eq!(m["params"]["poster"], "first");
     assert_eq!(entry(&m, "poster")["frame"].as_u64(), Some(0));
 
-    let (m, dir) = done.next().unwrap();
+    let (m, dir, _) = done.next().unwrap();
     assert_eq!(poster_px(&m, &dir), colour(15), "0.5s is frame 15");
     assert_eq!(m["params"]["poster"].as_f64(), Some(0.5));
     assert_eq!(entry(&m, "poster")["frame"].as_u64(), Some(15));
 
-    let (m, dir) = done.next().unwrap();
+    let (m, dir, _) = done.next().unwrap();
     assert_eq!(
         poster_px(&m, &dir),
         colour(N - 1),
@@ -549,7 +544,7 @@ fn a_poster_is_the_named_frame_and_the_flag_wins() {
     assert_eq!(m["params"]["poster"].as_f64(), Some(100.0));
     assert_eq!(entry(&m, "poster")["frame"].as_u64(), Some((N - 1) as u64));
 
-    let (m, dir) = done.next().unwrap();
+    let (m, dir, _) = done.next().unwrap();
     assert_eq!(
         poster_px(&m, &dir),
         colour(N - 1),
@@ -558,7 +553,7 @@ fn a_poster_is_the_named_frame_and_the_flag_wins() {
     assert_eq!(m["params"]["poster"], "before-closure");
     assert_eq!(entry(&m, "poster")["frame"].as_u64(), Some((N - 1) as u64));
 
-    let (m, dir) = done.next().unwrap();
+    let (m, dir, _) = done.next().unwrap();
     assert_eq!(
         poster_px(&m, &dir),
         colour(15),
@@ -809,7 +804,8 @@ fn rates_reduce_and_reordering_counts_frames_shown_out_of_decode_order() {
     assert_eq!(video::modal(&[1001, 1001, 1002, 1001]), 1001);
     assert_eq!(video::modal(&[]), 0);
     assert_eq!(video::reorder_depth(&[0, 1, 2, 3]), 0);
-    assert_eq!(video::reorder_depth(&[0, 3, 1, 2, 6, 4, 5]), 2);
+    assert_eq!(video::reorder_depth(&[0, 3, 1, 2, 6, 4, 5]), 1);
+    assert_eq!(video::reorder_depth(&[0, 4, 2, 1, 3, 8, 6, 5, 7]), 2);
     assert_eq!(video::reorder_depth(&[0, 2, 1]), 1);
     assert_eq!(video::reorder_depth(&[]), 0);
     assert_eq!(video::profile_name(100, 0), "High");
@@ -837,6 +833,7 @@ fn the_oracle_reads_back_what_pito_codecs_wrote() {
     assert_eq!(f.codec, "h264");
     assert_eq!(f.profile, "High");
     assert_eq!(f.pix_fmt, "yuv420p");
+    assert_eq!(f.color, [1, 1, 1]);
     assert_eq!((f.width, f.height), (64, 48));
     assert_eq!(f.track_size, [64, 48]);
     assert_eq!(f.r_frame_rate, "24000/1001");
@@ -865,5 +862,36 @@ fn the_oracle_names_a_file_that_is_not_an_mp4() {
     let w = work("oracle-garbage");
     let path = w.join("not-a-video.mp4");
     std::fs::write(&path, b"plain text, not a box in sight").unwrap();
+    video::decode(&path);
+}
+
+fn one_sample(path: &Path, entry: SampleEntry, timescale: u32) {
+    let mut mux = Writer::create(path).unwrap();
+    let track = mux.add_track(TrackConfig::new(entry, timescale)).unwrap();
+    mux.push_sample(track, &[0u8; 16], 0, 0, 1024, true)
+        .unwrap();
+    mux.finish_faststart().unwrap();
+}
+
+#[test]
+#[should_panic(expected = "no video track")]
+fn the_oracle_refuses_an_mp4_with_no_video_track() {
+    let w = work("oracle-audio");
+    let path = w.join("audio-only.mp4");
+    one_sample(
+        &path,
+        SampleEntry::aac(vec![0x12, 0x10], 2, 44100, 128_000),
+        44100,
+    );
+    video::decode(&path);
+}
+
+#[test]
+#[should_panic(expected = "the video track is not H.264")]
+fn the_oracle_refuses_a_video_track_of_another_codec() {
+    let w = work("oracle-vp9");
+    let path = w.join("vp9.mp4");
+    let vpc = VpcConfig::new((0, 8, 1), (2, false), (64, 48), (24000, 1001));
+    one_sample(&path, SampleEntry::vp9(vpc, 64, 48), 24000);
     video::decode(&path);
 }
