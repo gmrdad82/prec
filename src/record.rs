@@ -853,4 +853,249 @@ mod tests {
         assert!(!s.matches(&wait, true));
         assert!(s.matches(&regex::Regex::new("^gone$").unwrap(), false));
     }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tmp")
+            .join(format!("unit-record-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn read_text(name: &str, text: &str) -> (std::path::PathBuf, Result<Cast, String>) {
+        let path = scratch(name).join("c.cast");
+        std::fs::write(&path, text).unwrap();
+        let got = read(&path);
+        (path, got)
+    }
+
+    #[test]
+    fn a_written_cast_is_asciicast_v2_with_rounded_times_and_every_kind() {
+        let path = scratch("shape").join("demo-clip-a.cast");
+        let cast = Cast {
+            cols: 60,
+            rows: 16,
+            meta: json!({"product": "demo", "shot": "a", "kind": "clip"}),
+            events: vec![
+                m(0.0, "show"),
+                Event {
+                    t: 0.123_456_789,
+                    kind: Kind::Input,
+                    data: "d".into(),
+                },
+                o(0.25, "\u{1b}[1mhi\r\n三"),
+                m(1.0, "end"),
+            ],
+        };
+        write(&path, &cast).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.ends_with('\n'));
+        let lines: Vec<Value> = text
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        let mut keys: Vec<&String> = lines[0].as_object().unwrap().keys().collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            ["env", "height", "version", "width", "x_terminal_renderer"]
+        );
+        assert_eq!(lines[0]["version"], 2);
+        assert_eq!(lines[0]["width"], 60);
+        assert_eq!(lines[0]["height"], 16);
+        assert_eq!(lines[0]["env"]["TERM"], "xterm-256color");
+        assert_eq!(lines[0]["x_terminal_renderer"]["product"], "demo");
+        assert_eq!(lines[1], json!([0.0, "m", "show"]));
+        assert_eq!(lines[2], json!([0.123457, "i", "d"]));
+        assert_eq!(lines[3], json!([0.25, "o", "\u{1b}[1mhi\r\n三"]));
+        assert_eq!(lines[4], json!([1.0, "m", "end"]));
+        let back = read(&path).unwrap();
+        assert_eq!((back.cols, back.rows), (60, 16));
+        assert_eq!(back.meta["shot"], "a");
+        let kinds: Vec<Kind> = back.events.iter().map(|e| e.kind.clone()).collect();
+        assert_eq!(
+            kinds,
+            [Kind::Marker, Kind::Input, Kind::Output, Kind::Marker]
+        );
+        assert_eq!(back.events[2].data, "\u{1b}[1mhi\r\n三");
+        assert!((back.events[1].t - 0.123457).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_cast_without_a_v2_header_is_refused() {
+        let (_, got) = read_text("empty", "");
+        assert_eq!(got.unwrap_err(), "an empty cast");
+        let (p, got) = read_text("garbled", "not json\n[0.1, \"o\", \"a\"]\n");
+        assert!(
+            got.unwrap_err()
+                .starts_with(&format!("{}: header: ", p.display()))
+        );
+        for version in ["1", "3", "\"2\"", "null"] {
+            let (p, got) = read_text(
+                "version",
+                &format!("{{\"version\": {version}, \"width\": 8, \"height\": 4}}\n"),
+            );
+            assert_eq!(
+                got.unwrap_err(),
+                format!("{}: an asciicast v2 file", p.display()),
+                "{version}"
+            );
+        }
+        let (p, got) = read_text(
+            "noversion",
+            "{\"width\": 8, \"height\": 4}\n[0.1, \"o\", \"a\"]\n",
+        );
+        assert_eq!(
+            got.unwrap_err(),
+            format!("{}: an asciicast v2 file", p.display())
+        );
+    }
+
+    #[test]
+    fn a_truncated_or_timeless_event_is_refused_by_its_line() {
+        let head = "{\"version\": 2, \"width\": 8, \"height\": 4}\n";
+        let (p, got) = read_text(
+            "truncated",
+            &format!("{head}[0.1, \"o\", \"a\"]\n[0.2, \"o\", \"b"),
+        );
+        assert!(
+            got.unwrap_err()
+                .starts_with(&format!("{}: line 3: ", p.display()))
+        );
+        let (_, got) = read_text("timeless", &format!("{head}[\"soon\", \"o\", \"a\"]\n"));
+        assert_eq!(got.unwrap_err(), "a cast event without a time");
+        let (_, got) = read_text("notarray", &format!("{head}{{}}\n"));
+        assert_eq!(got.unwrap_err(), "a cast event without a time");
+    }
+
+    #[test]
+    fn a_cast_reader_skips_blank_lines_and_event_codes_it_does_not_replay() {
+        let (_, got) = read_text(
+            "lenient",
+            "{\"version\": 2}\n\n[0.1, \"r\", \"80x24\"]\n  \n[0.2, \"o\", \"a\"]\n[0.3, \"m\"]\n",
+        );
+        let cast = got.unwrap();
+        assert_eq!((cast.cols, cast.rows), (80, 24));
+        assert!(cast.meta.is_null());
+        assert_eq!(cast.events.len(), 2);
+        assert_eq!(cast.events[0].kind, Kind::Output);
+        assert_eq!(cast.events[1].data, "");
+    }
+
+    #[test]
+    fn a_cast_with_no_events_reads_back_and_shows_nothing() {
+        let (_, got) = read_text("bare", "{\"version\": 2, \"width\": 8, \"height\": 4}\n");
+        let cast = got.unwrap();
+        assert!(cast.events.is_empty());
+        let tl = Timeline::of(&cast.events);
+        assert!(tl.segments.is_empty());
+        assert_eq!(tl.shown(), 0.0);
+        assert_eq!(tl.at(1.0), 0.0);
+    }
+
+    #[test]
+    fn a_tape_that_ends_hidden_shows_nothing_after_its_last_hide() {
+        let tl = Timeline::of(&[
+            m(0.0, "show"),
+            m(0.0, "show"),
+            m(2.0, "hide"),
+            m(2.5, "screenshot"),
+            m(4.0, "end"),
+        ]);
+        assert_eq!(tl.segments, vec![(0.0, 2.0)]);
+        assert_eq!(tl.end, 4.0);
+        assert_eq!(tl.shots, vec![2.5]);
+        assert!((tl.at(1.0) - 1.0).abs() < 1e-9);
+        assert_eq!(tl.at(3.0), 2.0);
+    }
+
+    #[test]
+    fn a_squeeze_cut_splits_the_shown_time_and_maps_times_across_it() {
+        let tl = Timeline::of(&[
+            m(0.0, "show"),
+            m(1.0, "cut"),
+            m(3.0, "resume"),
+            m(4.0, "cut"),
+            m(5.0, "end"),
+        ]);
+        assert_eq!(tl.segments, vec![(0.0, 1.0), (3.0, 5.0)]);
+        assert!((tl.shown() - 3.0).abs() < 1e-9);
+        assert!((tl.at(0.5) - 0.5).abs() < 1e-9);
+        assert!((tl.at(1.0) - 3.0).abs() < 1e-9);
+        assert!((tl.at(2.5) - 4.5).abs() < 1e-9);
+        let whole = Timeline::of(&[
+            m(0.0, "show"),
+            m(0.0, "cut"),
+            m(9.0, "resume"),
+            m(2.0, "end"),
+        ]);
+        assert!(whole.segments.is_empty());
+        assert_eq!(whole.at(0.0), 2.0);
+    }
+
+    #[test]
+    fn a_squeeze_needs_a_squeeze_marker_and_cuts_nothing_once_off() {
+        let plain = vec![m(0.0, "show"), o(0.1, "a"), o(9.0, "b")];
+        let mut ev = plain.clone();
+        squeeze(&mut ev, [10, 2], 10.0);
+        assert_eq!(ev.len(), plain.len());
+        let mut off = vec![
+            m(0.0, "show"),
+            m(0.0, "squeeze 0.5"),
+            m(0.1, "squeeze off"),
+            o(0.2, "a"),
+            o(9.0, "b"),
+        ];
+        squeeze(&mut off, [10, 2], 10.0);
+        assert!(!off.iter().any(|e| e.data == "cut" || e.data == "resume"));
+        let mut quiet = vec![
+            m(0.0, "show"),
+            m(0.0, "squeeze 1"),
+            o(0.5, "a"),
+            o(6.0, "b"),
+        ];
+        squeeze(&mut quiet, [10, 2], 6.2);
+        let cuts: Vec<(String, i64)> = quiet
+            .iter()
+            .filter(|e| e.data == "cut" || e.data == "resume")
+            .map(|e| (e.data.clone(), (e.t * 1e3).round() as i64))
+            .collect();
+        assert_eq!(
+            cuts,
+            vec![("cut".to_string(), 1000), ("resume".to_string(), 5500)]
+        );
+    }
+
+    #[test]
+    fn a_wait_on_the_last_line_sees_a_no_break_space_and_skips_blank_lines() {
+        let mut s = Screen::new([20, 5]);
+        s.feed("first\r\nready\u{a0}now\r\n\r\n");
+        assert!(s.matches(&regex::Regex::new("^ready now$").unwrap(), false));
+        assert!(!s.matches(&regex::Regex::new("first").unwrap(), false));
+        assert!(s.matches(&regex::Regex::new("first").unwrap(), true));
+        assert_eq!(s.shown(), "  1 | first\n  2 | ready now");
+        let blank = Screen::new([20, 5]);
+        assert!(!blank.matches(&regex::Regex::new("").unwrap(), false));
+        assert_eq!(blank.shown(), "");
+    }
+
+    #[test]
+    fn the_setup_line_quotes_any_path_for_bash() {
+        assert_eq!(shell_quote("plain"), "'plain'");
+        assert_eq!(shell_quote("it's here"), "'it'\\''s here'");
+        assert_eq!(round6(1.000_000_4), 1.0);
+        assert_eq!(round6(0.000_000_6), 0.000_001);
+    }
+
+    #[test]
+    fn a_utf8_decoder_holds_a_tail_and_replaces_what_is_broken() {
+        let mut d = Utf8 { pending: vec![] };
+        let wide = "三".as_bytes();
+        assert_eq!(d.push(&[b'a', wide[0], wide[1]]), "a");
+        assert_eq!(d.push(&[wide[2], b'b']), "三b");
+        assert_eq!(d.push(&[0xe4, b'x']), "\u{fffd}x");
+        assert_eq!(d.push(&[]), "");
+        assert!(d.pending.is_empty());
+    }
 }
