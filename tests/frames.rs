@@ -1,9 +1,12 @@
 mod common;
 
-use common::{paint, tree};
+use common::{paint, tree, video};
+use pito_codecs::h264::{Encoder, EncoderConfig, Preset, Profile};
+use pito_codecs::media::{Bitstream, Frame, PixelFormat, Rate, TimeBase};
+use pito_codecs::mp4::{AvcConfig, SampleEntry, TrackConfig, Writer};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Child, Output, Stdio};
 
 const N: usize = 24;
 const SIZE: [u32; 2] = [320, 180];
@@ -95,52 +98,19 @@ fn cast_poster(path: &Path) -> Value {
     header["x_terminal_renderer"]["poster"].clone()
 }
 
-fn centres(video: &Path, size: [u32; 2]) -> Vec<[u8; 3]> {
-    let out = Command::new("ffmpeg")
-        .args(["-v", "error", "-i"])
-        .arg(video)
-        .args([
-            "-vf",
-            &format!(
-                "crop=2:2:{}:{},scale=in_color_matrix=bt709:in_range=tv:out_range=pc,format=rgb24",
-                size[0] / 2,
-                size[1] / 2
-            ),
-            "-f",
-            "rawvideo",
-            "-",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    out.stdout.chunks(12).map(|c| [c[0], c[1], c[2]]).collect()
+fn codes(video: &Path, size: [u32; 2]) -> Vec<[u8; 3]> {
+    video::decode(video)
+        .frames
+        .iter()
+        .map(|f| video::codes(f, size[0] / 2, size[1] / 2))
+        .collect()
 }
 
-fn codes(video: &Path, size: [u32; 2]) -> Vec<[u8; 3]> {
-    let out = Command::new("ffmpeg")
-        .args(["-v", "error", "-i"])
-        .arg(video)
-        .args([
-            "-vf",
-            &format!("crop=2:2:{}:{}", size[0] / 2, size[1] / 2),
-            "-pix_fmt",
-            "yuv420p",
-            "-f",
-            "rawvideo",
-            "-",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    out.stdout.chunks(6).map(|c| [c[0], c[4], c[5]]).collect()
+fn centres(video: &Path, size: [u32; 2]) -> Vec<[u8; 3]> {
+    codes(video, size)
+        .into_iter()
+        .map(video::full_range)
+        .collect()
 }
 
 fn bt709(px: [u8; 3]) -> [u8; 3] {
@@ -166,24 +136,8 @@ fn on_nearest_codes(video: &Path, want: &[usize], what: &str) {
 }
 
 fn probe(video: &Path) -> (u64, u64, usize) {
-    let out = Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-count_frames",
-            "-show_entries",
-            "stream=width,height,nb_read_frames",
-            "-of",
-            "csv=p=0",
-        ])
-        .arg(video)
-        .output()
-        .unwrap();
-    let text = String::from_utf8_lossy(&out.stdout);
-    let v: Vec<u64> = text.trim().split(',').map(|f| f.parse().unwrap()).collect();
-    (v[0], v[1], v[2] as usize)
+    let f = video::probe(video);
+    (f.width as u64, f.height as u64, f.frames as usize)
 }
 
 fn distance(a: [u8; 3], b: [u8; 3]) -> u32 {
@@ -239,7 +193,7 @@ fn checked(path: &Path) -> (Value, PathBuf) {
                 .unwrap(),
             m["frames"]["master"].as_u64().unwrap() as usize
         ),
-        "{}: ffprobe and the manifest disagree",
+        "{}: the decoded master and the manifest disagree",
         master.display()
     );
     assert_eq!([w as u32, h as u32], SIZE);
@@ -759,4 +713,157 @@ fn a_poster_on_a_still_and_an_unknown_poster_are_refused() {
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("--poster is for clip and render"), "{err}");
+}
+
+fn flat(codes: [u8; 3], size: [u32; 2], pts: i64) -> Frame {
+    let mut f = Frame::new(
+        PixelFormat::Yuv420p8,
+        size[0],
+        size[1],
+        pts,
+        TimeBase::new(1001, 24000),
+    );
+    for (plane, code) in f.planes.iter_mut().zip(codes) {
+        plane.data.fill(code);
+    }
+    f
+}
+
+fn encoded(path: &Path, frames: &[Frame], size: [u32; 2]) {
+    let mut enc = Encoder::new(EncoderConfig {
+        width: size[0],
+        height: size[1],
+        fps: (24000, 1001),
+        profile: Profile::High,
+        preset: Preset::Quality,
+        rate: Rate::Crf(14),
+        gop: 48,
+        b_frames: 0,
+        threads: 1,
+        bitstream: Bitstream::LengthPrefixed,
+    })
+    .unwrap();
+    let avc = AvcConfig::parse(&enc.avcc()).unwrap();
+    let mut mux = Writer::create(path).unwrap();
+    let track = mux
+        .add_track(TrackConfig::new(
+            SampleEntry::h264(avc, size[0] as u16, size[1] as u16),
+            24000,
+        ))
+        .unwrap();
+    let mut packets = vec![];
+    for f in frames {
+        packets.extend(enc.encode(f).unwrap());
+    }
+    packets.extend(enc.flush().unwrap());
+    for p in packets {
+        mux.push_sample(track, &p.data, p.pts * 1001, p.dts * 1001, 1001, p.keyframe)
+            .unwrap();
+    }
+    mux.finish_faststart().unwrap();
+}
+
+#[test]
+fn limited_range_codes_convert_to_full_range_rgb_by_bt709() {
+    assert_eq!(video::full_range([16, 128, 128]), [0, 0, 0]);
+    assert_eq!(video::full_range([235, 128, 128]), [255, 255, 255]);
+    assert_eq!(video::full_range([128, 128, 128]), [130, 130, 130]);
+    assert_eq!(video::full_range([0, 128, 128]), [0, 0, 0]);
+    assert_eq!(video::full_range([255, 128, 128]), [255, 255, 255]);
+    assert_eq!(video::full_range([63, 102, 240]), [255, 1, 0]);
+    assert_eq!(video::full_range([173, 42, 26]), [0, 255, 1]);
+    assert_eq!(video::full_range([32, 240, 118]), [1, 0, 255]);
+    for k in 0..N {
+        let back = video::full_range(bt709(colour(k)));
+        assert!(
+            distance(back, colour(k)) <= 1,
+            "colour {k} {:?} comes back as {back:?}",
+            colour(k)
+        );
+        assert_eq!(nearest(back), k);
+    }
+}
+
+#[test]
+fn codes_read_the_luma_at_the_pixel_and_the_chroma_of_its_2x2_block() {
+    let mut f = flat([16, 128, 128], [8, 4], 0);
+    f.planes[0].data[2 * 8 + 5] = 200;
+    f.planes[1].data[4 + 2] = 90;
+    f.planes[2].data[4 + 2] = 240;
+    assert_eq!(video::codes(&f, 5, 2), [200, 90, 240]);
+    assert_eq!(video::codes(&f, 4, 3), [16, 90, 240]);
+    assert_eq!(video::codes(&f, 3, 2), [16, 128, 128]);
+    let rgb = video::rgb(&f);
+    assert_eq!(rgb.len(), 8 * 4 * 3);
+    let at = (2 * 8 + 5) * 3;
+    assert_eq!(rgb[at..at + 3], video::full_range([200, 90, 240]));
+    assert_eq!(rgb[0..3], [0, 0, 0]);
+}
+
+#[test]
+fn rates_reduce_and_reordering_counts_frames_shown_out_of_decode_order() {
+    assert_eq!(video::ratio(24000, 1001), "24000/1001");
+    assert_eq!(video::ratio(30000, 1000), "30/1");
+    assert_eq!(video::ratio(24 * 48000, 48 * 1001), "24000/1001");
+    assert_eq!(video::ratio(1, 0), "0/0");
+    assert_eq!(video::modal(&[1001, 1001, 1002, 1001]), 1001);
+    assert_eq!(video::modal(&[]), 0);
+    assert_eq!(video::reorder_depth(&[0, 1, 2, 3]), 0);
+    assert_eq!(video::reorder_depth(&[0, 3, 1, 2, 6, 4, 5]), 2);
+    assert_eq!(video::reorder_depth(&[0, 2, 1]), 1);
+    assert_eq!(video::reorder_depth(&[]), 0);
+    assert_eq!(video::profile_name(100, 0), "High");
+    assert_eq!(video::profile_name(77, 0), "Main");
+    assert_eq!(video::profile_name(66, 0x40), "Constrained Baseline");
+    assert_eq!(video::profile_name(66, 0), "Baseline");
+    assert_eq!(video::profile_name(7, 0), "7");
+}
+
+#[test]
+fn the_oracle_reads_back_what_pito_codecs_wrote() {
+    let w = work("oracle");
+    let path = w.join("flat.mp4");
+    let size = [64, 48];
+    let shades: Vec<[u8; 3]> = (0..N).map(|k| bt709(colour(k))).collect();
+    let frames: Vec<Frame> = shades
+        .iter()
+        .enumerate()
+        .map(|(n, &c)| flat(c, size, n as i64))
+        .collect();
+    encoded(&path, &frames, size);
+
+    let v = video::decode(&path);
+    let f = &v.facts;
+    assert_eq!(f.codec, "h264");
+    assert_eq!(f.profile, "High");
+    assert_eq!(f.pix_fmt, "yuv420p");
+    assert_eq!((f.width, f.height), (64, 48));
+    assert_eq!(f.track_size, [64, 48]);
+    assert_eq!(f.r_frame_rate, "24000/1001");
+    assert_eq!(f.avg_frame_rate, "24000/1001");
+    assert_eq!((f.frames, f.samples), (N as u64, N as u64));
+    assert!(
+        (f.duration - N as f64 * 1001.0 / 24000.0).abs() < 1e-3,
+        "{}",
+        f.duration
+    );
+    assert_eq!((f.reordered, f.held), (0, 0));
+    assert_eq!(video::probe(&path), v.facts);
+
+    assert_eq!(v.frames.len(), N);
+    for (n, (frame, &want)) in v.frames.iter().zip(&shades).enumerate() {
+        let got = video::codes(frame, size[0] / 2, size[1] / 2);
+        assert!(distance(got, want) <= 1, "frame {n}: {got:?} not {want:?}");
+        assert_eq!(nearest(video::rgb_at(frame, 0, 0)), n, "frame {n}");
+        assert_eq!(video::rgb(frame).len(), (size[0] * size[1] * 3) as usize);
+    }
+}
+
+#[test]
+#[should_panic(expected = "not-a-video.mp4")]
+fn the_oracle_names_a_file_that_is_not_an_mp4() {
+    let w = work("oracle-garbage");
+    let path = w.join("not-a-video.mp4");
+    std::fs::write(&path, b"plain text, not a box in sight").unwrap();
+    video::decode(&path);
 }

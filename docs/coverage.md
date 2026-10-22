@@ -11,7 +11,7 @@ CARGO_LLVM_COV_TARGET_DIR=target/cov-unit cargo llvm-cov nextest --locked --work
 CARGO_LLVM_COV_TARGET_DIR=target/cov-unit cargo llvm-cov report --summary-only
 ```
 
-The whole suite, the integration tests under `tests/` included (they drive the `prec` binary through headless Chromium and check masters with ffmpeg, and the binary they run is instrumented too):
+The whole suite, the integration tests under `tests/` included (they drive the `prec` binary through headless Chromium and check masters by decoding them in-process with pito-codecs, with no ffmpeg, and the binary they run is instrumented too):
 
 ```
 CARGO_LLVM_COV_TARGET_DIR=target/cov-full cargo llvm-cov nextest --locked --workspace --no-tests=pass --no-fail-fast --no-report
