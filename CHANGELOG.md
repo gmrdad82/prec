@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.5.0 — 2026-10-22
+
+### Added
+
+- A tape can resize the terminal mid-shot: `Resize <cols>x<rows>` resizes at once, and `Resize <cols>x<rows> 3s` eases there through every column and row (ease-in-out), so the app redraws at each width. The cast records each resize as an asciicast `r` event, and `prec render` replays it.
+- In a clip that resizes, the text keeps one size, fitted to the largest grid, on a fixed canvas, and the window frame grows and shrinks with the grid from a fixed top-left corner. The manifest adds `max_grid` when a cast resizes.
+- `bin/gate --fast` runs the fast checks (ShellCheck, rustfmt, clippy, the unit tests) and ends with `fast gate: green`.
+
+### Changed
+
+- After a resize, masks, `Wait`, `Idle`, `Squeeze` and the private-data scan all read the screen the render shows: a narrowed line is cut off, not re-wrapped, and a row shrink scrolls the top off as the terminal does.
+- A `Squeeze` never cuts an eased resize short.
+
+### Fixed
+
+- A long repo name no longer makes a machine cache folder name too long for the filesystem, and a newline in a build command or bin folder can no longer give two builds the same cache key. Those builds rebuild once; `prec cache prune` clears the old entries.
+
 ## v1.4.8 — 2026-10-22
 
 ### Changed
