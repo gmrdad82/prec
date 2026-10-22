@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
@@ -48,22 +48,17 @@ pub fn chromium() -> String {
     {
         return p.display().to_string();
     }
-    for c in [
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    [
         "chromium",
         "chromium-browser",
         "google-chrome-stable",
         "google-chrome",
-    ] {
-        let found =
-            crate::paths::output(Command::new("bash").args(["-c", &format!("command -v {c}")]))
-                .ok()
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                .filter(|s| !s.is_empty());
-        if let Some(p) = found {
-            return p;
-        }
-    }
-    "chromium".into()
+    ]
+    .into_iter()
+    .find_map(|c| crate::doctor::found_in(&path, c))
+    .map(|p| p.display().to_string())
+    .unwrap_or_else(|| "chromium".into())
 }
 
 fn data_home() -> Option<PathBuf> {
@@ -404,6 +399,7 @@ impl Drop for Browser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     fn peer(script: &str) -> Browser {
         peer_in("cdp-unit", script)

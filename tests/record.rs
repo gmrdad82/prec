@@ -157,6 +157,36 @@ fn a_wait_that_never_matches_fails_at_its_timeout_and_leaves_no_shell_or_app() {
 }
 
 #[test]
+fn a_tape_that_ends_with_an_app_in_the_foreground_keeps_its_cast_and_leaves_no_app() {
+    let (dir, app) = case("foreground", "");
+    common::add_shot(
+        &app,
+        "held",
+        "Type@0ms \"echo shell=$$\"\nEnter\nType@0ms `sh -c 'trap \"\" HUP; echo app=$$; exec sleep 600'`\nEnter\nWait+Screen@20s /app=[0-9]+/\n",
+        "",
+    );
+    let o = record(&dir, &app, "held");
+    common::expect_ok(&o, "prec record");
+    let text = std::fs::read_to_string(cast_of(&dir, "held")).unwrap();
+    assert!(text.trim_end().ends_with(r#""m","end"]"#), "{text}");
+    let shown: String = text
+        .lines()
+        .skip(1)
+        .map(|l| serde_json::from_str::<Value>(l).unwrap())
+        .filter(|e| e[1] == "o")
+        .map(|e| e[2].as_str().unwrap().to_string())
+        .collect();
+    let shell = shown_pid(&shown, "shell");
+    let held = shown_pid(&shown, "app");
+    assert_ne!(shell, held);
+    assert!(gone(shell), "the recording's shell {shell} outlived prec");
+    assert!(
+        gone(held),
+        "the app {held} that ignores SIGHUP outlived prec's recording"
+    );
+}
+
+#[test]
 fn a_malformed_tape_is_refused_by_its_line_before_anything_runs() {
     let (dir, app) = case("tape", "setup = \"echo up > {tmp}/setup.marker\"\n");
     common::add_shot(&app, "bad", "Type \"demo show\"\nSleep never\n", "");
@@ -223,7 +253,7 @@ fn a_step_typed_after_the_shell_quits_is_refused_on_linux() {
     common::add_shot(
         &app,
         "late",
-        "Type@0ms \"exit 3\"\nEnter\nSleep 500ms\nType@0ms \"echo late\"\nEnter\n",
+        "Type@0ms \"exit 3\"\nEnter\nSleep 3s\nType@0ms \"echo late\"\nEnter\n",
         "",
     );
     let o = record(&dir, &app, "late");

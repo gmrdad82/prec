@@ -402,9 +402,9 @@ fn begin(verb: &str, kind: &str, s: &Shot) -> Result<(), String> {
 
 fn shoot(kind: &str, s: &Shot, made: &str) -> Result<(), String> {
     s.camera.refuse()?;
-    begin(kind, kind, s)?;
     let first = opts(s, &s.theme, made);
     render::validate(kind, &first)?;
+    begin(kind, kind, s)?;
     let build = s.bin.is_none();
     let guess = serde_json::json!({
         "rev": s.source.rev.as_deref().unwrap_or("local"),
@@ -865,9 +865,13 @@ mod tests {
                 action: None
             }
         ));
+        assert_eq!(
+            refusal(&["prec", "cache", "--json", "prune", "--dry-run"]).kind(),
+            ErrorKind::MissingRequiredArgument
+        );
         for args in [
-            &["prec", "cache", "--json", "prune", "--dry-run"][..],
-            &["prec", "cache", "prune", "--json", "--dry-run"],
+            &["prec", "cache", "prune", "--json", "--dry-run"][..],
+            &["prec", "cache", "prune", "--dry-run", "--json"],
         ] {
             let Kind::Cache {
                 json: true,

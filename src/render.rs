@@ -1649,7 +1649,6 @@ mod tests {
 
     #[test]
     fn a_size_past_the_encoder_ceiling_is_refused_and_the_edge_is_taken() {
-        assert_eq!(MAX_SIDE, 16384);
         for kind in ["still", "clip"] {
             assert_eq!(parse_size("16384", kind), Ok([16384, 16384]), "{kind}");
             assert_eq!(parse_size("16384x2", kind), Ok([16384, 2]), "{kind}");

@@ -621,7 +621,7 @@ pub fn build(
             g.report();
         }
         let dir = PathBuf::from(expand(&build.bin_dir, &vars));
-        if !dir.join(&app.terminal.bin).exists() {
+        if !dir.join(&app.terminal.bin).is_file() {
             return Err(format!(
                 "{} is missing after the build",
                 dir.join(&app.terminal.bin).display()
@@ -649,7 +649,7 @@ pub fn build(
         let from = PathBuf::from(expand(&build.bin_dir, &vars));
         paths::fresh(entry)?;
         cache::keep(&from, entry)?;
-        if !entry.join(&app.terminal.bin).exists() {
+        if !entry.join(&app.terminal.bin).is_file() {
             return Err(format!(
                 "{} is missing after the build",
                 from.join(&app.terminal.bin).display()
@@ -1166,6 +1166,11 @@ mod tests {
                 work.join("out/alpha").display()
             )
         );
+        assert_eq!(
+            build(&with("mkdir -p out/alpha"), "alpha-build", None).unwrap_err(),
+            missing
+        );
+        std::fs::remove_dir_all(work.join("out")).unwrap();
         let made = build(
             &with("mkdir -p {app}/out && touch out/alpha"),
             "alpha-build",

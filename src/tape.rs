@@ -96,8 +96,12 @@ fn unquote(rest: &str) -> Result<String, String> {
 }
 
 fn head(word: &str) -> (&str, Option<&str>) {
-    match word.split_once('@') {
-        Some((h, s)) => (h, Some(s)),
+    let at = word
+        .char_indices()
+        .find(|&(i, c)| c == '@' && !word[..i].ends_with('+'))
+        .map(|(i, _)| i);
+    match at {
+        Some(i) => (&word[..i], Some(&word[i + 1..])),
         None => (word, None),
     }
 }
@@ -781,6 +785,20 @@ mod tests {
                 "Ctrl+Alt+{c}"
             );
         }
+        assert_eq!(
+            one("Ctrl+@@100ms 2"),
+            Step::Key {
+                key: Key::Ctrl('@'),
+                count: 2,
+                speed: Some(Duration::from_millis(100))
+            }
+        );
+        assert_eq!(bytes(&Key::Ctrl('@'), false), vec![0]);
+        assert_eq!(bytes(&Key::CtrlAlt('@'), false), vec![0x1b, 0]);
+        assert_eq!(
+            refused("Enter\nCtrl+@@\n"),
+            "line 2: : a duration like 500ms, 1.5s or 2"
+        );
     }
 
     #[test]

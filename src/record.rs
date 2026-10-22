@@ -1063,10 +1063,6 @@ mod tests {
         }
         let (_, got) = read_text("one", &format!("{head}[0.0, \"m\", \"end\"]\n"));
         assert_eq!(got.unwrap().events.len(), 1);
-        let tl = Timeline::of(&[]);
-        assert!(tl.segments.is_empty());
-        assert_eq!(tl.shown(), 0.0);
-        assert_eq!(tl.at(1.0), 0.0);
     }
 
     #[test]

@@ -734,6 +734,20 @@ fn doctor_with_a_shell_but_no_tools_misses_each_tool_by_name() {
         mark(&lines, "fc-match"),
         ("MISS".into(), "not on PATH".into())
     );
+    let browser = dir.join("browser");
+    std::fs::create_dir_all(&browser).unwrap();
+    stub(&browser, "chromium-browser", "echo Chromium 140.0");
+    let lines = report(&out(&run(&mut doctor(&dir, &browser))));
+    assert_eq!(
+        mark(&lines, "chromium"),
+        (
+            "ok".into(),
+            format!(
+                "{}: Chromium 140.0",
+                browser.join("chromium-browser").display()
+            )
+        )
+    );
 }
 
 #[cfg(unix)]

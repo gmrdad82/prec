@@ -5,7 +5,7 @@ fn found(cmd: &str) -> Option<String> {
     found_in(&std::env::var_os("PATH")?, cmd).map(|p| p.display().to_string())
 }
 
-fn found_in(path: &std::ffi::OsStr, cmd: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn found_in(path: &std::ffi::OsStr, cmd: &str) -> Option<std::path::PathBuf> {
     std::env::split_paths(path)
         .filter(|d| !d.as_os_str().is_empty())
         .map(|d| d.join(cmd))
