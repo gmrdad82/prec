@@ -329,6 +329,100 @@ fn a_shot_that_needs_a_fixture_set_refuses_none_or_another_and_hands_the_right_o
     );
 }
 
+fn git(dir: &Path, args: &[&str]) -> String {
+    let o = Command::new("git")
+        .args([
+            "-c",
+            "user.name=alpha",
+            "-c",
+            "user.email=",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "tag.gpgSign=false",
+        ])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "git {args:?}: {}", stderr(&o));
+    String::from_utf8_lossy(&o.stdout).trim().to_string()
+}
+
+#[test]
+fn a_pinned_recording_builds_its_commit_once_from_the_cache_and_ignores_the_working_tree() {
+    let dir = common::caller("record", "pinned");
+    let app = common::demo_app(&dir, "");
+    std::fs::rename(app.join("render"), dir.join("render")).unwrap();
+    let toml = dir.join("render/terminal.toml");
+    let text = std::fs::read_to_string(&toml).unwrap();
+    let prebuilt = "[build]\nbin_dir = \"{app}/render/terminal/bin\"\n";
+    assert!(text.contains(prebuilt), "{text}");
+    std::fs::write(
+        &toml,
+        text.replace(
+            prebuilt,
+            "[build]\ncommand = \"mkdir -p {target}/out && cp render/terminal/bin/demo {target}/out/demo\"\nbin_dir = \"{target}/out\"\n",
+        ),
+    )
+    .unwrap();
+    let tape = "Type@0ms \"echo pinned-$((40+1))\"\nEnter\nSleep 300ms\n";
+    common::add_shot(&dir, "pinned", tape, "");
+    git(&dir, &["add", "render"]);
+    git(&dir, &["commit", "-q", "-m", "one"]);
+    git(&dir, &["tag", "v9"]);
+    let commit = git(&dir, &["rev-parse", "HEAD"]);
+    std::fs::write(
+        dir.join("render/terminal/pinned.tape"),
+        tape.replace("40+1", "40+2"),
+    )
+    .unwrap();
+    let pinned = |rev: &str| {
+        prec(
+            &dir,
+            &["record", "demo", "pinned", "--rev", rev, "--out", "tmp/out"],
+        )
+        .output()
+        .unwrap()
+    };
+    let said = refused(&pinned("nope"));
+    assert!(
+        said.ends_with(&format!("prec: {} has no nope\n", dir.display())),
+        "{said}"
+    );
+    let first = pinned("v9");
+    common::expect_ok(&first, "prec record --rev v9");
+    assert!(
+        !stderr(&first).contains("using the cached build"),
+        "{}",
+        stderr(&first)
+    );
+    let text = std::fs::read_to_string(cast_of(&dir, "pinned")).unwrap();
+    let header: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+    let meta = &header["x_terminal_renderer"]["app"];
+    assert_eq!(meta["commit"], commit.as_str(), "{meta}");
+    assert_eq!(meta["rev"], "v9", "{meta}");
+    assert_eq!(meta["tag"], "v9", "{meta}");
+    assert_eq!(meta["pinned"], true, "{meta}");
+    let bin_dir = PathBuf::from(meta["bin_dir"].as_str().unwrap());
+    assert!(bin_dir.starts_with(dir.join("cache")), "{meta}");
+    assert!(bin_dir.join("demo").is_file(), "{meta}");
+    let shown: String = cast_events(&dir, "pinned")
+        .iter()
+        .filter(|e| e[1] == "o")
+        .map(|e| e[2].as_str().unwrap().to_string())
+        .collect();
+    assert!(shown.contains("pinned-41"), "{shown:?}");
+    assert!(!shown.contains("pinned-42"), "{shown:?}");
+    let again = pinned("v9");
+    common::expect_ok(&again, "prec record --rev v9 again");
+    assert!(
+        stderr(&again).contains(&format!("demo@{}: using the cached build", &commit[..12])),
+        "{}",
+        stderr(&again)
+    );
+}
+
 #[test]
 fn an_idle_that_never_settles_fails_at_its_timeout() {
     let (dir, app) = case("idle", "");
