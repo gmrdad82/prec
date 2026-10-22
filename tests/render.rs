@@ -777,6 +777,62 @@ fn a_cast_renders_at_every_exact_rate_with_its_frames_and_duration() {
 }
 
 #[test]
+fn themes_render_one_cast_once_per_theme_each_into_its_own_files() {
+    let w = work("themes");
+    let cast = w.join("cast/duo.cast");
+    common::write_cast(
+        &cast,
+        "render",
+        "duo",
+        "still",
+        &[(0.0, "\x1b[?25lhello".to_string())],
+        0.2,
+    );
+    let out = w.join("out");
+    let o = run(
+        &[
+            "render",
+            cast.to_str().unwrap(),
+            "--size",
+            "160x90",
+            "--themes",
+            "Catppuccin Latte,Catppuccin Mocha",
+            "--out",
+            out.to_str().unwrap(),
+        ],
+        &w,
+    );
+    common::expect_ok(&o, "prec render --themes");
+    let printed: Vec<PathBuf> = String::from_utf8_lossy(&o.stdout)
+        .lines()
+        .map(PathBuf::from)
+        .collect();
+    assert_eq!(printed.len(), 2, "{printed:?}");
+    assert_ne!(printed[0], printed[1]);
+    let mut seen = vec![];
+    for m in &printed {
+        let manifest = json_of(m);
+        every_file_is_what_the_manifest_says(&manifest, m.parent().unwrap());
+        let background = manifest["theme"]["background"].as_str().unwrap();
+        let master = entry(&manifest, "master")["file"].as_str().unwrap();
+        assert_eq!(
+            pixel(&m.parent().unwrap().join(master), 0, 0),
+            hex(background),
+            "{master}"
+        );
+        seen.push((
+            manifest["theme"]["name"].as_str().unwrap().to_string(),
+            background.to_string(),
+            master.to_string(),
+        ));
+    }
+    assert_eq!(seen[0].0, "Catppuccin Latte");
+    assert_eq!(seen[1].0, "Catppuccin Mocha");
+    assert_ne!(seen[0].1, seen[1].1, "{seen:?}");
+    assert_ne!(seen[0].2, seen[1].2, "{seen:?}");
+}
+
+#[test]
 fn a_rate_clap_cannot_take_gets_the_short_answer() {
     let w = work("bad-rate");
     for (fps, why) in [
