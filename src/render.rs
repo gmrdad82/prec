@@ -17,11 +17,11 @@ use serde_json::{Value, json};
 use std::cell::OnceCell;
 use std::collections::BTreeSet;
 use std::fs::File;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus};
-use std::sync::Mutex;
-use std::time::Instant;
+use std::process::{Command, ExitStatus, Stdio};
+use std::sync::{Mutex, mpsc};
+use std::time::{Duration, Instant};
 
 pub const TOOL: &str = "prec";
 pub const DEFAULT_FPS: Fps = Fps::new(120, 1);
@@ -278,11 +278,42 @@ fn set_value(sets: &[(String, String)], key: &str) -> Option<String> {
 struct Hook {
     cmd: String,
     env: Vec<(String, String)>,
+    passed: Vec<(String, String)>,
     path: String,
     cwd: PathBuf,
 }
 
 static TEARDOWN: Mutex<Option<Hook>> = Mutex::new(None);
+
+const HOOK_DRAIN: Duration = Duration::from_millis(500);
+
+fn relay(from: impl Read, mut to: impl Write, passed: &[(String, String)]) {
+    let mut from = BufReader::new(from);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        match from.read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {
+                let text = private::redact(&String::from_utf8_lossy(&line), passed);
+                let _ = to.write_all(text.as_bytes());
+                let _ = to.flush();
+            }
+        }
+    }
+}
+
+fn relay_apart(
+    from: impl Read + Send + 'static,
+    to: impl Write + Send + 'static,
+    passed: Vec<(String, String)>,
+    done: mpsc::Sender<()>,
+) {
+    std::thread::spawn(move || {
+        relay(from, to, &passed);
+        let _ = done.send(());
+    });
+}
 
 impl Hook {
     fn command(&self) -> Command {
@@ -290,6 +321,48 @@ impl Hook {
         c.args(["-c", &self.cmd]).current_dir(&self.cwd).env_clear();
         c.envs(paths::environment(&self.env, &self.path));
         c
+    }
+
+    fn run(&self, gated: bool) -> Result<(), String> {
+        self.relayed(gated, std::io::stdout(), std::io::stderr())
+    }
+
+    fn relayed(
+        &self,
+        gated: bool,
+        out: impl Write + Send + 'static,
+        err: impl Write + Send + 'static,
+    ) -> Result<(), String> {
+        let mut c = self.command();
+        c.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let started = if gated {
+            paths::spawn(&mut c)
+        } else {
+            c.spawn()
+        };
+        let status = started.and_then(|mut child| {
+            let (done, drained) = mpsc::channel();
+            let mut relays = 0;
+            if let Some(from) = child.stdout.take() {
+                relay_apart(from, out, self.passed.clone(), done.clone());
+                relays += 1;
+            }
+            if let Some(from) = child.stderr.take() {
+                relay_apart(from, err, self.passed.clone(), done);
+                relays += 1;
+            }
+            let status = child.wait();
+            paths::reaped(child.id());
+            let deadline = Instant::now() + HOOK_DRAIN;
+            for _ in 0..relays {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if drained.recv_timeout(left).is_err() {
+                    break;
+                }
+            }
+            status
+        });
+        self.ran(status)
     }
 
     fn ran(&self, status: std::io::Result<ExitStatus>) -> Result<(), String> {
@@ -305,9 +378,13 @@ pub fn tear_down(stop: impl FnOnce()) {
     let mut slot = TEARDOWN.lock().unwrap_or_else(|p| p.into_inner());
     stop();
     if let Some(h) = slot.take()
-        && let Err(e) = h.ran(h.command().status())
+        && let Err(e) = h.run(false)
     {
-        let _ = writeln!(std::io::stderr(), "teardown: {e}");
+        let _ = writeln!(
+            std::io::stderr(),
+            "teardown: {}",
+            private::redact(&e, &h.passed)
+        );
     }
 }
 
@@ -319,7 +396,16 @@ pub fn hold(product: &str, shot: &str, what: &str) -> Result<File, String> {
 
 pub struct Run {
     pub dir: PathBuf,
+    lock_path: PathBuf,
     _lock: File,
+}
+
+impl Run {
+    fn remove(self) {
+        if std::fs::remove_dir_all(&self.dir).is_ok() || !self.dir.exists() {
+            let _ = std::fs::remove_file(&self.lock_path);
+        }
+    }
 }
 
 fn run_folder(name: &str) -> Result<Run, String> {
@@ -327,13 +413,18 @@ fn run_folder(name: &str) -> Result<Run, String> {
     let id = std::process::id().to_string();
     clear_runs(&root, name, &id);
     let dir = root.join(format!("{name}-{id}"));
+    let lock_path = root.join(format!("{name}-{id}.lock"));
     let lock = paths::lock(
-        &root.join(format!("{name}-{id}.lock")),
+        &lock_path,
         paths::Lock::Exclusive,
         &dir.display().to_string(),
     )?;
     paths::fresh(&dir)?;
-    Ok(Run { dir, _lock: lock })
+    Ok(Run {
+        dir,
+        lock_path,
+        _lock: lock,
+    })
 }
 
 fn run_id<'a>(file: &'a str, name: &str) -> Option<&'a str> {
@@ -722,14 +813,14 @@ fn record_prepared(
     let hook = |cmd: &str| Hook {
         cmd: app::expand(cmd, &vars),
         env: with_passed(&p.env, &p.passed),
+        passed: p.passed.clone(),
         path: p.path.clone(),
         cwd: p.cwd.clone(),
     };
     *TEARDOWN.lock().unwrap_or_else(|e| e.into_inner()) = p.terminal.teardown.as_deref().map(hook);
     let recorded = (|| -> Result<Vec<record::Event>, String> {
         if let Some(setup) = &p.terminal.setup {
-            let h = hook(setup);
-            h.ran(paths::status(&mut h.command()))?;
+            hook(setup).run(true)?;
         }
         eprintln!(
             "recording {} {} in a {}x{} pty…",
@@ -782,8 +873,11 @@ fn record_prepared(
     );
     if !opts.allow_private {
         let found = private::scan(&cast, &private::Needles::of_this_machine(&p.passed));
-        if !to_out {
-            private::refuse(&path, &found)?;
+        if !to_out && let Err(refused) = private::refuse(&path, &found) {
+            if let Some(run) = kept {
+                run.remove();
+            }
+            return Err(refused);
         }
         for line in private::lines(&path, &found) {
             eprintln!("prec: {line}");
@@ -1886,6 +1980,131 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[derive(Clone, Default)]
+    struct Shared(std::sync::Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Shared {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Shared {
+        fn text(&self) -> String {
+            String::from_utf8_lossy(&self.0.lock().unwrap()).to_string()
+        }
+    }
+
+    fn hook(dir: &Path, cmd: &str) -> Hook {
+        Hook {
+            cmd: cmd.into(),
+            env: vec![
+                ("TOKEN".into(), "s3cret-token-value".into()),
+                ("TINY".into(), "zq".into()),
+            ],
+            passed: vec![
+                ("TOKEN".into(), "s3cret-token-value".into()),
+                ("TINY".into(), "zq".into()),
+            ],
+            path: std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".into()),
+            cwd: dir.to_path_buf(),
+        }
+    }
+
+    #[test]
+    fn relayed_lines_are_masked_one_by_one_and_a_last_line_without_a_newline_is_kept() {
+        let passed = vec![("TOKEN".to_string(), "s3cret-token-value".to_string())];
+        let mut to = Vec::new();
+        relay(
+            &b"a s3cret-token-value\nplain\n\xffs3cret-token-value\nend s3cret-token-value"[..],
+            &mut to,
+            &passed,
+        );
+        assert_eq!(
+            String::from_utf8(to).unwrap(),
+            "a <TOKEN>\nplain\n\u{fffd}<TOKEN>\nend <TOKEN>"
+        );
+        let mut to = Vec::new();
+        relay(&b""[..], &mut to, &passed);
+        assert!(to.is_empty());
+        let mut to = Vec::new();
+        relay(&b"s3cret-token-value"[..], &mut to, &[]);
+        assert_eq!(to, b"s3cret-token-value");
+    }
+
+    #[test]
+    fn a_hook_prints_each_stream_masked_where_it_wrote_it_and_its_failure_names_it() {
+        let dir = work("hook-streams");
+        for gated in [true, false] {
+            let (out, err) = (Shared::default(), Shared::default());
+            let h = hook(
+                &dir,
+                "echo \"o1 $TOKEN\"; echo \"e1 $TOKEN\" >&2; echo \"o2 $TINY\"; printf 'e2 %s' \"$TOKEN\" >&2",
+            );
+            h.relayed(gated, out.clone(), err.clone()).unwrap();
+            assert_eq!(out.text(), "o1 <TOKEN>\no2 <TINY>\n", "gated {gated}");
+            assert_eq!(err.text(), "e1 <TOKEN>\ne2 <TOKEN>", "gated {gated}");
+        }
+        let (out, err) = (Shared::default(), Shared::default());
+        let h = hook(&dir, "echo \"before $TOKEN\" >&2; exit 5");
+        assert_eq!(
+            h.relayed(true, out.clone(), err.clone()).unwrap_err(),
+            "echo \"before $TOKEN\" >&2; exit 5 failed"
+        );
+        assert!(out.text().is_empty());
+        assert_eq!(err.text(), "before <TOKEN>\n");
+        let h = Hook {
+            cwd: dir.join("absent"),
+            ..hook(&dir, "true")
+        };
+        let said = h
+            .relayed(false, Shared::default(), Shared::default())
+            .unwrap_err();
+        assert!(said.starts_with("true: "), "{said}");
+    }
+
+    #[test]
+    fn a_hook_whose_background_child_keeps_its_output_open_does_not_hold_prec() {
+        let dir = work("hook-background");
+        let h = hook(&dir, "sleep 2 & echo \"up $TOKEN\"");
+        let out = Shared::default();
+        h.relayed(false, out.clone(), Shared::default()).unwrap();
+        assert!(!out.text().contains("s3cret-token-value"), "{}", out.text());
+    }
+
+    #[test]
+    fn removing_a_run_takes_its_folder_and_its_lock() {
+        let root = work("run-remove");
+        let dir = root.join("alpha-clip-s-cast-7");
+        std::fs::create_dir_all(dir.join("inner")).unwrap();
+        std::fs::write(dir.join("inner/alpha-clip-s.cast"), "x").unwrap();
+        let lock_path = root.join("alpha-clip-s-cast-7.lock");
+        let run = Run {
+            dir: dir.clone(),
+            lock_path: lock_path.clone(),
+            _lock: File::create(&lock_path).unwrap(),
+        };
+        std::fs::write(root.join("alpha-clip-s-cast-8.lock"), "").unwrap();
+        run.remove();
+        assert!(!dir.exists());
+        assert!(!lock_path.exists());
+        assert!(root.join("alpha-clip-s-cast-8.lock").exists());
+        let gone = root.join("alpha-clip-s-cast-9");
+        let lock_path = root.join("alpha-clip-s-cast-9.lock");
+        Run {
+            dir: gone,
+            lock_path: lock_path.clone(),
+            _lock: File::create(&lock_path).unwrap(),
+        }
+        .remove();
+        assert!(!lock_path.exists());
     }
 
     fn listed(dir: &Path) -> Vec<String> {

@@ -8,7 +8,7 @@ use std::process::{Command, Output, Stdio};
 const GROUP: &str = "paths";
 const PASSED: &str = "prec-paths-passed-7f3a91";
 const SENTINEL: &str = "prec-paths-sentinel-c04e";
-const OWN_ENV: [&str; 9] = [
+const OWN_ENV: [&str; 11] = [
     "HOME",
     "PATH",
     "TERM",
@@ -18,6 +18,8 @@ const OWN_ENV: [&str; 9] = [
     "LANG",
     "LC_ALL",
     "COLORTERM",
+    "USER",
+    "LOGNAME",
 ];
 
 fn prec(dir: &Path, cwd: &Path, args: &[&str]) -> Command {
@@ -258,10 +260,33 @@ fn a_passed_value_the_app_prints_is_named_never_shown_and_a_clip_of_it_is_refuse
         ))),
         "{said}"
     );
-    assert!(dir.join(run_cast).is_file(), "{said}");
+    assert_eq!(
+        said.lines().filter(|l| l.starts_with("prec: ")).count(),
+        1,
+        "{said}"
+    );
+    assert_eq!(
+        said.trim_end().lines().last(),
+        said.lines().find(|l| l.starts_with("prec: "))
+    );
+    let run = dir.join(format!("tmp/prec/run/demo-clip-echo-cast-{pid}"));
+    assert!(!run.exists(), "a refused clip left {}", run.display());
+    assert!(!run.with_extension("lock").exists());
+    for left in files(&dir.join("tmp/prec"), &[]) {
+        let text = std::fs::read(dir.join("tmp/prec").join(&left)).unwrap();
+        assert!(
+            !String::from_utf8_lossy(&text).contains(PASSED),
+            "{} holds the passed value",
+            left.display()
+        );
+    }
     assert!(
         !dir.join("tmp/clip").exists(),
         "a refused clip wrote {said}"
+    );
+    assert!(
+        dir.join("tmp/out/demo/clip/demo-clip-echo.cast").is_file(),
+        "record's own cast stays"
     );
 }
 
@@ -862,7 +887,7 @@ fn a_record_waits_while_another_prec_holds_its_shot_and_records_once_it_is_free(
 }
 
 #[test]
-fn a_hook_that_prints_a_passed_value_shows_it_on_precs_own_output() {
+fn a_hook_that_prints_a_passed_value_shows_its_mask_on_precs_own_output() {
     let dir = common::caller(GROUP, "passed-hook");
     let app = common::demo_app(
         &dir,
@@ -870,11 +895,12 @@ fn a_hook_that_prints_a_passed_value_shows_it_on_precs_own_output() {
     );
     let (_, o) = record(&dir, &dir, &app, "palette", "tmp/out");
     assert_eq!(o.status.code(), Some(1), "{}", err(&o));
-    assert_eq!(out(&o), format!("hook-saw-{PASSED}\n"));
+    assert_eq!(out(&o), "hook-saw-<PREC_PATHS_PASSED>\n");
     assert_eq!(
         err(&o).trim_end().lines().last(),
         Some("prec: echo \"hook-saw-$PREC_PATHS_PASSED\"; exit 3 failed")
     );
+    assert!(!out(&o).contains(PASSED), "{}", out(&o));
     assert!(!err(&o).contains(PASSED), "{}", err(&o));
     assert!(
         !dir.join("tmp/out/demo/still/demo-still-palette.cast")
@@ -883,14 +909,124 @@ fn a_hook_that_prints_a_passed_value_shows_it_on_precs_own_output() {
 }
 
 #[test]
-fn a_user_or_logname_in_pass_env_is_taken_though_prec_sets_both() {
+fn a_failing_hook_that_prints_a_passed_value_to_stderr_shows_its_mask_there() {
+    let dir = common::caller(GROUP, "passed-hook-stderr");
+    let app = common::demo_app(
+        &dir,
+        "pass_env = [\"PREC_PATHS_PASSED\"]\nsetup = 'echo \"hook-err-$PREC_PATHS_PASSED\" >&2; exit 4'\n",
+    );
+    let (_, o) = record(&dir, &dir, &app, "palette", "tmp/out");
+    assert_eq!(o.status.code(), Some(1), "{}", err(&o));
+    assert!(out(&o).is_empty(), "{}", out(&o));
+    let said = err(&o);
+    assert!(!said.contains(PASSED), "{said}");
+    let said: Vec<&str> = said.trim_end().lines().collect();
+    assert_eq!(
+        said[said.len().saturating_sub(2)..],
+        [
+            "hook-err-<PREC_PATHS_PASSED>",
+            "prec: echo \"hook-err-$PREC_PATHS_PASSED\" >&2; exit 4 failed"
+        ]
+    );
+    assert!(
+        !dir.join("tmp/out/demo/still/demo-still-palette.cast")
+            .exists()
+    );
+}
+
+#[test]
+fn hooks_that_pass_print_every_line_masked_in_order_on_the_stream_they_wrote() {
+    let dir = common::caller(GROUP, "passed-hook-ok");
+    let app = common::demo_app(
+        &dir,
+        "pass_env = [\"PREC_PATHS_PASSED\"]\nsetup = 'printf \"one-%s\\ntwo\\nthree-%s-%s\\n\" \"$PREC_PATHS_PASSED\" \"$PREC_PATHS_PASSED\" \"$PREC_PATHS_PASSED\"; echo \"warn-$PREC_PATHS_PASSED\" >&2'\nteardown = 'echo \"down-$PREC_PATHS_PASSED\"; echo \"down-err-$PREC_PATHS_PASSED\" >&2'\n",
+    );
+    let (_, o) = record(&dir, &dir, &app, "palette", "tmp/out");
+    common::expect_ok(&o, "prec record");
+    let cast = dir.join("tmp/out/demo/still/demo-still-palette.cast");
+    assert_eq!(common::last_path(&o), cast);
+    assert!(!out(&o).contains(PASSED), "{}", out(&o));
+    assert!(!err(&o).contains(PASSED), "{}", err(&o));
+    let stdout = out(&o);
+    let shown: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        shown,
+        [
+            "one-<PREC_PATHS_PASSED>",
+            "two",
+            "three-<PREC_PATHS_PASSED>-<PREC_PATHS_PASSED>",
+            "down-<PREC_PATHS_PASSED>",
+            cast.to_str().unwrap()
+        ]
+    );
+    let stderr = err(&o);
+    let warn = stderr.find("warn-<PREC_PATHS_PASSED>\n").expect(&stderr);
+    let recording = stderr.find("recording demo palette").expect(&stderr);
+    let down = stderr
+        .find("down-err-<PREC_PATHS_PASSED>\n")
+        .expect(&stderr);
+    assert!(warn < recording && recording < down, "{stderr}");
+    assert!(!std::fs::read_to_string(&cast).unwrap().contains(PASSED));
+}
+
+#[test]
+fn a_hook_with_a_short_passed_value_still_has_it_masked() {
+    let dir = common::caller(GROUP, "passed-hook-short");
+    let app = common::demo_app(
+        &dir,
+        "pass_env = [\"PREC_PATHS_SHORT\"]\nsetup = 'echo \"short=$PREC_PATHS_SHORT.\"'\n",
+    );
+    let o = prec(
+        &dir,
+        &dir,
+        &[
+            "record",
+            "demo",
+            "palette",
+            "--app-dir",
+            app.to_str().unwrap(),
+            "--out",
+            "tmp/out",
+        ],
+    )
+    .env("PREC_PATHS_SHORT", "q7z")
+    .output()
+    .unwrap();
+    common::expect_ok(&o, "prec record");
+    assert!(
+        out(&o).starts_with("short=<PREC_PATHS_SHORT>.\n"),
+        "{}",
+        out(&o)
+    );
+}
+
+#[test]
+fn a_user_or_logname_in_pass_env_is_refused_at_load_since_prec_sets_both() {
     let dir = common::caller(GROUP, "passed-user");
     let app = common::demo_app(&dir, "");
+    let toml = app.join("render/terminal.toml");
     for own in ["USER", "LOGNAME"] {
-        set_hooks(&app, &format!("pass_env = [\"{own}\"]\n"), "");
-        let o = shots(&dir, &app);
-        common::expect_ok(&o, own);
-        assert!(out(&o).starts_with("demo — grid 60x16"), "{}", out(&o));
+        set_hooks(
+            &app,
+            &format!("pass_env = [\"PREC_PATHS_PASSED\", \"{own}\"]\n"),
+            "",
+        );
+        assert_eq!(
+            refused(&shots(&dir, &app)),
+            format!(
+                "prec: {}: pass_env {own}: prec sets {own} itself",
+                toml.display()
+            )
+        );
+        let (_, o) = record(&dir, &dir, &app, "palette", "tmp/out");
+        assert_eq!(
+            refused(&o),
+            format!(
+                "prec: {}: pass_env {own}: prec sets {own} itself",
+                toml.display()
+            )
+        );
+        assert!(!dir.join("tmp/out").exists());
     }
 }
 
