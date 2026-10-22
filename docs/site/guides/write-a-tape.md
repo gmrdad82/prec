@@ -28,7 +28,7 @@ Sleep 1.2s
 | `Sleep <duration>` | waits |
 | `Wait /regex/` | waits until the screen's last non-blank row matches |
 | `Wait+Screen /regex/` | waits until anywhere on the screen matches |
-| `Wait+Exit` | waits until the shell or the app has exited and its last output is in, so a tape can end on a quit; it takes no regex |
+| `Wait+Exit` | waits until the session's shell has exited and its terminal has closed (after an `exit`, or after an app started with `exec` quits), its last output kept; it takes no regex |
 | `Idle <duration>` | waits until the screen hasn't changed for that long; default `2s` |
 | `Squeeze [<gap>] [/regex/]`, `Squeeze off` | from here on, shortens every stretch where only a spinner or a counter moves to `gap` (default `500ms`) |
 | `Resize <cols>x<rows> [<duration>]` | resizes the terminal, at once or over the duration; each side is 2 to 1000 |

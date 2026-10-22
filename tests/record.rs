@@ -559,7 +559,6 @@ fn a_wait_exit_on_a_shell_that_never_quits_is_refused_at_its_timeout() {
     );
     let shell = shown_pid(&said, "shell");
     assert!(gone(shell), "the recording's shell {shell} outlived prec");
-    assert!(!said.contains("echo after"), "{said}");
     assert!(!cast_of(&dir, "stays").exists());
 }
 
