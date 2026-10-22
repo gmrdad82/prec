@@ -61,6 +61,7 @@ fn dark(p: &[u8]) -> bool {
 
 struct Edges {
     top: u32,
+    bottom: u32,
     left: u32,
     right: u32,
 }
@@ -74,10 +75,16 @@ fn edges(rgb: &[u8], size: [u32; 2]) -> Edges {
     let top = (0..size[1])
         .find(|&y| dark(at(probe, y)))
         .expect("no window in the frame");
+    let bottom = (0..size[1]).rev().find(|&y| dark(at(probe, y))).unwrap();
     let row = top + 5;
     let left = (0..size[0]).find(|&x| dark(at(x, row))).unwrap();
     let right = (0..size[0]).rev().find(|&x| dark(at(x, row))).unwrap();
-    Edges { top, left, right }
+    Edges {
+        top,
+        bottom,
+        left,
+        right,
+    }
 }
 
 fn frames(video: &Path) -> Vec<Vec<u8>> {
@@ -173,7 +180,25 @@ fn a_clip_resizes_its_pty_step_by_step_and_the_window_follows_on_one_canvas() {
         small * 10 < full * 7 && small * 10 > full * 3,
         "{small} of {full}"
     );
+    assert!(
+        first.bottom.abs_diff(last.bottom) <= 2,
+        "{} {}",
+        first.bottom,
+        last.bottom
+    );
+    let tall = first.bottom - first.top;
+    let short = mid.bottom - mid.top;
+    assert!(
+        short * 10 < tall * 9 && short * 10 > tall * 4,
+        "{short} of {tall}"
+    );
     for e in &seen {
+        assert!(
+            e.bottom <= first.bottom + 2,
+            "{} below {}",
+            e.bottom,
+            first.bottom
+        );
         assert!(
             e.left.abs_diff(first.left) <= 2,
             "left {} vs {}",
@@ -200,8 +225,19 @@ fn a_clip_resizes_its_pty_step_by_step_and_the_window_follows_on_one_canvas() {
         full
     );
     eprintln!(
-        "frame edges: start {}..{}, narrowest {}..{} at frame {narrow}, end {}..{}",
-        first.left, first.right, mid.left, mid.right, last.left, last.right
+        "frame edges: start {}..{} x {}..{}, narrowest {}..{} x {}..{} at frame {narrow}, end {}..{} x {}..{}",
+        first.left,
+        first.right,
+        first.top,
+        first.bottom,
+        mid.left,
+        mid.right,
+        mid.top,
+        mid.bottom,
+        last.left,
+        last.right,
+        last.top,
+        last.bottom
     );
 }
 

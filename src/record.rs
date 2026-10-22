@@ -70,6 +70,16 @@ pub fn set_grid(parser: &mut vt100::Parser, grid: [u32; 2]) {
     if parser.screen().size() == (rows, cols) {
         return;
     }
+    if parser.screen().alternate_screen() {
+        parser.process(b"\x1b[?47l");
+        fit_rows(parser, rows);
+        parser.process(b"\x1b[?47h");
+    }
+    fit_rows(parser, rows);
+    parser.screen_mut().set_size(rows, cols);
+}
+
+fn fit_rows(parser: &mut vt100::Parser, rows: u16) {
     let (row, col) = parser.screen().cursor_position();
     let mut seq = format!("\x1b[r\x1b[{};{}H", row + 1, col + 1);
     if row >= rows {
@@ -77,7 +87,6 @@ pub fn set_grid(parser: &mut vt100::Parser, grid: [u32; 2]) {
         seq.push_str(&format!("\x1b[{n}S\x1b[{n}A"));
     }
     parser.process(seq.as_bytes());
-    parser.screen_mut().set_size(rows, cols);
 }
 
 fn grid_text(grid: [u32; 2]) -> String {
@@ -1666,6 +1675,35 @@ mod tests {
         assert_eq!(q.screen().cursor_position(), (3, 0));
         q.process(b"\r\nnext");
         assert_eq!(rows(&q), ["f", "g", "h", "next"]);
+    }
+
+    #[test]
+    fn a_row_shrink_under_the_alt_screen_scrolls_the_normal_screen_too_as_xterm_js_does() {
+        let mut p = vt100::Parser::new(6, 10, 0);
+        p.process(b"a\r\nb\r\nc\r\nd\r\ne\r\nf");
+        assert_eq!(p.screen().cursor_position(), (5, 1));
+        p.process(b"\x1b[?1049h\x1b[Halt top\x1b[6;1Halt low");
+        set_grid(&mut p, [10, 3]);
+        assert!(p.screen().alternate_screen());
+        assert_eq!(rows(&p), ["", "", "alt low"]);
+        assert_eq!(p.screen().cursor_position(), (2, 7));
+        p.process(b"\x1b[?1049l");
+        assert!(!p.screen().alternate_screen());
+        assert_eq!(rows(&p), ["d", "e", "f"]);
+        assert_eq!(p.screen().cursor_position(), (2, 1));
+        p.process(b"!");
+        assert_eq!(rows(&p)[2], "f!");
+    }
+
+    #[test]
+    fn a_row_shrink_under_the_alt_screen_keeps_a_short_normal_screen_whole() {
+        let mut p = vt100::Parser::new(6, 10, 0);
+        p.process(b"a\r\nb\x1b[?1049h\x1b[6;1Hlow");
+        set_grid(&mut p, [10, 3]);
+        assert_eq!(rows(&p), ["", "", "low"]);
+        p.process(b"\x1b[?1049l");
+        assert_eq!(rows(&p), ["a", "b", ""]);
+        assert_eq!(p.screen().cursor_position(), (1, 1));
     }
 
     #[test]

@@ -257,7 +257,6 @@ impl<'a> Feeder<'a> {
         while self.next < self.out.len() && self.out[self.next].0 <= t + 1e-9 {
             match (&self.out[self.next].1, found.last_mut()) {
                 (Piece::Bytes(b), Some(Piece::Bytes(chunk))) => chunk.extend_from_slice(b),
-                (Piece::Grid(g), Some(Piece::Grid(last))) => *last = *g,
                 (p, _) => found.push(p.clone()),
             }
             self.next += 1;
@@ -450,7 +449,7 @@ pub fn render(
     let [vw, vh] = size;
     let dev = Layout::new(size[0], size[1], look.window).boxed(look.inset)?;
     let avail = dev.avail();
-    let start = [cast.cols, cast.rows];
+    let start = record::shown([cast.cols, cast.rows]);
     let grid = cast.max_grid();
     let theme = xterm_theme(&look.theme);
     let theme_bg = look
@@ -807,7 +806,7 @@ mod tests {
     }
 
     #[test]
-    fn a_chunk_keeps_outputs_and_resizes_in_their_order_and_folds_runs() {
+    fn a_chunk_keeps_outputs_and_every_resize_in_their_order() {
         let events = vec![
             ev(0.1, Kind::Output, "a"),
             ev(0.2, Kind::Output, "b"),
@@ -823,6 +822,7 @@ mod tests {
             f.due(1.0).unwrap().unwrap().0,
             vec![
                 Piece::Bytes(b"ab".to_vec()),
+                Piece::Grid([7, 2]),
                 Piece::Grid([6, 2]),
                 Piece::Bytes(b"c".to_vec()),
                 Piece::Grid([5, 3]),
@@ -861,6 +861,41 @@ mod tests {
         assert_eq!(rects(&mut f, 0.3), Vec::<[u32; 4]>::new());
         assert_eq!(rects(&mut f, 0.4), vec![[4, 0, 4, 2]]);
         assert_eq!(f.screen.screen().size(), (2, 8));
+    }
+
+    #[test]
+    fn a_shrink_and_a_regrow_in_one_batch_both_reach_the_page_and_cut_the_text_off() {
+        let masks = crate::mask::Masks::new(
+            &[crate::mask::Mask {
+                pattern: Some("secret".into()),
+                rect: None,
+            }],
+            [40, 2],
+        )
+        .unwrap();
+        let events = vec![
+            ev(0.1, Kind::Output, "\x1b[1;25Hsecret"),
+            ev(0.2, Kind::Resize, "20x2"),
+            ev(0.2, Kind::Resize, "40x2"),
+        ];
+        let mut f = feeder(&events, &masks, [40, 2]);
+        let (found, rects) = f.due(1.0).unwrap().unwrap();
+        assert_eq!(
+            found,
+            vec![
+                Piece::Bytes(b"\x1b[1;25Hsecret".to_vec()),
+                Piece::Grid([20, 2]),
+                Piece::Grid([40, 2]),
+            ]
+        );
+        assert_eq!(f.grid, [40, 2]);
+        assert_eq!(f.screen.screen().size(), (2, 40));
+        assert!(!f.screen.screen().contents().contains("secret"));
+        assert_eq!(rects, "null");
+        assert_eq!(
+            batch(&found),
+            format!("[\"{}\",[20,2],[40,2]]", b64(b"\x1b[1;25Hsecret"))
+        );
     }
 
     #[test]
