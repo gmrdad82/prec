@@ -70,16 +70,29 @@ pub fn set_grid(parser: &mut vt100::Parser, grid: [u32; 2]) {
     if parser.screen().size() == (rows, cols) {
         return;
     }
-    if parser.screen().alternate_screen() {
+    let alt = parser.screen().alternate_screen();
+    let mut normal = 0;
+    if alt {
         parser.process(b"\x1b[?47l");
-        fit_rows(parser, rows);
+        normal = fit_rows(parser, rows);
         parser.process(b"\x1b[?47h");
     }
-    fit_rows(parser, rows);
+    let col = fit_rows(parser, rows);
     parser.screen_mut().set_size(rows, cols);
+    if alt {
+        parser.process(b"\x1b[?47l");
+        keep_col(parser, normal, cols);
+        parser.process(b"\x1b[?47h");
+    }
+    keep_col(parser, col, cols);
 }
 
-fn fit_rows(parser: &mut vt100::Parser, rows: u16) {
+fn keep_col(parser: &mut vt100::Parser, col: u16, cols: u16) {
+    let row = parser.screen().cursor_position().0;
+    parser.process(format!("\x1b[{};{}H", row + 1, col.min(cols - 1) + 1).as_bytes());
+}
+
+fn fit_rows(parser: &mut vt100::Parser, rows: u16) -> u16 {
     let (row, col) = parser.screen().cursor_position();
     let mut seq = format!("\x1b[r\x1b[{};{}H", row + 1, col + 1);
     if row >= rows {
@@ -87,6 +100,7 @@ fn fit_rows(parser: &mut vt100::Parser, rows: u16) {
         seq.push_str(&format!("\x1b[{n}S\x1b[{n}A"));
     }
     parser.process(seq.as_bytes());
+    col
 }
 
 fn grid_text(grid: [u32; 2]) -> String {
@@ -1704,6 +1718,51 @@ mod tests {
         p.process(b"\x1b[?1049l");
         assert_eq!(rows(&p), ["a", "b", ""]);
         assert_eq!(p.screen().cursor_position(), (1, 1));
+    }
+
+    #[test]
+    fn a_column_grow_keeps_a_cursor_waiting_to_wrap_on_the_next_cell_as_xterm_js_does() {
+        let mut p = vt100::Parser::new(2, 10, 0);
+        p.process(b"abcdefghij");
+        assert_eq!(p.screen().cursor_position(), (0, 10));
+        set_grid(&mut p, [12, 2]);
+        assert_eq!(p.screen().cursor_position(), (0, 10));
+        p.process(b"X");
+        assert_eq!(rows(&p), ["abcdefghijX", ""]);
+        assert_eq!(p.screen().cursor_position(), (0, 11));
+    }
+
+    #[test]
+    fn a_column_grow_under_the_alt_screen_keeps_the_normal_screens_waiting_cursor_too() {
+        let mut p = vt100::Parser::new(2, 10, 0);
+        p.process(b"abcdefghij\x1b[?47h\x1b[2;1Halt");
+        set_grid(&mut p, [12, 2]);
+        assert_eq!(p.screen().cursor_position(), (1, 3));
+        p.process(b"\x1b[?47l");
+        assert_eq!(p.screen().cursor_position(), (0, 10));
+        p.process(b"X");
+        assert_eq!(rows(&p), ["abcdefghijX", ""]);
+        let mut q = vt100::Parser::new(2, 10, 0);
+        q.process(b"abcdefghij\x1b[?1049h");
+        set_grid(&mut q, [12, 2]);
+        q.process(b"\x1b[?1049lX");
+        assert_eq!(rows(&q), ["abcdefghijX", ""]);
+    }
+
+    #[test]
+    fn a_column_shrink_or_a_row_change_clamps_a_waiting_cursor_to_the_last_column() {
+        let mut p = vt100::Parser::new(2, 10, 0);
+        p.process(b"abcdefghij");
+        set_grid(&mut p, [8, 2]);
+        assert_eq!(p.screen().cursor_position(), (0, 7));
+        p.process(b"X");
+        assert_eq!(rows(&p), ["abcdefgX", ""]);
+        let mut q = vt100::Parser::new(2, 10, 0);
+        q.process(b"abcdefghij");
+        set_grid(&mut q, [10, 3]);
+        assert_eq!(q.screen().cursor_position(), (0, 9));
+        q.process(b"X");
+        assert_eq!(rows(&q), ["abcdefghiX", "", ""]);
     }
 
     #[test]
