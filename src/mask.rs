@@ -79,11 +79,17 @@ impl Masks {
     }
 
     pub fn cells(&self, screen: &vt100::Screen) -> Vec<[u32; 4]> {
-        let mut out = self.rects.clone();
+        let (rows, cols) = screen.size();
+        let (rows32, cols32) = (rows as u32, cols as u32);
+        let mut out: Vec<[u32; 4]> = self
+            .rects
+            .iter()
+            .filter(|r| r[0] < cols32 && r[1] < rows32)
+            .map(|&[c, r, w, h]| [c, r, w.min(cols32 - c), h.min(rows32 - r)])
+            .collect();
         if self.patterns.is_empty() {
             return out;
         }
-        let (rows, cols) = screen.size();
         for row in 0..rows {
             let mut text = String::new();
             let mut at: Vec<u32> = vec![];
@@ -360,5 +366,40 @@ mod tests {
             serde_json::to_value(&m).unwrap(),
             serde_json::json!([{"match": "a+"}, {"rect": [1, 2, 3, 4]}])
         );
+    }
+
+    #[test]
+    fn a_rectangle_is_clipped_to_a_smaller_grid_and_dropped_when_outside_it() {
+        let m = Masks::new(
+            &[
+                rect([0, 0, 30, 3]),
+                rect([25, 1, 5, 2]),
+                rect([5, 2, 3, 1]),
+                matching("beta"),
+            ],
+            [30, 3],
+        )
+        .unwrap();
+        let mut p = vt100::Parser::new(3, 30, 0);
+        p.process(b"alpha beta");
+        assert_eq!(
+            m.cells(p.screen()),
+            vec![[0, 0, 30, 3], [25, 1, 5, 2], [5, 2, 3, 1], [6, 0, 4, 1]]
+        );
+        p.screen_mut().set_size(2, 20);
+        assert_eq!(m.cells(p.screen()), vec![[0, 0, 20, 2], [6, 0, 4, 1]]);
+        p.screen_mut().set_size(3, 27);
+        assert_eq!(
+            m.cells(p.screen()),
+            vec![[0, 0, 27, 3], [25, 1, 2, 2], [5, 2, 3, 1], [6, 0, 4, 1]]
+        );
+        p.screen_mut().set_size(4, 40);
+        assert_eq!(
+            m.cells(p.screen()),
+            vec![[0, 0, 30, 3], [25, 1, 5, 2], [5, 2, 3, 1], [6, 0, 4, 1]]
+        );
+        let text = m.text(p.screen());
+        assert_eq!(text.lines().count(), 4);
+        assert!(text.lines().all(|l| l.chars().count() == 40));
     }
 }

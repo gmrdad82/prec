@@ -1,7 +1,7 @@
 use crate::tape::{self, Step};
 use nix::sys::signal::{Signal, killpg};
 use nix::unistd::Pid;
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -13,6 +13,7 @@ pub enum Kind {
     Output,
     Input,
     Marker,
+    Resize,
 }
 
 #[derive(Clone, Debug)]
@@ -28,6 +29,82 @@ pub struct Cast {
     pub rows: u32,
     pub meta: Value,
     pub events: Vec<Event>,
+}
+
+impl Cast {
+    pub fn resizes(&self) -> bool {
+        self.events.iter().any(|e| e.kind == Kind::Resize)
+    }
+
+    pub fn max_grid(&self) -> [u32; 2] {
+        self.events
+            .iter()
+            .filter(|e| e.kind == Kind::Resize)
+            .filter_map(|e| grid_of(&e.data))
+            .fold([self.cols, self.rows], |m, g| {
+                [m[0].max(g[0]), m[1].max(g[1])]
+            })
+    }
+}
+
+pub const CAST_SIDES: std::ops::RangeInclusive<u32> = 1..=1000;
+
+pub fn grid_of(data: &str) -> Option<[u32; 2]> {
+    let (c, r) = data.split_once('x')?;
+    let side = |s: &str| {
+        s.bytes()
+            .all(|b| b.is_ascii_digit())
+            .then(|| s.parse::<u32>().ok())
+            .flatten()
+            .filter(|n| CAST_SIDES.contains(n))
+    };
+    Some([side(c)?, side(r)?])
+}
+
+pub fn shown(grid: [u32; 2]) -> [u32; 2] {
+    [grid[0].max(2), grid[1]]
+}
+
+pub fn set_grid(parser: &mut vt100::Parser, grid: [u32; 2]) {
+    let [cols, rows] = shown(grid).map(|n| n as u16);
+    if parser.screen().size() == (rows, cols) {
+        return;
+    }
+    let alt = parser.screen().alternate_screen();
+    let mut normal = 0;
+    if alt {
+        parser.process(b"\x1b[?47l");
+        normal = fit_rows(parser, rows);
+        parser.process(b"\x1b[?47h");
+    }
+    let col = fit_rows(parser, rows);
+    parser.screen_mut().set_size(rows, cols);
+    if alt {
+        parser.process(b"\x1b[?47l");
+        keep_col(parser, normal, cols);
+        parser.process(b"\x1b[?47h");
+    }
+    keep_col(parser, col, cols);
+}
+
+fn keep_col(parser: &mut vt100::Parser, col: u16, cols: u16) {
+    let row = parser.screen().cursor_position().0;
+    parser.process(format!("\x1b[{};{}H", row + 1, col.min(cols - 1) + 1).as_bytes());
+}
+
+fn fit_rows(parser: &mut vt100::Parser, rows: u16) -> u16 {
+    let (row, col) = parser.screen().cursor_position();
+    let mut seq = format!("\x1b[r\x1b[{};{}H", row + 1, col + 1);
+    if row >= rows {
+        let n = row + 1 - rows;
+        seq.push_str(&format!("\x1b[{n}S\x1b[{n}A"));
+    }
+    parser.process(seq.as_bytes());
+    col
+}
+
+fn grid_text(grid: [u32; 2]) -> String {
+    format!("{}x{}", grid[0], grid[1])
 }
 
 pub struct Spec<'a> {
@@ -93,6 +170,10 @@ impl Screen {
         self.parser.process(s.as_bytes());
     }
 
+    fn resize(&mut self, grid: [u32; 2]) {
+        set_grid(&mut self.parser, grid);
+    }
+
     fn app_cursor(&self) -> bool {
         self.parser.screen().application_cursor()
     }
@@ -143,6 +224,8 @@ struct Session {
     screen: Screen,
     events: Vec<Event>,
     writer: Box<dyn Write + Send>,
+    pty: Option<Box<dyn MasterPty + Send>>,
+    grid: [u32; 2],
     ended: bool,
 }
 
@@ -236,6 +319,46 @@ impl Session {
         Ok(())
     }
 
+    fn resize(&mut self, grid: [u32; 2]) -> Result<(), String> {
+        self.pump();
+        if grid == self.grid {
+            return Ok(());
+        }
+        if self.ended {
+            return Err("resizing the terminal: the session has ended".into());
+        }
+        let t = self.now();
+        if let Some(pty) = &self.pty {
+            pty.resize(PtySize {
+                rows: grid[1] as u16,
+                cols: grid[0] as u16,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| format!("resizing the terminal to {}: {e}", grid_text(grid)))?;
+        }
+        self.screen.resize(grid);
+        self.grid = grid;
+        self.events.push(Event {
+            t,
+            kind: Kind::Resize,
+            data: grid_text(grid),
+        });
+        Ok(())
+    }
+
+    fn travel(&mut self, grid: [u32; 2], over: Option<Duration>) -> Result<(), String> {
+        let Some(over) = over else {
+            return self.resize(grid);
+        };
+        let started = Instant::now();
+        for (at, step) in tape::schedule(self.grid, grid, over) {
+            self.sleep((started + at).saturating_duration_since(Instant::now()));
+            self.resize(step)?;
+        }
+        Ok(())
+    }
+
     fn type_text(&mut self, text: &str, speed: Duration) -> Result<(), String> {
         if speed.is_zero() {
             return self.send(text.as_bytes());
@@ -309,13 +432,15 @@ pub fn record(spec: &Spec) -> Result<Vec<Event>, String> {
         screen: Screen::new(spec.grid),
         events: vec![],
         writer,
+        pty: Some(pair.master),
+        grid: spec.grid,
         ended: false,
     };
     let result = drive(&mut s, spec);
     s.pump();
     let end = s.now();
     let groups: Vec<i32> = [
-        pair.master.process_group_leader(),
+        s.pty.as_ref().and_then(|m| m.process_group_leader()),
         child.process_id().map(|p| p as i32),
     ]
     .into_iter()
@@ -327,7 +452,7 @@ pub fn record(spec: &Spec) -> Result<Vec<Event>, String> {
     }
     let _ = child.kill();
     s.writer = Box::new(std::io::sink());
-    drop(pair.master);
+    s.pty = None;
     let waited = Instant::now();
     while waited.elapsed() < Duration::from_secs(3) {
         if let Ok(Some(_)) = child.try_wait() {
@@ -406,6 +531,15 @@ fn drive(s: &mut Session, spec: &Spec) -> Result<(), String> {
                     (None, _) => "squeeze off".into(),
                 });
             }
+            Step::Resize {
+                grid,
+                over: Some(over),
+            } if squeezing => {
+                s.marker("hold");
+                s.travel(*grid, Some(*over))?;
+                s.marker("release");
+            }
+            Step::Resize { grid, over } => s.travel(*grid, *over)?,
             Step::Hide => s.marker("hide"),
             Step::Show => s.marker("show"),
             Step::Screenshot => s.marker("screenshot"),
@@ -528,6 +662,13 @@ fn squeeze(events: &mut Vec<Event>, grid: [u32; 2], end: f64) {
                 continue;
             }
             Kind::Input => mark(e.t, gap, hold, &mut since),
+            Kind::Resize => {
+                if let Some(g) = grid_of(&e.data) {
+                    set_grid(&mut parser, g);
+                    key = idle_key(parser.screen(), ignore.as_ref());
+                }
+                mark(e.t, gap, hold, &mut since);
+            }
             Kind::Marker => match e.data.as_str() {
                 "hold" => {
                     mark(e.t, gap, hold, &mut since);
@@ -597,6 +738,7 @@ pub fn write(path: &Path, cast: &Cast) -> Result<(), String> {
             Kind::Output => "o",
             Kind::Input => "i",
             Kind::Marker => "m",
+            Kind::Resize => "r",
         };
         out.push_str(&json!([round6(e.t), code, e.data]).to_string());
         out.push('\n');
@@ -661,13 +803,19 @@ pub fn read(path: &Path) -> Result<Cast, String> {
             Some("o") => Kind::Output,
             Some("i") => Kind::Input,
             Some("m") => Kind::Marker,
+            Some("r") => Kind::Resize,
             _ => continue,
         };
-        events.push(Event {
-            t,
-            kind,
-            data: v[2].as_str().unwrap_or_default().to_string(),
-        });
+        let data = v[2].as_str().unwrap_or_default().to_string();
+        if kind == Kind::Resize && grid_of(&data).is_none() {
+            return Err(at(&format!(
+                "a resize to {} is not COLSxROWS, each from {} to {}",
+                v[2],
+                CAST_SIDES.start(),
+                CAST_SIDES.end()
+            )));
+        }
+        events.push(Event { t, kind, data });
     }
     if events.is_empty() {
         return Err(format!("{}: a cast with no events", path.display()));
@@ -780,6 +928,8 @@ mod tests {
             screen: Screen::new([20, 4]),
             events: vec![],
             writer: Box::new(std::io::sink()),
+            pty: None,
+            grid: [20, 4],
             ended: false,
         };
         s.send(b"exit\r").unwrap();
@@ -1078,7 +1228,7 @@ mod tests {
     fn a_cast_reader_skips_blank_lines_and_event_codes_it_does_not_replay() {
         let (_, got) = read_text(
             "lenient",
-            "{\"version\": 2}\n\n[0.1, \"r\", \"80x24\"]\n  \n[0.2, \"o\", \"a\"]\n[0.3, \"m\"]\n",
+            "{\"version\": 2}\n\n[0.1, \"x\", \"80x24\"]\n  \n[0.2, \"o\", \"a\"]\n[0.3, \"m\"]\n",
         );
         let cast = got.unwrap();
         assert_eq!((cast.cols, cast.rows), (80, 24));
@@ -1086,6 +1236,8 @@ mod tests {
         assert_eq!(cast.events.len(), 2);
         assert_eq!(cast.events[0].kind, Kind::Output);
         assert_eq!(cast.events[1].data, "");
+        assert!(!cast.resizes());
+        assert_eq!(cast.max_grid(), [80, 24]);
     }
 
     #[test]
@@ -1094,7 +1246,7 @@ mod tests {
         for (name, text) in [
             ("bare", head.to_string()),
             ("blank", format!("{head}\n  \n")),
-            ("unreplayed", format!("{head}[0.1, \"r\", \"80x24\"]\n")),
+            ("unreplayed", format!("{head}[0.1, \"x\", \"80x24\"]\n")),
         ] {
             let (p, got) = read_text(name, &text);
             assert_eq!(
@@ -1298,5 +1450,388 @@ mod tests {
         assert_eq!(d.push(&[0xe4, b'x']), "\u{fffd}x");
         assert_eq!(d.push(&[]), "");
         assert!(d.pending.is_empty());
+    }
+
+    fn r(t: f64, d: &str) -> Event {
+        Event {
+            t,
+            kind: Kind::Resize,
+            data: d.into(),
+        }
+    }
+
+    #[test]
+    fn a_cast_with_resizes_writes_r_events_and_reads_them_back_with_its_largest_grid() {
+        let path = scratch("resizes").join("demo-clip-r.cast");
+        let cast = Cast {
+            cols: 40,
+            rows: 10,
+            meta: json!({"product": "demo"}),
+            events: vec![
+                m(0.0, "show"),
+                o(0.1, "a"),
+                r(0.5, "39x10"),
+                r(0.6, "38x12"),
+                o(0.7, "b"),
+                r(0.9, "20x6"),
+                m(1.0, "end"),
+            ],
+        };
+        write(&path, &cast).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<Value> = text
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(lines[0]["width"], 40);
+        assert_eq!(lines[0]["height"], 10);
+        assert_eq!(lines[3], json!([0.5, "r", "39x10"]));
+        assert_eq!(lines[6], json!([0.9, "r", "20x6"]));
+        let back = read(&path).unwrap();
+        assert_eq!((back.cols, back.rows), (40, 10));
+        let kinds: Vec<Kind> = back.events.iter().map(|e| e.kind.clone()).collect();
+        assert_eq!(
+            kinds,
+            [
+                Kind::Marker,
+                Kind::Output,
+                Kind::Resize,
+                Kind::Resize,
+                Kind::Output,
+                Kind::Resize,
+                Kind::Marker
+            ]
+        );
+        assert_eq!(back.events[3].data, "38x12");
+        assert!(back.resizes());
+        assert_eq!(back.max_grid(), [40, 12]);
+        let tl = Timeline::of(&back.events);
+        assert_eq!(tl.segments, vec![(0.0, 1.0)]);
+    }
+
+    #[test]
+    fn a_resize_event_that_is_not_a_grid_is_refused_by_its_line() {
+        let head = "{\"version\": 2, \"width\": 8, \"height\": 4}\n";
+        for (name, data, shown) in [
+            ("empty", "\"\"", "\"\""),
+            ("noside", "\"80\"", "\"80\""),
+            ("zero", "\"0x24\"", "\"0x24\""),
+            ("zerorows", "\"80x0\"", "\"80x0\""),
+            ("wide", "\"1001x24\"", "\"1001x24\""),
+            ("tall", "\"80x65535\"", "\"80x65535\""),
+            ("nocols", "\"0x1\"", "\"0x1\""),
+            ("sign", "\"+80x24\"", "\"+80x24\""),
+            ("upper", "\"80X24\"", "\"80X24\""),
+            ("spaced", "\"80 x 24\"", "\"80 x 24\""),
+            ("three", "\"80x24x2\"", "\"80x24x2\""),
+            ("number", "8024", "8024"),
+            ("missing", "null", "null"),
+        ] {
+            let (p, got) = read_text(
+                name,
+                &format!("{head}[0.0, \"m\", \"show\"]\n[0.5, \"r\", {data}]\n"),
+            );
+            assert_eq!(
+                got.unwrap_err(),
+                format!(
+                    "{}: line 3: a resize to {shown} is not COLSxROWS, each from 1 to 1000",
+                    p.display()
+                ),
+                "{name}"
+            );
+        }
+        let (_, got) = read_text(
+            "edges",
+            &format!(
+                "{head}[0.5, \"r\", \"1000x1\"]\n[0.6, \"r\", \"1x1000\"]\n[0.7, \"r\", \"1x1\"]\n"
+            ),
+        );
+        let edges = got.unwrap();
+        assert_eq!(edges.max_grid(), [1000, 1000]);
+        assert_eq!(edges.events[2].data, "1x1");
+        assert_eq!(grid_of("96x16"), Some([96, 16]));
+        assert_eq!(grid_of("x16"), None);
+        assert_eq!(grid_text([38, 16]), "38x16");
+    }
+
+    fn session(grid: [u32; 2]) -> (std::sync::mpsc::Sender<(Duration, Vec<u8>)>, Session) {
+        let (tx, rx) = channel();
+        let s = Session {
+            start: Instant::now(),
+            rx,
+            decoder: Utf8 { pending: vec![] },
+            screen: Screen::new(grid),
+            events: vec![],
+            writer: Box::new(std::io::sink()),
+            pty: None,
+            grid,
+            ended: false,
+        };
+        (tx, s)
+    }
+
+    #[test]
+    fn a_resize_records_each_new_grid_once_resizes_the_screen_and_keeps_the_output_before_it() {
+        let (tx, mut s) = session([40, 10]);
+        tx.send((Duration::ZERO, b"before".to_vec())).unwrap();
+        s.travel([40, 10], None).unwrap();
+        s.travel([40, 10], Some(Duration::from_millis(2))).unwrap();
+        assert_eq!(s.events.len(), 1);
+        assert_eq!(s.events[0].data, "before");
+        s.travel([36, 8], Some(Duration::from_millis(2))).unwrap();
+        let sizes: Vec<&str> = s
+            .events
+            .iter()
+            .filter(|e| e.kind == Kind::Resize)
+            .map(|e| e.data.as_str())
+            .collect();
+        assert_eq!(sizes, ["39x9", "38x9", "37x8", "36x8"]);
+        let times: Vec<f64> = s.events.iter().map(|e| e.t).collect();
+        assert!(times.windows(2).all(|w| w[0] <= w[1]), "{times:?}");
+        assert_eq!(s.grid, [36, 8]);
+        assert_eq!(s.screen.parser.screen().size(), (8, 36));
+        s.travel([60, 16], None).unwrap();
+        assert_eq!(s.events.last().unwrap().data, "60x16");
+        assert_eq!(s.screen.parser.screen().size(), (16, 60));
+        s.screen.feed("\x1b[16;1Hbottom");
+        assert!(
+            s.screen
+                .matches(&regex::Regex::new("^bottom$").unwrap(), false)
+        );
+        drop(tx);
+        assert_eq!(
+            s.travel([20, 6], None).unwrap_err(),
+            "resizing the terminal: the session has ended"
+        );
+        assert_eq!(s.grid, [60, 16]);
+        s.travel([60, 16], None).unwrap();
+    }
+
+    #[test]
+    fn a_squeeze_never_cuts_across_a_resize() {
+        let base = vec![
+            m(0.0, "show"),
+            m(0.0, "squeeze 1"),
+            o(0.5, "a"),
+            r(3.0, "30x2"),
+            o(6.0, "b"),
+        ];
+        let mut ev = base.clone();
+        squeeze(&mut ev, [10, 2], 6.2);
+        let cuts: Vec<(String, i64)> = ev
+            .iter()
+            .filter(|e| e.data == "cut" || e.data == "resume")
+            .map(|e| (e.data.clone(), (e.t * 1e3).round() as i64))
+            .collect();
+        assert_eq!(
+            cuts,
+            vec![
+                ("cut".to_string(), 1000),
+                ("resume".to_string(), 2500),
+                ("cut".to_string(), 3500),
+                ("resume".to_string(), 5500)
+            ]
+        );
+    }
+
+    fn rows(p: &vt100::Parser) -> Vec<String> {
+        p.screen().rows(0, p.screen().size().1).collect()
+    }
+
+    #[test]
+    fn shrinking_rows_scrolls_the_top_off_like_xterm_js_when_the_cursor_is_low() {
+        let mut p = vt100::Parser::new(10, 12, 0);
+        p.process(b"r0\r\nr1\r\nr2\r\nr3\r\nr4\r\nr5\r\nr6\r\nr7\r\n$ prompt");
+        assert_eq!(p.screen().cursor_position(), (8, 8));
+        set_grid(&mut p, [12, 6]);
+        assert_eq!(p.screen().size(), (6, 12));
+        assert_eq!(rows(&p), ["r3", "r4", "r5", "r6", "r7", "$ prompt"]);
+        assert_eq!(p.screen().cursor_position(), (5, 8));
+        p.process(b"!");
+        assert_eq!(rows(&p)[5], "$ prompt!");
+    }
+
+    #[test]
+    fn shrinking_rows_drops_the_lines_below_the_cursor_first() {
+        let mut p = vt100::Parser::new(6, 8, 0);
+        p.process(b"a\r\nb\r\nc\x1b[6;1Hz\x1b[3;2H");
+        set_grid(&mut p, [8, 3]);
+        assert_eq!(rows(&p), ["a", "b", "c"]);
+        assert_eq!(p.screen().cursor_position(), (2, 1));
+        let mut q = vt100::Parser::new(6, 8, 0);
+        q.process(b"a\r\nb\r\nc\r\nd\x1b[6;1Hz\x1b[4;2H");
+        set_grid(&mut q, [8, 3]);
+        assert_eq!(rows(&q), ["b", "c", "d"]);
+        assert_eq!(q.screen().cursor_position(), (2, 1));
+        set_grid(&mut q, [5, 5]);
+        assert_eq!(q.screen().size(), (5, 5));
+        assert_eq!(rows(&q), ["b", "c", "d", "", ""]);
+    }
+
+    #[test]
+    fn a_wait_after_a_row_shrink_reads_the_screen_the_clip_shows() {
+        let (_tx, mut s) = session([20, 10]);
+        s.screen
+            .feed("top\r\n\r\n\r\n\r\n\r\n\r\n\r\nlow line\r\n$ ");
+        s.travel([20, 4], None).unwrap();
+        let re = |p: &str| regex::Regex::new(p).unwrap();
+        assert!(s.screen.matches(&re("(?m)^low line$"), true));
+        assert!(!s.screen.matches(&re("top"), true));
+    }
+
+    #[test]
+    fn a_resize_takes_the_whole_screen_back_from_an_apps_scroll_region_as_xterm_js_does() {
+        let mut q = vt100::Parser::new(8, 10, 0);
+        q.process(b"a\r\nb\r\nc\r\nd\r\ne\r\nf\r\ng\r\nh\x1b[2;7r\x1b[8;1H");
+        assert_eq!(q.screen().cursor_position(), (7, 0));
+        set_grid(&mut q, [10, 4]);
+        assert_eq!(rows(&q), ["e", "f", "g", "h"]);
+        assert_eq!(q.screen().cursor_position(), (3, 0));
+        q.process(b"\r\nnext");
+        assert_eq!(rows(&q), ["f", "g", "h", "next"]);
+    }
+
+    #[test]
+    fn a_row_shrink_under_the_alt_screen_scrolls_the_normal_screen_too_as_xterm_js_does() {
+        let mut p = vt100::Parser::new(6, 10, 0);
+        p.process(b"a\r\nb\r\nc\r\nd\r\ne\r\nf");
+        assert_eq!(p.screen().cursor_position(), (5, 1));
+        p.process(b"\x1b[?1049h\x1b[Halt top\x1b[6;1Halt low");
+        set_grid(&mut p, [10, 3]);
+        assert!(p.screen().alternate_screen());
+        assert_eq!(rows(&p), ["", "", "alt low"]);
+        assert_eq!(p.screen().cursor_position(), (2, 7));
+        p.process(b"\x1b[?1049l");
+        assert!(!p.screen().alternate_screen());
+        assert_eq!(rows(&p), ["d", "e", "f"]);
+        assert_eq!(p.screen().cursor_position(), (2, 1));
+        p.process(b"!");
+        assert_eq!(rows(&p)[2], "f!");
+    }
+
+    #[test]
+    fn a_row_shrink_under_the_alt_screen_keeps_a_short_normal_screen_whole() {
+        let mut p = vt100::Parser::new(6, 10, 0);
+        p.process(b"a\r\nb\x1b[?1049h\x1b[6;1Hlow");
+        set_grid(&mut p, [10, 3]);
+        assert_eq!(rows(&p), ["", "", "low"]);
+        p.process(b"\x1b[?1049l");
+        assert_eq!(rows(&p), ["a", "b", ""]);
+        assert_eq!(p.screen().cursor_position(), (1, 1));
+    }
+
+    #[test]
+    fn a_column_grow_keeps_a_cursor_waiting_to_wrap_on_the_next_cell_as_xterm_js_does() {
+        let mut p = vt100::Parser::new(2, 10, 0);
+        p.process(b"abcdefghij");
+        assert_eq!(p.screen().cursor_position(), (0, 10));
+        set_grid(&mut p, [12, 2]);
+        assert_eq!(p.screen().cursor_position(), (0, 10));
+        p.process(b"X");
+        assert_eq!(rows(&p), ["abcdefghijX", ""]);
+        assert_eq!(p.screen().cursor_position(), (0, 11));
+    }
+
+    #[test]
+    fn a_column_grow_under_the_alt_screen_keeps_the_normal_screens_waiting_cursor_too() {
+        let mut p = vt100::Parser::new(2, 10, 0);
+        p.process(b"abcdefghij\x1b[?47h\x1b[2;1Halt");
+        set_grid(&mut p, [12, 2]);
+        assert_eq!(p.screen().cursor_position(), (1, 3));
+        p.process(b"\x1b[?47l");
+        assert_eq!(p.screen().cursor_position(), (0, 10));
+        p.process(b"X");
+        assert_eq!(rows(&p), ["abcdefghijX", ""]);
+        let mut q = vt100::Parser::new(2, 10, 0);
+        q.process(b"abcdefghij\x1b[?1049h");
+        set_grid(&mut q, [12, 2]);
+        q.process(b"\x1b[?1049lX");
+        assert_eq!(rows(&q), ["abcdefghijX", ""]);
+    }
+
+    #[test]
+    fn a_column_shrink_or_a_row_change_clamps_a_waiting_cursor_to_the_last_column() {
+        let mut p = vt100::Parser::new(2, 10, 0);
+        p.process(b"abcdefghij");
+        set_grid(&mut p, [8, 2]);
+        assert_eq!(p.screen().cursor_position(), (0, 7));
+        p.process(b"X");
+        assert_eq!(rows(&p), ["abcdefgX", ""]);
+        let mut q = vt100::Parser::new(2, 10, 0);
+        q.process(b"abcdefghij");
+        set_grid(&mut q, [10, 3]);
+        assert_eq!(q.screen().cursor_position(), (0, 9));
+        q.process(b"X");
+        assert_eq!(rows(&q), ["abcdefghiX", "", ""]);
+    }
+
+    #[test]
+    fn a_resize_to_the_grid_it_has_changes_nothing_and_one_column_shows_as_two() {
+        let mut p = vt100::Parser::new(4, 10, 0);
+        p.process(b"\x1b[2;3r\x1b[3;5Hx");
+        set_grid(&mut p, [10, 4]);
+        assert_eq!(p.screen().cursor_position(), (2, 5));
+        p.process(b"\n\n\n");
+        assert_eq!(p.screen().cursor_position(), (2, 5));
+        assert_eq!(shown([1, 7]), [2, 7]);
+        assert_eq!(shown([2, 1]), [2, 1]);
+        set_grid(&mut p, [1, 3]);
+        assert_eq!(p.screen().size(), (3, 2));
+    }
+
+    #[test]
+    fn a_squeeze_holds_an_eased_travel_whole_and_not_an_instant_resize() {
+        let (_tx, mut s) = session([40, 10]);
+        let steps = [
+            Step::Squeeze {
+                gap: Some(Duration::from_millis(1)),
+                ignore: None,
+            },
+            Step::Resize {
+                grid: [38, 10],
+                over: Some(Duration::from_millis(3)),
+            },
+            Step::Resize {
+                grid: [40, 10],
+                over: None,
+            },
+        ];
+        let spec = Spec {
+            grid: [40, 10],
+            env: &[],
+            path: "/bin",
+            cwd: Path::new("."),
+            ns: None,
+            prompt: "$ ",
+            launch: None,
+            settle: Duration::ZERO,
+            typing: Duration::ZERO,
+            steps: &steps,
+            still: false,
+        };
+        drive(&mut s, &spec).unwrap();
+        let tail: Vec<&str> = s
+            .events
+            .iter()
+            .skip_while(|e| !e.data.starts_with("squeeze "))
+            .skip(1)
+            .map(|e| e.data.as_str())
+            .collect();
+        assert_eq!(tail, ["hold", "39x10", "38x10", "release", "40x10"]);
+        let mut ev = s.events.clone();
+        let end = ev.last().unwrap().t + 1.0;
+        squeeze(&mut ev, [40, 10], end);
+        let at = |d: &str| ev.iter().find(|e| e.data == d).unwrap().t;
+        let held = (at("hold"), at("release"));
+        let cuts: Vec<f64> = ev
+            .iter()
+            .filter(|e| e.data == "cut" || e.data == "resume")
+            .map(|e| e.t)
+            .collect();
+        assert!(
+            cuts.iter().all(|&t| t <= held.0 || t >= held.1),
+            "{cuts:?} inside {held:?}"
+        );
+        assert!(cuts.iter().any(|&t| t > held.1), "{cuts:?}");
     }
 }

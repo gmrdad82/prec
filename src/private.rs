@@ -177,7 +177,7 @@ pub fn scan(cast: &Cast, needles: &Needles) -> Vec<Finding> {
     let outputs: Vec<_> = cast
         .events
         .iter()
-        .filter(|e| e.kind == Kind::Output)
+        .filter(|e| matches!(e.kind, Kind::Output | Kind::Resize))
         .collect();
     let masks = crate::mask::Masks::of_meta(&cast.meta, [cast.cols, cast.rows])
         .unwrap_or_else(|_| crate::mask::Masks::new(&[], [0, 0]).expect("no masks"));
@@ -187,7 +187,14 @@ pub fn scan(cast: &Cast, needles: &Needles) -> Vec<Finding> {
     let mut fresh = true;
     for (real, at) in samples {
         while next < outputs.len() && outputs[next].t <= real + 1e-9 {
-            parser.process(outputs[next].data.as_bytes());
+            let e = outputs[next];
+            if e.kind == Kind::Resize {
+                if let Some(g) = crate::record::grid_of(&e.data) {
+                    crate::record::set_grid(&mut parser, g);
+                }
+            } else {
+                parser.process(e.data.as_bytes());
+            }
             next += 1;
             fresh = true;
         }
@@ -768,5 +775,82 @@ mod tests {
         );
         assert_eq!(by_line(&passed[1..]), passed[1..]);
         assert!(by_line(&[]).is_empty());
+    }
+
+    #[test]
+    fn a_home_path_shown_past_the_starting_width_after_a_resize_is_found() {
+        let resized = |with: bool| {
+            let mut events = vec![Event {
+                t: 0.0,
+                kind: Kind::Marker,
+                data: "show".into(),
+            }];
+            if with {
+                events.push(Event {
+                    t: 0.1,
+                    kind: Kind::Resize,
+                    data: "60x2".into(),
+                });
+            }
+            events.push(Event {
+                t: 0.2,
+                kind: Kind::Output,
+                data: "\x1b[1;20H/srv/alpha/work".into(),
+            });
+            events.push(Event {
+                t: 1.0,
+                kind: Kind::Marker,
+                data: "end".into(),
+            });
+            Cast {
+                cols: 10,
+                rows: 2,
+                meta: json!({}),
+                events,
+            }
+        };
+        let found: Vec<String> = whats(&resized(true)).into_iter().map(|w| w.0).collect();
+        assert!(found.contains(&"the home path".to_string()), "{found:?}");
+        let narrow: Vec<String> = whats(&resized(false)).into_iter().map(|w| w.0).collect();
+        assert!(!narrow.contains(&"the home path".to_string()), "{narrow:?}");
+    }
+
+    #[test]
+    fn a_row_shrink_in_the_scan_keeps_the_cursor_line_the_way_the_clip_shows_it() {
+        let events = vec![
+            Event {
+                t: 0.0,
+                kind: Kind::Marker,
+                data: "hide".into(),
+            },
+            Event {
+                t: 0.1,
+                kind: Kind::Output,
+                data: "one\r\ntwo\r\nthree\r\n/srv/alpha/x".into(),
+            },
+            Event {
+                t: 0.2,
+                kind: Kind::Resize,
+                data: "40x2".into(),
+            },
+            Event {
+                t: 0.3,
+                kind: Kind::Marker,
+                data: "show".into(),
+            },
+            Event {
+                t: 1.0,
+                kind: Kind::Marker,
+                data: "end".into(),
+            },
+        ];
+        let c = Cast {
+            cols: 40,
+            rows: 6,
+            meta: json!({}),
+            events,
+        };
+        let found: Vec<String> = whats(&c).into_iter().map(|w| w.0).collect();
+        assert!(found.contains(&"the home path".to_string()), "{found:?}");
     }
 }

@@ -30,6 +30,7 @@ Sleep 1.2s
 | `Wait+Screen /regex/` | waits until anywhere on the screen matches |
 | `Idle <duration>` | waits until the screen hasn't changed for that long; default `2s` |
 | `Squeeze [<gap>] [/regex/]`, `Squeeze off` | from here on, shortens every stretch where only a spinner or a counter moves to `gap` (default `500ms`) |
+| `Resize <cols>x<rows> [<duration>]` | resizes the terminal, at once or over the duration; each side is 2 to 1000 |
 | `Hide`, `Show` | cut the steps between them from the recording |
 | `Screenshot` | keeps a marker in the cast |
 | `# …` | a comment |
@@ -95,6 +96,22 @@ Sleep 3s
 - `home`, `hostname` and `cwd = "{home}/…"` give the session a neutral home, host and folder, so a banner or a tool line that prints them shows nothing of yours.
 
 prec refuses to replay a cast whose picture shows your home path, hostname, user name, an email, a passed value, a plan or organisation label, or a usage limit line that no mask hides ([Render a cast again](render-a-cast-again.md#a-picture-with-private-data)); `prec record` keeps the take and prints what it found and when.
+
+## Resize the terminal
+
+`Resize` changes the terminal's size mid-shot, so a clip can show an app laying itself out again as its window narrows and widens:
+
+```text
+Sleep 1.2s
+Resize 38x16 3s
+Sleep 1.5s
+Resize 96x16 3s
+Sleep 1.2s
+```
+
+`Resize 38x16` resizes at once. `Resize 38x16 3s` travels there over 3 seconds through every whole column and row in between, slow at both ends and fast in the middle (an ease-in-out sine curve), and lands on the target at exactly 3 seconds. Each step sets the pty's size, so the app gets a `SIGWINCH` and reads the new size as it would from a dragged window; a `Wait` or `Idle` after it sees the new grid, and the tape's later steps start from it. A resize to the size the terminal already has does nothing. Under a `Squeeze`, a travel is kept whole, at its own pace. A `Resize` takes no `@speed`, and a size that isn't `<cols>x<rows>` with each side from 2 to 1000, or a duration that doesn't read, is refused by its line.
+
+The cast's header keeps the shot's starting grid and each step is an asciicast `r` event, such as `[2.4, "r", "61x16"]`. The render fits the font once, to the largest grid the cast holds, so the text never changes size and the output keeps its size; the window is centred for that largest grid, and a smaller grid keeps the same top-left corner, its window frame, bar and lights drawn around it, as if its right and bottom edges were dragged. Narrowing cuts the lines off at the new width rather than wrapping them onto the next row, in the recording's screen and the render alike, so a `match` mask covers the same cells a frame shows; an app that redraws on `SIGWINCH` lays them out again itself. A `mask` rectangle is checked against the starting grid and clipped to a smaller one; a `match` mask works on the screen as it is. The render's manifest adds `max_grid` when the cast resizes.
 
 ## Stills
 
