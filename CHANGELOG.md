@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.5.1 — 2026-10-23
+
+### Added
+
+- `Wait+Exit[@timeout]` waits until the session's shell exits and its terminal closes, and refuses like `Wait` on a timeout (15 s by default).
+
+### Changed
+
+- prec's own tests check every master by decoding it in-process with pito-codecs, the codec prec encodes with, so the test suite needs no ffmpeg or ffprobe. They also check each master's BT.709 colour tags.
+- No prec test sleeps to wait for something: each waits on what the session prints or on its end.
+
 ## v1.5.0 — 2026-10-22
 
 ### Added
