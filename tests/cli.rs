@@ -183,6 +183,9 @@ fn in_terminal(dir: &Path, args: &[&str], no_color: bool) -> (String, u32) {
     let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_prec"));
     cmd.args(args);
     cmd.env_clear();
+    if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+        cmd.env("LLVM_PROFILE_FILE", profile);
+    }
     cmd.env("PATH", std::env::var_os("PATH").unwrap_or_default());
     cmd.env("TERM", "xterm-256color");
     cmd.env("PREC_CONFIG", dir.join("config.toml"));
@@ -658,6 +661,9 @@ fn doctor(dir: &Path, path: &Path) -> Command {
         .env("PREC_CONFIG", dir.join("config.toml"))
         .env("XDG_CACHE_HOME", dir.join("cache"))
         .env("PITO_JOBS", "off");
+    if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+        c.env("LLVM_PROFILE_FILE", profile);
+    }
     c
 }
 
