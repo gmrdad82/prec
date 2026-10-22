@@ -8,6 +8,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
 const DEADLINE: Duration = Duration::from_secs(60);
+const GRACE: Duration = Duration::from_secs(3);
 
 const SHIM: &str = r#"exec "$0" "$@" 3<&0 4>&1 0</dev/null 1>&2"#;
 
@@ -34,6 +35,7 @@ pub struct Browser {
     from: Receiver<Vec<u8>>,
     log: PathBuf,
     deadline: Duration,
+    grace: Duration,
     next: u64,
     session: Option<String>,
     lost: Option<String>,
@@ -168,6 +170,7 @@ impl Browser {
             from: reader(stdout),
             log,
             deadline: DEADLINE,
+            grace: GRACE,
             next: 0,
             session: None,
             lost: None,
@@ -383,7 +386,7 @@ impl Drop for Browser {
             let _ = to.send(bytes);
         }
         let started = Instant::now();
-        while started.elapsed() < Duration::from_secs(3) {
+        while started.elapsed() < self.grace {
             if let Ok(Some(_)) = self.child.try_wait() {
                 crate::paths::reaped(pid);
                 return;
@@ -425,6 +428,7 @@ mod tests {
             from: reader(stdout),
             log: dir.join("chromium.log"),
             deadline: DEADLINE,
+            grace: GRACE,
             next: 0,
             session: Some("S".into()),
             lost: None,
@@ -434,9 +438,19 @@ mod tests {
 
     #[test]
     fn a_crashed_page_fails_the_command_by_name_and_the_browser_is_killed_at_once() {
-        let mut b = peer(
-            r#"IFS= read -r -d '' _; printf '{"method":"Inspector.targetCrashed","sessionId":"S","params":{}}\0'; exec sleep 30"#,
+        let outlived = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tmp")
+            .join("cdp-unit-crashed")
+            .join("outlived");
+        let _ = std::fs::remove_file(&outlived);
+        let mut b = peer_in(
+            "cdp-unit-crashed",
+            &format!(
+                r#"IFS= read -r -d '' _; printf '{{"method":"Inspector.targetCrashed","sessionId":"S","params":{{}}}}\0'; sleep 30 && printf 'outlived\n' > '{}'"#,
+                outlived.display()
+            ),
         );
+        b.grace = Duration::from_secs(3600);
         let e = b
             .send("Runtime.evaluate", json!({}), Some("S".into()))
             .unwrap_err();
@@ -449,10 +463,9 @@ mod tests {
                 .is_err()
         );
         let pid = b.child.id();
-        let started = Instant::now();
         drop(b);
-        assert!(started.elapsed() < Duration::from_secs(2));
-        assert!(nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_err());
+        assert!(gone_by(pid));
+        assert!(!outlived.exists());
     }
 
     #[test]
@@ -646,15 +659,29 @@ mod tests {
 
     #[test]
     fn a_browser_that_closes_when_asked_is_reaped_without_a_kill() {
-        let b = peer_in(
+        let seen = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tmp")
+            .join("cdp-unit-close")
+            .join("seen");
+        let _ = std::fs::remove_file(&seen);
+        let mut b = peer_in(
             "cdp-unit-close",
-            r#"IFS= read -r -d '' m; case "$m" in *Browser.close*) exit 0;; esac; exec sleep 30"#,
+            &format!(
+                r#"IFS= read -r -d '' m; case "$m" in *Browser.close*) printf '%s\n' "$m" > '{0}'; printf 'exited\n' >> '{0}'; exit 0;; esac; exec sleep 30"#,
+                seen.display()
+            ),
         );
+        b.grace = Duration::from_secs(3600);
         let pid = b.child.id();
-        let started = Instant::now();
         drop(b);
-        assert!(started.elapsed() < Duration::from_secs(3));
         assert!(gone_by(pid));
+        let text = std::fs::read_to_string(&seen).unwrap();
+        let mut lines = text.lines();
+        let asked: Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+        assert_eq!(asked["method"], "Browser.close");
+        assert!(asked["id"].is_u64());
+        assert_eq!(lines.next(), Some("exited"));
+        assert_eq!(lines.next(), None);
     }
 
     #[test]
