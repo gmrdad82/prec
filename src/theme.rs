@@ -318,4 +318,207 @@ mod tests {
         assert_eq!(t["mode"], "light");
         assert_eq!(hex("#1e1e2e"), Some([0x1e, 0x1e, 0x2e]));
     }
+
+    const COLOURS: [&str; 18] = [
+        "background",
+        "foreground",
+        "black",
+        "red",
+        "green",
+        "yellow",
+        "blue",
+        "magenta",
+        "cyan",
+        "white",
+        "brightBlack",
+        "brightRed",
+        "brightGreen",
+        "brightYellow",
+        "brightBlue",
+        "brightMagenta",
+        "brightCyan",
+        "brightWhite",
+    ];
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tmp/theme-unit")
+            .join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn palette(extra: &str) -> String {
+        let mut text = String::from("background = \"#101010\"\nforeground = \"#f0f0f0\"\n");
+        for i in 0..16 {
+            text.push_str(&format!("color{i} = \"#{:02x}{:02x}{:02x}\"\n", i, i, i));
+        }
+        text.push_str(extra);
+        text
+    }
+
+    #[test]
+    fn every_vendored_theme_has_a_unique_name_and_colours_that_parse() {
+        let all = vendored();
+        assert!(all.len() > 300, "{}", all.len());
+        let names = builtins();
+        assert_eq!(names.len(), all.len());
+        let mut unique = names.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len());
+        for t in &all {
+            let name = t["name"].as_str().unwrap();
+            for k in COLOURS {
+                let v = t[k].as_str().unwrap_or_else(|| panic!("{name}: no {k}"));
+                assert!(hex(v).is_some(), "{name}: {k} {v}");
+            }
+            for k in ["selection", "cursor"] {
+                if let Some(v) = t.get(k) {
+                    assert!(hex(v.as_str().unwrap()).is_some(), "{name}: {k} {v}");
+                }
+            }
+            assert_ne!(
+                hex(t["background"].as_str().unwrap()),
+                hex(t["foreground"].as_str().unwrap()),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_curated_pairs_and_singles_are_builtins_and_each_light_is_lighter() {
+        for (pair, light, dark) in PAIRS {
+            let l = builtin(light).unwrap_or_else(|| panic!("{pair}: no {light}"));
+            let d = builtin(dark).unwrap_or_else(|| panic!("{pair}: no {dark}"));
+            let lum = |t: &Value| luminance(hex(t["background"].as_str().unwrap()).unwrap());
+            assert!(lum(&l) > lum(&d), "{pair}");
+        }
+        for s in SINGLES {
+            assert!(builtin(s).is_some(), "{s}");
+        }
+        assert!(builtin(crate::config::DEFAULT_THEME).is_some());
+        assert!(builtin("No Such Theme").is_none());
+    }
+
+    #[test]
+    fn hex_takes_six_digits_with_or_without_the_hash() {
+        assert_eq!(hex(" #FFFFFF "), Some([255, 255, 255]));
+        assert_eq!(hex("00ff7f"), Some([0, 255, 127]));
+        assert_eq!(hex("#abc"), None);
+        assert_eq!(hex("#abcdef0"), None);
+        assert_eq!(hex("#zzzzzz"), None);
+        assert_eq!(hex(""), None);
+    }
+
+    #[test]
+    fn a_named_theme_resolves_to_its_vhs_keys_with_a_slug_label() {
+        let c = resolve("Catppuccin Mocha", None, "alpha").unwrap();
+        assert_eq!(c.label.as_deref(), Some("catppuccin-mocha"));
+        assert_eq!(c.name, "Catppuccin Mocha");
+        assert_eq!(c.json["name"], "Catppuccin Mocha");
+        assert!(c.json.get("isDark").is_none());
+        for k in COLOURS {
+            assert!(c.json.get(k).is_some(), "{k}");
+        }
+        assert_eq!(
+            resolve("No Such", None, "alpha").unwrap_err(),
+            "no theme \"No Such\"; see `prec themes`"
+        );
+        let e = resolve("omarchy:zz-no-such-theme", None, "alpha").unwrap_err();
+        assert!(e.starts_with("no Omarchy theme zz-no-such-theme"), "{e}");
+    }
+
+    #[test]
+    fn app_takes_the_apps_palette_named_after_the_product_or_falls_back() {
+        let own = json!({"background": "#000000", "foreground": "#ffffff", "mode": "dark"});
+        let c = resolve("app", Some(&own), "alpha").unwrap();
+        assert_eq!(c.label, None);
+        assert_eq!(c.name, "app");
+        assert_eq!(
+            c.json,
+            json!({"name": "alpha", "background": "#000000", "foreground": "#ffffff"})
+        );
+        let named = json!({"name": "Alpha Night", "background": "#000000"});
+        assert_eq!(
+            resolve("app", Some(&named), "alpha").unwrap().json["name"],
+            "Alpha Night"
+        );
+        let fallback = resolve("app", None, "alpha").unwrap();
+        assert_eq!(fallback.label, None);
+        assert_eq!(fallback.name, "app");
+        assert_eq!(fallback.json["name"], crate::config::theme());
+    }
+
+    #[test]
+    fn a_colors_toml_with_ansi_slots_reads_directly_and_guesses_its_mode() {
+        let dark = from_colors_toml("alpha", &palette("")).unwrap();
+        assert_eq!(dark["name"], "alpha");
+        assert_eq!(dark["black"], "#000000");
+        assert_eq!(dark["brightWhite"], "#0f0f0f");
+        assert_eq!(dark["selection"], "#f0f0f0");
+        assert_eq!(dark["cursor"], "#f0f0f0");
+        assert_eq!(dark["cursorAccent"], "#101010");
+        assert_eq!(dark["mode"], "dark");
+        let light = from_colors_toml(
+            "beta",
+            &palette("selection_background = \"#333333\"\ncursor = \"#444444\"\n")
+                .replace("#101010", "#fafafa"),
+        )
+        .unwrap();
+        assert_eq!(light["mode"], "light");
+        assert_eq!(light["selection"], "#333333");
+        assert_eq!(light["cursor"], "#444444");
+        assert!(from_colors_toml("x", &palette("").replace("color5 =", "colour5 =")).is_none());
+        assert!(from_colors_toml("x", &palette("").replace("background =", "bg =")).is_none());
+        assert!(from_colors_toml("x", "not toml [").is_none());
+    }
+
+    #[test]
+    fn a_kitty_conf_reads_its_colours_and_skips_comments() {
+        let mut conf = String::from(
+            "# a comment\n\nfont_family Alpha Mono\nbackground #fafafa\nforeground #101010\nselection_background #222222\ncursor #333333\n",
+        );
+        for i in 0..16 {
+            conf.push_str(&format!("color{i} #{:02x}0000\n", i));
+        }
+        let t = from_kitty("gamma", &conf).unwrap();
+        assert_eq!(t["name"], "gamma");
+        assert_eq!(t["red"], "#010000");
+        assert_eq!(t["brightWhite"], "#0f0000");
+        assert_eq!(t["selection"], "#222222");
+        assert_eq!(t["cursor"], "#333333");
+        assert_eq!(t["mode"], "light");
+        assert!(from_kitty("gamma", &conf.replace("color9 ", "# color9 ")).is_none());
+        assert!(from_kitty("gamma", &conf.replace("background #fafafa\n", "")).is_none());
+    }
+
+    #[test]
+    fn omarchy_themes_are_read_from_every_root_and_a_later_root_wins() {
+        let dir = scratch("omarchy");
+        let (first, second) = (dir.join("first"), dir.join("second"));
+        for d in ["alpha", "beta", "gamma"] {
+            std::fs::create_dir_all(first.join(d)).unwrap();
+        }
+        std::fs::create_dir_all(second.join("alpha")).unwrap();
+        std::fs::write(first.join("alpha/colors.toml"), palette("")).unwrap();
+        std::fs::write(
+            second.join("alpha/colors.toml"),
+            palette("mode = \"light\"\n"),
+        )
+        .unwrap();
+        let mut kitty = String::from("background #000000\nforeground #ffffff\n");
+        for i in 0..16 {
+            kitty.push_str(&format!("color{i} #0000{:02x}\n", i));
+        }
+        std::fs::write(first.join("beta/kitty.conf"), kitty).unwrap();
+        std::fs::write(first.join("gamma/colors.toml"), "broken").unwrap();
+        let all = read_omarchy(&[first, dir.join("missing"), second]);
+        assert_eq!(all.keys().collect::<Vec<_>>(), ["alpha", "beta"]);
+        assert_eq!(all["alpha"]["mode"], "light");
+        assert_eq!(all["beta"]["blue"], "#000004");
+        assert!(read_omarchy(&[dir.join("missing")]).is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

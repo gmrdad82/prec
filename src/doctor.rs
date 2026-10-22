@@ -146,3 +146,23 @@ pub fn doctor() -> bool {
     );
     ok
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_tool_off_the_path_is_not_found_and_prints_nothing() {
+        assert_eq!(found("prec-no-such-tool"), None);
+        assert_eq!(output("prec-no-such-tool", &["--version"]), "");
+        assert!(found("sh").is_some_and(|p| p.ends_with("sh")));
+    }
+
+    #[test]
+    fn output_joins_stdout_and_stderr() {
+        assert_eq!(
+            output("sh", &["-c", "printf out; printf err >&2"]),
+            "outerr"
+        );
+    }
+}
