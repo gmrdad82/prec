@@ -978,6 +978,49 @@ fn a_hook_with_a_short_passed_value_still_has_it_masked() {
 }
 
 #[test]
+fn a_hook_that_prints_a_passed_value_over_several_lines_masks_every_line_of_it() {
+    let dir = common::caller(GROUP, "passed-hook-lines");
+    let app = common::demo_app(
+        &dir,
+        "pass_env = [\"PREC_PATHS_LINES\"]\nsetup = 'echo \"$PREC_PATHS_LINES\"; echo \"$PREC_PATHS_LINES\" >&2'\n",
+    );
+    let o = prec(
+        &dir,
+        &dir,
+        &[
+            "record",
+            "demo",
+            "palette",
+            "--app-dir",
+            app.to_str().unwrap(),
+            "--out",
+            "tmp/out",
+        ],
+    )
+    .env(
+        "PREC_PATHS_LINES",
+        "prec-lines-one-4c1e\nprec-lines-two-9b2d",
+    )
+    .output()
+    .unwrap();
+    common::expect_ok(&o, "prec record");
+    assert!(
+        out(&o).starts_with("<PREC_PATHS_LINES>\n<PREC_PATHS_LINES>\n"),
+        "{}",
+        out(&o)
+    );
+    assert!(
+        err(&o).starts_with("<PREC_PATHS_LINES>\n<PREC_PATHS_LINES>\n"),
+        "{}",
+        err(&o)
+    );
+    for part in ["prec-lines-one-4c1e", "prec-lines-two-9b2d"] {
+        assert!(!out(&o).contains(part), "{}", out(&o));
+        assert!(!err(&o).contains(part), "{}", err(&o));
+    }
+}
+
+#[test]
 fn a_user_or_logname_in_pass_env_is_refused_at_load_since_prec_sets_both() {
     let dir = common::caller(GROUP, "passed-user");
     let app = common::demo_app(&dir, "");

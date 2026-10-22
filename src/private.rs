@@ -231,6 +231,20 @@ pub fn refuse(cast: &Path, findings: &[Finding]) -> Result<(), String> {
     Err(lines(cast, findings).join("\nprec: "))
 }
 
+pub fn by_line(passed: &[(String, String)]) -> Vec<(String, String)> {
+    let mut all = passed.to_vec();
+    for (name, value) in passed.iter().filter(|(_, v)| v.contains('\n')) {
+        for part in value.split('\n').map(str::trim) {
+            if part.chars().count() >= SHORTEST_PASSED
+                && !all.iter().any(|(n, v)| n == name && v == part)
+            {
+                all.push((name.clone(), part.to_string()));
+            }
+        }
+    }
+    all
+}
+
 pub fn redact(text: &str, passed: &[(String, String)]) -> String {
     let mut spans: Vec<(usize, usize, &str)> = Vec::new();
     for (name, value) in passed.iter().filter(|(_, v)| !v.is_empty()) {
@@ -723,5 +737,32 @@ mod tests {
             ))
             .is_empty()
         );
+    }
+
+    #[test]
+    fn a_value_over_several_lines_is_masked_line_by_line_and_its_short_lines_are_left() {
+        let passed = vec![
+            (
+                "KEY".to_string(),
+                "line-one-x\r\n  line-two-y\nab\n\nline-one-x".to_string(),
+            ),
+            ("PORT".to_string(), "8080".to_string()),
+        ];
+        let all = by_line(&passed);
+        assert_eq!(
+            all,
+            [
+                passed[0].clone(),
+                passed[1].clone(),
+                ("KEY".to_string(), "line-one-x".to_string()),
+                ("KEY".to_string(), "line-two-y".to_string()),
+            ]
+        );
+        assert_eq!(
+            redact("a line-one-x\n    line-two-y b\nab 8080\n", &all),
+            "a <KEY>\n    <KEY> b\nab <PORT>\n"
+        );
+        assert_eq!(by_line(&passed[1..]), passed[1..]);
+        assert!(by_line(&[]).is_empty());
     }
 }

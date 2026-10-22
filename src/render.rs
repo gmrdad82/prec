@@ -343,12 +343,13 @@ impl Hook {
         let status = started.and_then(|mut child| {
             let (done, drained) = mpsc::channel();
             let mut relays = 0;
+            let passed = private::by_line(&self.passed);
             if let Some(from) = child.stdout.take() {
-                relay_apart(from, out, self.passed.clone(), done.clone());
+                relay_apart(from, out, passed.clone(), done.clone());
                 relays += 1;
             }
             if let Some(from) = child.stderr.take() {
-                relay_apart(from, err, self.passed.clone(), done);
+                relay_apart(from, err, passed, done);
                 relays += 1;
             }
             let status = child.wait();
@@ -2073,10 +2074,50 @@ mod tests {
     #[test]
     fn a_hook_whose_background_child_keeps_its_output_open_does_not_hold_prec() {
         let dir = work("hook-background");
-        let h = hook(&dir, "sleep 2 & echo \"up $TOKEN\"");
+        let pid_file = dir.join("child.pid");
+        let h = hook(&dir, "sleep 60 & echo $! > child.pid; echo \"up $TOKEN\"");
         let out = Shared::default();
         h.relayed(false, out.clone(), Shared::default()).unwrap();
-        assert!(!out.text().contains("s3cret-token-value"), "{}", out.text());
+        let pid = std::fs::read_to_string(&pid_file).unwrap();
+        let pid = pid.trim();
+        let alive = Command::new("kill").args(["-0", pid]).status().unwrap();
+        let _ = Command::new("kill").arg(pid).status();
+        assert!(
+            alive.success(),
+            "the background child ended before prec went on"
+        );
+        assert_eq!(out.text(), "up <TOKEN>\n");
+    }
+
+    #[test]
+    fn a_passed_value_over_several_lines_is_masked_on_every_line_a_hook_prints() {
+        let dir = work("hook-multiline");
+        let key = "-----KEY-----\nline-one-x\nline-two-y\nab";
+        let h = Hook {
+            env: vec![("KEY".into(), key.into())],
+            passed: vec![("KEY".into(), key.into())],
+            ..hook(
+                &dir,
+                "echo \"$KEY\"; echo \"$KEY\" >&2; echo \"tail line-two-y\"",
+            )
+        };
+        let (out, err) = (Shared::default(), Shared::default());
+        h.relayed(false, out.clone(), err.clone()).unwrap();
+        assert_eq!(out.text(), "<KEY>\n<KEY>\n<KEY>\nab\ntail <KEY>\n");
+        assert_eq!(err.text(), "<KEY>\n<KEY>\n<KEY>\nab\n");
+        for part in ["line-one-x", "line-two-y", "-----KEY-----"] {
+            assert!(!out.text().contains(part) && !err.text().contains(part));
+        }
+    }
+
+    #[test]
+    fn a_short_passed_value_is_masked_even_inside_ordinary_words() {
+        let dir = work("hook-short");
+        let out = Shared::default();
+        hook(&dir, "echo lazquote")
+            .relayed(false, out.clone(), Shared::default())
+            .unwrap();
+        assert_eq!(out.text(), "la<TINY>uote\n");
     }
 
     #[test]
