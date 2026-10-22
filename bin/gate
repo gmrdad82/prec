@@ -2,20 +2,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+usage() {
+  echo "usage: bin/gate [--fast|--render]" >&2
+  exit 2
+}
+
+[ "$#" -le 1 ] || usage
 mode=unit
 case "${1-}" in
   "") ;;
   --fast) mode=fast ;;
   --render) mode=render ;;
-  *)
-    echo "usage: bin/gate [--fast|--render]" >&2
-    exit 2
-    ;;
+  *) usage ;;
 esac
-if [ "$#" -gt 1 ]; then
-  echo "usage: bin/gate [--fast|--render]" >&2
-  exit 2
-fi
 
 if [ "$mode" = render ]; then
   cargo test --locked --tests
