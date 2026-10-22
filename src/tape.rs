@@ -44,6 +44,9 @@ pub enum Step {
         timeout: Duration,
         screen: bool,
     },
+    WaitExit {
+        timeout: Duration,
+    },
     Idle {
         quiet: Duration,
         timeout: Duration,
@@ -302,7 +305,17 @@ pub fn parse_line(line: &str) -> Result<Option<Step>, String> {
             let screen = match n {
                 "Wait" | "Wait+Line" => false,
                 "Wait+Screen" => true,
-                _ => return Err(format!("{t}: a Wait is Wait, Wait+Line or Wait+Screen")),
+                "Wait+Exit" if rest.is_empty() => {
+                    return Ok(Some(Step::WaitExit {
+                        timeout: speed.unwrap_or(Duration::from_secs(15)),
+                    }));
+                }
+                "Wait+Exit" => return Err(format!("{t}: Wait+Exit takes no /regex/")),
+                _ => {
+                    return Err(format!(
+                        "{t}: a Wait is Wait, Wait+Line, Wait+Screen or Wait+Exit"
+                    ));
+                }
             };
             Ok(Some(Step::Wait {
                 pattern: slashed(t, rest)?,
@@ -606,6 +619,42 @@ mod tests {
     }
 
     #[test]
+    fn wait_exit_takes_a_timeout_and_nothing_after_it() {
+        assert_eq!(
+            one("Wait+Exit"),
+            Step::WaitExit {
+                timeout: Duration::from_secs(15)
+            }
+        );
+        assert_eq!(
+            one("Wait+Exit@2s"),
+            Step::WaitExit {
+                timeout: Duration::from_secs(2)
+            }
+        );
+        assert_eq!(
+            one("  Wait+Exit@250ms  "),
+            Step::WaitExit {
+                timeout: Duration::from_millis(250)
+            }
+        );
+        assert_eq!(
+            refused("Enter\nWait+Exit /\\$ $/\n"),
+            "line 2: Wait+Exit /\\$ $/: Wait+Exit takes no /regex/"
+        );
+        assert_eq!(
+            refused("Wait+Exit@1s now\n"),
+            "line 1: Wait+Exit@1s now: Wait+Exit takes no /regex/"
+        );
+        assert_eq!(
+            refused("Wait+Exit@soon\n"),
+            "line 1: soon: a duration like 500ms, 1.5s or 2"
+        );
+        assert!(refused("Wait+Exit@-1s\n").contains("a duration is never negative"));
+        assert!(refused("Wait+Exit@1e300s\n").contains("a duration too long"));
+    }
+
+    #[test]
     fn sleep_idle_and_squeeze_read_their_durations() {
         assert_eq!(one("Sleep 2"), Step::Sleep(Duration::from_secs(2)));
         assert_eq!(one("Sleep 1m"), Step::Sleep(Duration::from_secs(60)));
@@ -762,11 +811,14 @@ mod tests {
             "Wait+Bogus@1s /x/",
             "Wait+ /x/",
             "Wait+Screen+Line /x/",
+            "Wait+Exits",
+            "Wait+exit",
+            "Wait+Exit+Screen",
         ] {
             let e = refused(&format!("Hide\n{bad}\n"));
             assert!(
                 e.starts_with("line 2: ")
-                    && e.ends_with(": a Wait is Wait, Wait+Line or Wait+Screen"),
+                    && e.ends_with(": a Wait is Wait, Wait+Line, Wait+Screen or Wait+Exit"),
                 "{bad}: {e}"
             );
         }

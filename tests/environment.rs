@@ -285,7 +285,7 @@ fn a_neutral_home_hides_the_callers_paths_and_a_passed_value_is_never_written() 
     common::add_shot(
         &app,
         "neutral",
-        "Type@5ms \"pwd; echo $HOME; hostname; id -un\"\nEnter\nSleep 1s\nType@5ms 'test -n \"$PREC_TEST_SECRET\" && echo passed'\nEnter\nSleep 1s\n",
+        "Type@5ms \"pwd; echo $HOME; hostname; id -un\"\nEnter\nWait+Screen /(?m)^prec-neutral-host\\n.+\\n\\$/\nType@5ms 'test -n \"$PREC_TEST_SECRET\" && echo passed'\nEnter\nWait+Screen /(?m)^passed$/\n",
         "",
     );
     let archive = dir.join("archive");

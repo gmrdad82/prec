@@ -254,7 +254,7 @@ fn a_shot_that_needs_a_fixture_set_refuses_none_or_another_and_hands_the_right_o
     common::add_shot(
         &app,
         "fixed",
-        "Type@0ms \"echo door=$PITO_DEMO_FIXTURES\"\nEnter\nSleep 300ms\n",
+        "Type@0ms \"echo door=$PITO_DEMO_FIXTURES\"\nEnter\nWait+Screen /(?m)^door=/\n",
         "fixtures = \"alpha-set\"\n",
     );
     let with = |set: Option<&Path>| {
@@ -366,7 +366,7 @@ fn a_pinned_recording_builds_its_commit_once_from_the_cache_and_ignores_the_work
         ),
     )
     .unwrap();
-    let tape = "Type@0ms \"echo pinned-$((40+1))\"\nEnter\nSleep 300ms\n";
+    let tape = "Type@0ms \"echo pinned-$((40+1))\"\nEnter\nWait+Screen /(?m)^pinned-4\\d$/\n";
     common::add_shot(&dir, "pinned", tape, "");
     git(&dir, &["add", "render"]);
     git(&dir, &["commit", "-q", "-m", "one"]);
@@ -461,7 +461,7 @@ fn a_session_that_exits_non_zero_is_still_recorded() {
     common::add_shot(
         &app,
         "quits",
-        "Type@0ms \"demo show; (exit 7); echo status=$?\"\nEnter\nSleep 500ms\nType@0ms \"exit 3\"\nEnter\nSleep 500ms\n",
+        "Type@0ms \"demo show; (exit 7); echo status=$?\"\nEnter\nWait+Screen /status=7/\nType@0ms \"exit 3\"\nEnter\nSleep 500ms\n",
         "",
     );
     let o = record(&dir, &app, "quits");
@@ -507,7 +507,7 @@ fn a_step_typed_after_the_shell_quits_is_refused() {
     common::add_shot(
         &app,
         "late",
-        "Type@0ms \"trap 'echo gone-$((40+2))' EXIT; exit 3\"\nEnter\nWait+Screen /gone-42/\nSleep 3s\nType@0ms \"echo late\"\nEnter\n",
+        "Type@0ms \"trap 'echo gone-$((40+2))' EXIT; exit 3\"\nEnter\nWait+Screen /gone-42/\nWait+Exit\nType@0ms \"echo late\"\nEnter\n",
         "",
     );
     let o = record(&dir, &app, "late");
@@ -517,6 +517,49 @@ fn a_step_typed_after_the_shell_quits_is_refused() {
         "{said}"
     );
     assert!(!cast_of(&dir, "late").exists());
+}
+
+#[test]
+fn a_wait_exit_holds_the_tape_until_the_shell_quits_and_keeps_its_last_output() {
+    let (dir, app) = case("wait-exit", "");
+    common::add_shot(
+        &app,
+        "bye",
+        "Type@0ms \"trap 'echo bye-$((40+3))' EXIT; exit 0\"\nEnter\nWait+Exit@20s\n",
+        "",
+    );
+    let o = record(&dir, &app, "bye");
+    common::expect_ok(&o, "prec record");
+    let events = cast_events(&dir, "bye");
+    assert_eq!(events.last().unwrap()[2], "end");
+    let shown: String = events
+        .iter()
+        .filter(|e| e[1] == "o")
+        .map(|e| e[2].as_str().unwrap().to_string())
+        .collect();
+    assert!(shown.contains("bye-43"), "{shown:?}");
+}
+
+#[test]
+fn a_wait_exit_on_a_shell_that_never_quits_is_refused_at_its_timeout() {
+    let (dir, app) = case("wait-exit-stuck", "");
+    common::add_shot(
+        &app,
+        "stays",
+        "Type@0ms \"echo shell=$$\"\nEnter\nWait+Screen /(?m)^shell=/\nWait+Exit@1s\nType@0ms \"echo after\"\nEnter\n",
+        "",
+    );
+    let o = record(&dir, &app, "stays");
+    let said = refused(&o);
+    assert!(
+        said.contains(
+            "prec: Wait+Exit timed out after 1.0s; the session was still running; the screen showed:\n"
+        ),
+        "{said}"
+    );
+    let shell = shown_pid(&said, "shell");
+    assert!(gone(shell), "the recording's shell {shell} outlived prec");
+    assert!(!cast_of(&dir, "stays").exists());
 }
 
 #[test]
