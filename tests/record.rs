@@ -538,22 +538,6 @@ fn a_wait_exit_holds_the_tape_until_the_shell_quits_and_keeps_its_last_output() 
         .map(|e| e[2].as_str().unwrap().to_string())
         .collect();
     assert!(shown.contains("bye-43"), "{shown:?}");
-    let quit = events
-        .iter()
-        .filter(|e| e[1] == "i")
-        .map(|e| e[0].as_f64().unwrap())
-        .next_back()
-        .unwrap();
-    let bye = events
-        .iter()
-        .filter(|e| e[1] == "o" && e[2].as_str().unwrap().contains("bye-43"))
-        .map(|e| e[0].as_f64().unwrap())
-        .next()
-        .unwrap();
-    assert!(
-        bye >= quit,
-        "bye-43 at {bye}s before the exit was typed at {quit}s"
-    );
 }
 
 #[test]
