@@ -124,7 +124,11 @@ fn a_passed_value_reaches_the_still_app_and_no_file_the_render_wrote() {
         "the app never saw the passed value: {cast}"
     );
 
-    let written = files_under(&dir, &[app.as_path(), dir.join(".git").as_path()]);
+    let control = [b"before-".as_slice(), secret.as_bytes(), b"-after"].concat();
+    assert!(contains(&control, &secret), "the scan can't find the value");
+    assert!(!contains(b"before--after", &secret));
+
+    let written = files_under(&dir, &[dir.join(".git").as_path()]);
     let pngs: Vec<&PathBuf> = written
         .iter()
         .filter(|p| p.extension().is_some_and(|e| e == "png"))
@@ -132,6 +136,7 @@ fn a_passed_value_reaches_the_still_app_and_no_file_the_render_wrote() {
     assert!(!pngs.is_empty(), "the still wrote no PNG");
     assert!(written.contains(&manifest_path));
     assert!(written.contains(&out.join(&cast_name)));
+    assert!(written.contains(&app.join("render/terminal/quiet.tape")));
     let records: Vec<&PathBuf> = written
         .iter()
         .filter(|p| p.starts_with(&jobs) && p.extension().is_some_and(|e| e == "json"))
