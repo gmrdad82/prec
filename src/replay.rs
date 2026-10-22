@@ -69,6 +69,12 @@ window.boot = async (o) => {
     minimumContrastRatio: 1, allowTransparency: false, drawBoldTextInBrightColors: true
   });
   term.open(document.getElementById('term'));
+  let reflow = null;
+  try {
+    const nb = term._core.buffers.normal;
+    Object.defineProperty(Object.getPrototypeOf(nb), '_isReflowEnabled', { get: () => false, configurable: true });
+    reflow = nb._isReflowEnabled;
+  } catch (e) {}
   term.loadAddon(new CanvasAddon.CanvasAddon());
   const u = new Unicode11Addon.Unicode11Addon();
   term.loadAddon(u);
@@ -80,7 +86,7 @@ window.boot = async (o) => {
   const r = term.element.querySelector('.xterm-screen').getBoundingClientRect();
   let cell = null;
   try { const d = term._core._renderService.dimensions.device.cell; cell = [d.width, d.height]; } catch (e) {}
-  return { w: r.width, h: r.height, cols: term.cols, rows: term.rows, cell: cell };
+  return { w: r.width, h: r.height, cols: term.cols, rows: term.rows, cell: cell, reflow: reflow };
 };
 window.place = async (x, y, src) => {
   const el = document.getElementById('term');
@@ -217,7 +223,7 @@ fn pieces(events: &[Event]) -> Vec<(f64, Piece)> {
         .iter()
         .filter_map(|e| match e.kind {
             Kind::Output => Some((e.t, Piece::Bytes(e.data.as_bytes().to_vec()))),
-            Kind::Resize => record::grid_of(&e.data).map(|g| (e.t, Piece::Grid(g))),
+            Kind::Resize => record::grid_of(&e.data).map(|g| (e.t, Piece::Grid(record::shown(g)))),
             _ => None,
         })
         .collect()
@@ -308,6 +314,15 @@ impl<'a> Feeder<'a> {
         }
         Ok(())
     }
+}
+
+fn reflow_off(m: &Value, resizes: bool) -> Result<(), String> {
+    if resizes && m["reflow"] != json!(false) {
+        return Err(
+            "xterm.js would not turn its reflow off, so a resize would not match the masks".into(),
+        );
+    }
+    Ok(())
 }
 
 fn batch(found: &[Piece]) -> String {
@@ -492,6 +507,7 @@ pub fn render(
         size_px = ((size_px - 0.1) * 10.0).round() / 10.0;
         m = boot(&mut b, size_px)?;
     }
+    reflow_off(&m, cast.resizes())?;
     let largest = [
         (m["w"].as_f64().unwrap_or(0.0)).round() as u32,
         (m["h"].as_f64().unwrap_or(0.0)).round() as u32,
@@ -930,5 +946,58 @@ mod tests {
         assert_eq!(d.drawn.len(), 1);
         assert_eq!(d.key([4, 2]), d.key([8, 2]));
         let _ = std::fs::remove_dir_all(&d.dir);
+    }
+
+    #[test]
+    fn a_resizing_cast_needs_the_page_to_report_its_reflow_off() {
+        let said = "xterm.js would not turn its reflow off, so a resize would not match the masks";
+        for m in [json!({"reflow": true}), json!({"reflow": null}), json!({})] {
+            assert_eq!(reflow_off(&m, true).unwrap_err(), said, "{m}");
+            reflow_off(&m, false).unwrap();
+        }
+        reflow_off(&json!({"reflow": false}), true).unwrap();
+    }
+
+    #[test]
+    fn a_one_column_resize_reaches_the_page_as_the_two_columns_xterm_js_keeps() {
+        let masks = none();
+        let events = vec![ev(0.1, Kind::Resize, "1x3"), ev(0.2, Kind::Output, "ab")];
+        let mut f = feeder(&events, &masks, [8, 2]);
+        assert_eq!(
+            f.due(1.0).unwrap().unwrap().0,
+            vec![Piece::Grid([2, 3]), Piece::Bytes(b"ab".to_vec())]
+        );
+        assert_eq!(f.grid, [2, 3]);
+    }
+
+    #[test]
+    fn a_match_mask_stays_on_its_row_through_a_column_shrink_and_covers_what_is_left() {
+        let masks = crate::mask::Masks::new(
+            &[crate::mask::Mask {
+                pattern: Some("sk-\\w+".into()),
+                rect: None,
+            }],
+            [40, 6],
+        )
+        .unwrap();
+        let events = vec![
+            ev(
+                0.1,
+                Kind::Output,
+                "token: sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ012\r\n$ ",
+            ),
+            ev(0.2, Kind::Resize, "20x6"),
+            ev(0.3, Kind::Resize, "40x6"),
+        ];
+        let mut f = feeder(&events, &masks, [40, 6]);
+        let rects = |f: &mut Feeder, t: f64| -> Vec<[u32; 4]> {
+            serde_json::from_str(&f.due(t).unwrap().unwrap().1).unwrap()
+        };
+        assert_eq!(rects(&mut f, 0.1), vec![[7, 0, 32, 1]]);
+        assert_eq!(rects(&mut f, 0.2), vec![[7, 0, 13, 1]]);
+        assert_eq!(f.due(0.3).unwrap().unwrap().1, "null");
+        assert_eq!(f.covered, vec![[7, 0, 13, 1]]);
+        let shown: Vec<String> = f.screen.screen().rows(0, 40).collect();
+        assert_eq!(shown[..2], ["token: sk-ABCDEFGHIJ", "$ "]);
     }
 }

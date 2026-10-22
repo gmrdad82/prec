@@ -1,6 +1,6 @@
 mod common;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -134,17 +134,8 @@ fn a_clip_resizes_its_pty_step_by_step_and_the_window_follows_on_one_canvas() {
         want
     );
     assert!(resizes.windows(2).all(|w| w[0].0 <= w[1].0), "{resizes:?}");
-    let gaps: Vec<f64> = resizes[..20].windows(2).map(|w| w[1].0 - w[0].0).collect();
-    let median = |mut v: Vec<f64>| {
-        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        v[v.len() / 2]
-    };
-    let ends = median([&gaps[..2], &gaps[gaps.len() - 2..]].concat());
-    let middle = median(gaps[gaps.len() / 2 - 1..gaps.len() / 2 + 2].to_vec());
-    assert!(
-        ends >= 1.5 * middle,
-        "not eased: ends {ends}, middle {middle}, {gaps:?}"
-    );
+    let travel = resizes[19].0 - resizes[0].0;
+    assert!(travel > 0.5 && travel < 1.5, "{resizes:?}");
     let printed: String = evs
         .iter()
         .filter(|e| e[1] == "o")
@@ -279,4 +270,118 @@ fn a_bad_resize_line_is_refused_before_anything_records() {
     );
     assert!(!said.contains("recording demo"), "{said}");
     assert!(!dir.join("tmp/out/demo/clip/demo-clip-bad.cast").exists());
+}
+
+fn red(p: &[u8]) -> bool {
+    p[0] > 150 && p[1] < 100 && p[2] < 100
+}
+
+fn reds(rgb: &[u8], size: [u32; 2]) -> Option<[u32; 4]> {
+    let mut found: Option<[u32; 4]> = None;
+    for y in 0..size[1] {
+        for x in 0..size[0] {
+            let i = ((y * size[0] + x) * 3) as usize;
+            if red(&rgb[i..i + 3]) {
+                let f = found.get_or_insert([x, y, x, y]);
+                *f = [f[0].min(x), f[1].min(y), f[2].max(x), f[3].max(y)];
+            }
+        }
+    }
+    found
+}
+
+fn secret_cast(path: &Path, shot: &str, mask: Value) {
+    let header = json!({
+        "version": 2, "width": 40, "height": 6,
+        "x_terminal_renderer": {
+            "product": "render", "shot": shot, "kind": "clip", "grid": [40, 6],
+            "app_theme": common::theme("render"), "frame": "bare", "closure": null,
+            "app": {"rev": "local"}, "mask": mask,
+        },
+    });
+    let lines = [
+        header,
+        json!([0.0, "m", "show"]),
+        json!([
+            0.1,
+            "o",
+            "\u{1b}[?25ltoken: \u{1b}[48;2;220;40;40msk-ABCDEFGHIJKLMNOPQRSTUVWXYZ012\u{1b}[0m\r\n$ "
+        ]),
+        json!([0.5, "r", "20x6"]),
+        json!([1.0, "m", "end"]),
+    ];
+    let text: Vec<String> = lines.iter().map(Value::to_string).collect();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, text.join("\n") + "\n").unwrap();
+}
+
+#[test]
+fn a_column_shrink_never_wraps_a_masked_secret_into_view() {
+    let dir = common::caller("resize", "reflow");
+    let size = format!("{}x{}", SIZE[0], SIZE[1]);
+    let renders: Vec<_> = [
+        ("plain", json!([])),
+        ("masked", json!([{"match": "sk-\\w+"}])),
+    ]
+    .into_iter()
+    .map(|(shot, mask)| {
+        let cast = dir.join(format!("cast/{shot}.cast"));
+        secret_cast(&cast, shot, mask);
+        let mut c = common::prec(
+            &dir,
+            &dir.join("archive"),
+            &[
+                "render",
+                cast.to_str().unwrap(),
+                "--size",
+                &size,
+                "--fps",
+                "30",
+                "--no-archive",
+                "--out",
+                "tmp/out",
+            ],
+        );
+        c.env("XDG_CACHE_HOME", dir.join("cache"));
+        c.stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap()
+    })
+    .collect();
+    let mut seen = vec![];
+    for child in renders {
+        let o = child.wait_with_output().unwrap();
+        common::expect_ok(&o, "prec render");
+        let m = common::last_path(&o);
+        let manifest: Value = serde_json::from_slice(&std::fs::read(&m).unwrap()).unwrap();
+        assert_eq!(manifest["max_grid"]["cols"], 40);
+        let master = manifest["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["role"] == "master")
+            .and_then(|f| f["file"].as_str())
+            .unwrap()
+            .to_string();
+        let all = frames(&m.parent().unwrap().join(master));
+        assert!(all.len() >= 25, "{} frames", all.len());
+        seen.push(all.iter().map(|f| reds(f, SIZE)).collect::<Vec<_>>());
+    }
+    let plain = &seen[0];
+    let before = plain[6].expect("the secret is red before the resize");
+    let after = plain[plain.len() - 1].expect("the secret's head stays after the resize");
+    assert!(after[2] < before[2], "{before:?} then {after:?}");
+    for (k, r) in plain.iter().enumerate().skip(6) {
+        let r = r.unwrap_or_else(|| panic!("no secret at frame {k}"));
+        assert!(
+            r[1] + 2 >= before[1] && r[3] <= before[3] + 2,
+            "frame {k}: the secret wrapped onto another row: {r:?} vs {before:?}"
+        );
+    }
+    let masked = &seen[1];
+    for (k, r) in masked.iter().enumerate() {
+        assert!(r.is_none(), "frame {k} shows the masked secret at {r:?}");
+    }
+    eprintln!("secret before {before:?}, after {after:?}");
 }

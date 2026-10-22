@@ -47,6 +47,8 @@ impl Cast {
     }
 }
 
+pub const CAST_SIDES: std::ops::RangeInclusive<u32> = 1..=1000;
+
 pub fn grid_of(data: &str) -> Option<[u32; 2]> {
     let (c, r) = data.split_once('x')?;
     let side = |s: &str| {
@@ -54,19 +56,28 @@ pub fn grid_of(data: &str) -> Option<[u32; 2]> {
             .all(|b| b.is_ascii_digit())
             .then(|| s.parse::<u32>().ok())
             .flatten()
-            .filter(|n| tape::SIDES.contains(n))
+            .filter(|n| CAST_SIDES.contains(n))
     };
     Some([side(c)?, side(r)?])
 }
 
+pub fn shown(grid: [u32; 2]) -> [u32; 2] {
+    [grid[0].max(2), grid[1]]
+}
+
 pub fn set_grid(parser: &mut vt100::Parser, grid: [u32; 2]) {
-    let rows = grid[1] as u16;
-    let (row, _) = parser.screen().cursor_position();
+    let [cols, rows] = shown(grid).map(|n| n as u16);
+    if parser.screen().size() == (rows, cols) {
+        return;
+    }
+    let (row, col) = parser.screen().cursor_position();
+    let mut seq = format!("\x1b[r\x1b[{};{}H", row + 1, col + 1);
     if row >= rows {
         let n = row + 1 - rows;
-        parser.process(format!("\x1b[{n}S\x1b[{n}A").as_bytes());
+        seq.push_str(&format!("\x1b[{n}S\x1b[{n}A"));
     }
-    parser.screen_mut().set_size(rows, grid[0] as u16);
+    parser.process(seq.as_bytes());
+    parser.screen_mut().set_size(rows, cols);
 }
 
 fn grid_text(grid: [u32; 2]) -> String {
@@ -497,6 +508,14 @@ fn drive(s: &mut Session, spec: &Spec) -> Result<(), String> {
                     (None, _) => "squeeze off".into(),
                 });
             }
+            Step::Resize {
+                grid,
+                over: Some(over),
+            } if squeezing => {
+                s.marker("hold");
+                s.travel(*grid, Some(*over))?;
+                s.marker("release");
+            }
             Step::Resize { grid, over } => s.travel(*grid, *over)?,
             Step::Hide => s.marker("hide"),
             Step::Show => s.marker("show"),
@@ -769,8 +788,8 @@ pub fn read(path: &Path) -> Result<Cast, String> {
             return Err(at(&format!(
                 "a resize to {} is not COLSxROWS, each from {} to {}",
                 v[2],
-                tape::SIDES.start(),
-                tape::SIDES.end()
+                CAST_SIDES.start(),
+                CAST_SIDES.end()
             )));
         }
         events.push(Event { t, kind, data });
@@ -1477,7 +1496,7 @@ mod tests {
             ("zerorows", "\"80x0\"", "\"80x0\""),
             ("wide", "\"1001x24\"", "\"1001x24\""),
             ("tall", "\"80x65535\"", "\"80x65535\""),
-            ("one", "\"1x24\"", "\"1x24\""),
+            ("nocols", "\"0x1\"", "\"0x1\""),
             ("sign", "\"+80x24\"", "\"+80x24\""),
             ("upper", "\"80X24\"", "\"80X24\""),
             ("spaced", "\"80 x 24\"", "\"80 x 24\""),
@@ -1492,7 +1511,7 @@ mod tests {
             assert_eq!(
                 got.unwrap_err(),
                 format!(
-                    "{}: line 3: a resize to {shown} is not COLSxROWS, each from 2 to 1000",
+                    "{}: line 3: a resize to {shown} is not COLSxROWS, each from 1 to 1000",
                     p.display()
                 ),
                 "{name}"
@@ -1500,9 +1519,13 @@ mod tests {
         }
         let (_, got) = read_text(
             "edges",
-            &format!("{head}[0.5, \"r\", \"1000x2\"]\n[0.6, \"r\", \"2x1000\"]\n"),
+            &format!(
+                "{head}[0.5, \"r\", \"1000x1\"]\n[0.6, \"r\", \"1x1000\"]\n[0.7, \"r\", \"1x1\"]\n"
+            ),
         );
-        assert_eq!(got.unwrap().max_grid(), [1000, 1000]);
+        let edges = got.unwrap();
+        assert_eq!(edges.max_grid(), [1000, 1000]);
+        assert_eq!(edges.events[2].data, "1x1");
         assert_eq!(grid_of("96x16"), Some([96, 16]));
         assert_eq!(grid_of("x16"), None);
         assert_eq!(grid_text([38, 16]), "38x16");
@@ -1631,5 +1654,87 @@ mod tests {
         let re = |p: &str| regex::Regex::new(p).unwrap();
         assert!(s.screen.matches(&re("(?m)^low line$"), true));
         assert!(!s.screen.matches(&re("top"), true));
+    }
+
+    #[test]
+    fn a_resize_takes_the_whole_screen_back_from_an_apps_scroll_region_as_xterm_js_does() {
+        let mut q = vt100::Parser::new(8, 10, 0);
+        q.process(b"a\r\nb\r\nc\r\nd\r\ne\r\nf\r\ng\r\nh\x1b[2;7r\x1b[8;1H");
+        assert_eq!(q.screen().cursor_position(), (7, 0));
+        set_grid(&mut q, [10, 4]);
+        assert_eq!(rows(&q), ["e", "f", "g", "h"]);
+        assert_eq!(q.screen().cursor_position(), (3, 0));
+        q.process(b"\r\nnext");
+        assert_eq!(rows(&q), ["f", "g", "h", "next"]);
+    }
+
+    #[test]
+    fn a_resize_to_the_grid_it_has_changes_nothing_and_one_column_shows_as_two() {
+        let mut p = vt100::Parser::new(4, 10, 0);
+        p.process(b"\x1b[2;3r\x1b[3;5Hx");
+        set_grid(&mut p, [10, 4]);
+        assert_eq!(p.screen().cursor_position(), (2, 5));
+        p.process(b"\n\n\n");
+        assert_eq!(p.screen().cursor_position(), (2, 5));
+        assert_eq!(shown([1, 7]), [2, 7]);
+        assert_eq!(shown([2, 1]), [2, 1]);
+        set_grid(&mut p, [1, 3]);
+        assert_eq!(p.screen().size(), (3, 2));
+    }
+
+    #[test]
+    fn a_squeeze_holds_an_eased_travel_whole_and_not_an_instant_resize() {
+        let (_tx, mut s) = session([40, 10]);
+        let steps = [
+            Step::Squeeze {
+                gap: Some(Duration::from_millis(1)),
+                ignore: None,
+            },
+            Step::Resize {
+                grid: [38, 10],
+                over: Some(Duration::from_millis(3)),
+            },
+            Step::Resize {
+                grid: [40, 10],
+                over: None,
+            },
+        ];
+        let spec = Spec {
+            grid: [40, 10],
+            env: &[],
+            path: "/bin",
+            cwd: Path::new("."),
+            ns: None,
+            prompt: "$ ",
+            launch: None,
+            settle: Duration::ZERO,
+            typing: Duration::ZERO,
+            steps: &steps,
+            still: false,
+        };
+        drive(&mut s, &spec).unwrap();
+        let tail: Vec<&str> = s
+            .events
+            .iter()
+            .skip_while(|e| !e.data.starts_with("squeeze "))
+            .skip(1)
+            .map(|e| e.data.as_str())
+            .collect();
+        assert_eq!(tail, ["hold", "39x10", "38x10", "release", "40x10"]);
+        let mut ev = s.events.clone();
+        let end = ev.last().unwrap().t + 1.0;
+        squeeze(&mut ev, [40, 10], end);
+        let at = |d: &str| ev.iter().find(|e| e.data == d).unwrap().t;
+        let held = (at("hold"), at("release"));
+        let cuts: Vec<f64> = ev
+            .iter()
+            .filter(|e| e.data == "cut" || e.data == "resume")
+            .map(|e| e.t)
+            .collect();
+        assert!(
+            cuts.iter().all(|&t| t <= held.0 || t >= held.1),
+            "{cuts:?} inside {held:?}"
+        );
+        assert!(cuts.iter().any(|&t| t > held.1), "{cuts:?}");
     }
 }

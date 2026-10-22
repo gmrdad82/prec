@@ -180,7 +180,7 @@ const MAX_REPEAT: u32 = 9999;
 
 const RESIZE_FORM: &str = "Resize <cols>x<rows> [duration]";
 
-pub const SIDES: std::ops::RangeInclusive<u32> = 2..=1000;
+const SIDES: std::ops::RangeInclusive<u32> = 2..=1000;
 
 fn resize(t: &str, rest: &str) -> Result<Step, String> {
     let mut words = rest.split_whitespace();
