@@ -186,6 +186,167 @@ fn a_tape_that_ends_with_an_app_in_the_foreground_keeps_its_cast_and_leaves_no_a
     );
 }
 
+fn cast_events(dir: &Path, shot: &str) -> Vec<Value> {
+    std::fs::read_to_string(cast_of(dir, shot))
+        .unwrap()
+        .lines()
+        .skip(1)
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("{e}: {l}")))
+        .collect()
+}
+
+#[test]
+fn launch_hide_show_screenshot_squeeze_and_idle_leave_their_marks_in_the_cast() {
+    let (dir, app) = case("steps", "");
+    common::add_shot(
+        &app,
+        "steps",
+        "Type@0ms \"echo one\"\nEnter\nHide\nType@0ms \"echo hidden\"\nEnter\nShow\nScreenshot\nSqueeze 300ms\nSleep 1s\nSqueeze off\nIdle 300ms\n",
+        "launch = \"echo launched-$((6*7))\"\nsettle = \"400ms\"\n",
+    );
+    let o = record(&dir, &app, "steps");
+    common::expect_ok(&o, "prec record");
+    let events = cast_events(&dir, "steps");
+    let marks: Vec<(f64, &str)> = events
+        .iter()
+        .filter(|e| e[1] == "m" && e[2] != "cut" && e[2] != "resume")
+        .map(|e| (e[0].as_f64().unwrap(), e[2].as_str().unwrap()))
+        .collect();
+    let names: Vec<&str> = marks.iter().map(|(_, m)| *m).collect();
+    assert_eq!(
+        names,
+        [
+            "hide",
+            "show",
+            "hide",
+            "show",
+            "screenshot",
+            "squeeze 0.3",
+            "hold",
+            "release",
+            "squeeze off",
+            "end"
+        ]
+    );
+    let at = |name: &str| marks.iter().rev().find(|(_, m)| *m == name).unwrap().0;
+    assert!(at("release") - at("hold") >= 1.0, "{marks:?}");
+    assert!(at("end") - at("squeeze off") >= 0.3, "{marks:?}");
+    let first_show = marks[1].0;
+    let launched = events
+        .iter()
+        .find(|e| e[1] == "o" && e[2].as_str().unwrap().contains("launched-42"))
+        .unwrap_or_else(|| panic!("the launch never ran: {events:?}"));
+    assert!(launched[0].as_f64().unwrap() < first_show, "{launched}");
+    let typed = events
+        .iter()
+        .find(|e| e[1] == "i" && e[2] == "echo launched-$((6*7))\r")
+        .unwrap_or_else(|| panic!("the launch was never typed: {events:?}"));
+    assert!(
+        first_show - typed[0].as_f64().unwrap() >= 0.4,
+        "the 400ms settle after the launch was cut short: {marks:?}"
+    );
+}
+
+#[test]
+fn a_shot_that_needs_a_fixture_set_refuses_none_or_another_and_hands_the_right_one_to_the_session()
+{
+    let (dir, app) = case("fixtures", "");
+    common::add_shot(
+        &app,
+        "fixed",
+        "Type@0ms \"echo door=$PITO_DEMO_FIXTURES\"\nEnter\nSleep 300ms\n",
+        "fixtures = \"alpha-set\"\n",
+    );
+    let with = |set: Option<&Path>| {
+        let mut args = vec![
+            "record".to_string(),
+            "demo".into(),
+            "fixed".into(),
+            "--app-dir".into(),
+            app.display().to_string(),
+            "--out".into(),
+            "tmp/out".into(),
+        ];
+        if let Some(set) = set {
+            args.push("--fixtures".into());
+            args.push(set.display().to_string());
+        }
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        prec(&dir, &args).output().unwrap()
+    };
+    let said = refused(&with(None));
+    assert!(
+        said.ends_with(
+            "prec: fixed needs the alpha-set fixture set: pass --fixtures <materialized set>\n"
+        ),
+        "{said}"
+    );
+    let other = dir.join("sets/beta-set");
+    std::fs::create_dir_all(&other).unwrap();
+    let said = refused(&with(Some(&other)));
+    assert!(
+        said.ends_with("prec: fixed expects the alpha-set fixture set, not beta-set\n"),
+        "{said}"
+    );
+    assert!(!cast_of(&dir, "fixed").exists());
+    let set = dir.join("sets/alpha-set");
+    std::fs::create_dir_all(set.join("deep")).unwrap();
+    std::fs::write(set.join("a.txt"), "one\n").unwrap();
+    std::fs::write(set.join("deep/b.txt"), "two\n").unwrap();
+    common::expect_ok(&with(Some(&set)), "prec record --fixtures");
+    let text = std::fs::read_to_string(cast_of(&dir, "fixed")).unwrap();
+    let header: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+    let fixtures = &header["x_terminal_renderer"]["fixtures"];
+    assert_eq!(fixtures["path"], set.display().to_string(), "{fixtures}");
+    assert_eq!(fixtures["door"], "PITO_DEMO_FIXTURES", "{fixtures}");
+    let files: Vec<(&str, &str)> = fixtures["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| (f["file"].as_str().unwrap(), f["sha256"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        files,
+        [
+            (
+                "a.txt",
+                "2c8b08da5ce60398e1f19af0e5dccc744df274b826abe585eaba68c525434806"
+            ),
+            (
+                "deep/b.txt",
+                "27dd8ed44a83ff94d557f9fd0412ed5a8cbca69ea04922d88c01184a07300a5a"
+            )
+        ]
+    );
+    let shown: String = cast_events(&dir, "fixed")
+        .iter()
+        .filter(|e| e[1] == "o")
+        .map(|e| e[2].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        shown.contains(&format!("door={}", set.display())),
+        "{shown:?}"
+    );
+}
+
+#[test]
+fn an_idle_that_never_settles_fails_at_its_timeout() {
+    let (dir, app) = case("idle", "");
+    common::add_shot(
+        &app,
+        "busy",
+        "Type@0ms \"demo tick\"\nEnter\nIdle@500ms 5s\n",
+        "",
+    );
+    let o = record(&dir, &app, "busy");
+    let said = refused(&o);
+    assert!(
+        said.contains("prec: Idle 5.0s timed out after 0.5s; the screen kept changing:\n"),
+        "{said}"
+    );
+    assert!(!cast_of(&dir, "busy").exists());
+}
+
 #[test]
 fn a_malformed_tape_is_refused_by_its_line_before_anything_runs() {
     let (dir, app) = case("tape", "setup = \"echo up > {tmp}/setup.marker\"\n");
