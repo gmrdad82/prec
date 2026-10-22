@@ -280,6 +280,25 @@ impl Session {
         }
     }
 
+    fn await_exit(&mut self, timeout: Duration) -> Result<(), String> {
+        let until = Instant::now() + timeout;
+        loop {
+            self.pump();
+            if self.ended {
+                return Ok(());
+            }
+            let now = Instant::now();
+            if now >= until {
+                return Err(format!(
+                    "Wait+Exit timed out after {:.1}s; the session was still running; the screen showed:\n{}",
+                    timeout.as_secs_f64(),
+                    self.screen.shown()
+                ));
+            }
+            self.await_output((until - now).min(Duration::from_millis(5)));
+        }
+    }
+
     fn sleep(&mut self, d: Duration) {
         let until = Instant::now() + d;
         loop {
@@ -567,6 +586,7 @@ fn drive(s: &mut Session, spec: &Spec) -> Result<(), String> {
                     due = s.await_output((until - now).min(Duration::from_millis(5)));
                 }
             }
+            Step::WaitExit { timeout } => s.await_exit(*timeout)?,
             Step::Idle { quiet, timeout } => {
                 let until = Instant::now() + *timeout;
                 s.pump();
@@ -1568,6 +1588,54 @@ mod tests {
             ended: false,
         };
         (tx, s)
+    }
+
+    #[test]
+    fn a_wait_exit_passes_at_once_on_a_session_that_has_ended_and_keeps_its_last_output() {
+        let (tx, mut s) = session([40, 10]);
+        tx.send((Duration::ZERO, b"bye-43\r\n".to_vec())).unwrap();
+        drop(tx);
+        s.await_exit(Duration::ZERO).unwrap();
+        assert!(s.ended);
+        assert_eq!(s.events.len(), 1);
+        assert_eq!(s.events[0].data, "bye-43\r\n");
+        s.await_exit(Duration::ZERO).unwrap();
+        assert_eq!(
+            s.send(b"x").unwrap_err(),
+            "writing to the terminal: the session has ended"
+        );
+    }
+
+    #[test]
+    fn a_wait_exit_on_a_running_session_refuses_at_its_timeout_with_the_screen() {
+        let (tx, mut s) = session([40, 10]);
+        tx.send((Duration::ZERO, b"still-here".to_vec())).unwrap();
+        let e = s.await_exit(Duration::ZERO).unwrap_err();
+        assert!(e.starts_with("Wait+Exit timed out after 0.0s;"), "{e}");
+        assert!(e.ends_with("; the screen showed:\n  1 | still-here"), "{e}");
+        assert!(!s.ended);
+        s.send(b"x").unwrap();
+        drop(tx);
+        s.await_exit(Duration::ZERO).unwrap();
+        assert!(s.ended);
+    }
+
+    #[test]
+    fn a_wait_exit_waits_for_the_reader_to_close_and_keeps_all_it_sent() {
+        let (tx, mut s) = session([40, 10]);
+        let reader = std::thread::spawn(move || {
+            for i in 0..50u32 {
+                tx.send((Duration::ZERO, format!("line-{i}\r\n").into_bytes()))
+                    .unwrap();
+            }
+        });
+        s.await_exit(Duration::from_secs(15)).unwrap();
+        reader.join().unwrap();
+        assert!(s.ended);
+        let shown: String = s.events.iter().map(|e| e.data.as_str()).collect();
+        assert!(shown.starts_with("line-0\r\n"), "{shown:?}");
+        assert!(shown.ends_with("line-49\r\n"), "{shown:?}");
+        assert_eq!(s.events.len(), 50);
     }
 
     #[test]
