@@ -2,10 +2,25 @@ use crate::app::DEFAULT_FONT;
 use std::process::Command;
 
 fn found(cmd: &str) -> Option<String> {
-    crate::paths::output(Command::new("bash").args(["-c", &format!("command -v {cmd}")]))
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty())
+    found_in(&std::env::var_os("PATH")?, cmd).map(|p| p.display().to_string())
+}
+
+fn found_in(path: &std::ffi::OsStr, cmd: &str) -> Option<std::path::PathBuf> {
+    std::env::split_paths(path)
+        .filter(|d| !d.as_os_str().is_empty())
+        .map(|d| d.join(cmd))
+        .find(|p| runnable(p))
+}
+
+#[cfg(unix)]
+fn runnable(p: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn runnable(p: &std::path::Path) -> bool {
+    p.is_file()
 }
 
 fn output(cmd: &str, args: &[&str]) -> String {
@@ -156,6 +171,40 @@ mod tests {
         assert_eq!(found("prec-no-such-tool"), None);
         assert_eq!(output("prec-no-such-tool", &["--version"]), "");
         assert!(found("sh").is_some_and(|p| p.ends_with("sh")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_tool_is_the_first_runnable_file_of_that_name_on_the_path() {
+        use std::os::unix::fs::PermissionsExt;
+        let root =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tmp/doctor-unit/found-in");
+        let _ = std::fs::remove_dir_all(&root);
+        let [plain, folder, first, second] =
+            ["plain", "folder", "first", "second"].map(|d| root.join(d));
+        for d in [&plain, &folder, &first, &second] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(plain.join("alpha"), "").unwrap();
+        std::fs::create_dir_all(folder.join("alpha")).unwrap();
+        for d in [&first, &second] {
+            let p = d.join("alpha");
+            std::fs::write(&p, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let path = |dirs: &[&std::path::PathBuf]| std::env::join_paths(dirs).unwrap();
+        assert_eq!(
+            found_in(&path(&[&plain, &folder, &first, &second]), "alpha"),
+            Some(first.join("alpha"))
+        );
+        assert_eq!(
+            found_in(&path(&[&second, &first]), "alpha"),
+            Some(second.join("alpha"))
+        );
+        assert_eq!(found_in(&path(&[&plain, &folder]), "alpha"), None);
+        assert_eq!(found_in(&path(&[&first]), "beta"), None);
+        assert_eq!(found_in(std::ffi::OsStr::new(""), "alpha"), None);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

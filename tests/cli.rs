@@ -196,14 +196,25 @@ fn in_terminal(dir: &Path, args: &[&str], no_color: bool) -> (String, u32) {
     let mut reader = pair.master.try_clone_reader().unwrap();
     let mut child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave);
-    let mut said = Vec::new();
-    let mut buf = [0u8; 4096];
-    loop {
-        match reader.read(&mut buf) {
-            Ok(0) | Err(_) => break,
-            Ok(n) => said.extend_from_slice(&buf[..n]),
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut said = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => said.extend_from_slice(&buf[..n]),
+            }
         }
-    }
+        let _ = tx.send(said);
+    });
+    let said = match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+        Ok(said) => said,
+        Err(_) => {
+            let _ = child.kill();
+            panic!("prec {args:?} in a terminal did not finish within 30 s");
+        }
+    };
     let status = child.wait().unwrap();
     (
         String::from_utf8_lossy(&said).replace("\r\n", "\n"),
@@ -309,6 +320,46 @@ fn a_refusal_after_a_good_parse_is_one_line_with_exit_1() {
         refused(&["render", cast.to_str().unwrap()])
             .starts_with(&format!("prec: {}: ", cast.display()))
     );
+    assert!(!dir.join("archive").exists());
+}
+
+#[test]
+fn a_bin_folder_without_the_apps_binary_is_refused_before_anything_records() {
+    let dir = setup("bin-refused");
+    let app = demo_app(&dir, "");
+    add_shot(&app, "binless", "Type \"x\"\n", "");
+    let empty = dir.join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    let gone = dir.join("gone");
+    let out_dir = dir.join("renders");
+    let record = |bin: &Path| {
+        one_line_refusal(&run(&mut prec(
+            &dir,
+            &[
+                "record",
+                "demo",
+                "binless",
+                "--app-dir",
+                app.to_str().unwrap(),
+                "--bin",
+                bin.to_str().unwrap(),
+                "--out",
+                out_dir.to_str().unwrap(),
+            ],
+        )))
+    };
+    assert_eq!(
+        record(&empty),
+        format!(
+            "prec: {} is missing from --bin",
+            empty.join("demo").display()
+        )
+    );
+    assert_eq!(
+        record(&gone),
+        format!("prec: --bin {}: no such folder", gone.display())
+    );
+    assert!(!out_dir.join("demo").exists());
     assert!(!dir.join("archive").exists());
 }
 
@@ -652,6 +703,37 @@ fn doctor_marks_every_missing_tool_and_exits_1() {
         )
     );
     assert!(lines.iter().all(|(_, w, _)| w != "systemd-run"));
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_with_a_shell_but_no_tools_misses_each_tool_by_name() {
+    let dir = setup("doctor-shell-only");
+    let shell = dir.join("shell");
+    std::fs::create_dir_all(&shell).unwrap();
+    std::os::unix::fs::symlink(on_path("bash"), shell.join("bash")).unwrap();
+    let o = run(&mut doctor(&dir, &shell));
+    assert_eq!(o.status.code(), Some(1), "{}", out(&o));
+    assert_eq!(err(&o), "prec: the machine is missing something above\n");
+    let lines = report(&out(&o));
+    for (what, said) in [
+        ("fc-match", "not on PATH"),
+        ("git", "not on PATH"),
+        ("chromium", "not found; a render needs a headless Chromium"),
+    ] {
+        assert_eq!(mark(&lines, what), ("MISS".into(), said.into()), "{what}");
+    }
+    stub(&shell, "git", "exit 0");
+    std::fs::write(shell.join("fc-match"), "not runnable").unwrap();
+    let lines = report(&out(&run(&mut doctor(&dir, &shell))));
+    assert_eq!(
+        mark(&lines, "git"),
+        ("ok".into(), shell.join("git").display().to_string())
+    );
+    assert_eq!(
+        mark(&lines, "fc-match"),
+        ("MISS".into(), "not on PATH".into())
+    );
 }
 
 #[cfg(unix)]

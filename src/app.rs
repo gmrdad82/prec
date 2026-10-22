@@ -573,7 +573,15 @@ pub fn build(
     bin_override: Option<&Path>,
 ) -> Result<PathBuf, String> {
     if let Some(b) = bin_override {
-        return paths::absolute(b);
+        let dir = paths::absolute(b)?;
+        if !dir.is_dir() {
+            return Err(format!("--bin {}: no such folder", dir.display()));
+        }
+        let bin = dir.join(&app.terminal.bin);
+        if !bin.is_file() {
+            return Err(format!("{} is missing from --bin", bin.display()));
+        }
+        return Ok(dir);
     }
     let target = target_dir(app, product)?;
     std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
@@ -1073,13 +1081,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&work);
         std::fs::create_dir_all(&work).unwrap();
         let app = resolved(&work, parsed(HEAD));
+        let flag = work.join("flag");
+        std::fs::create_dir_all(&flag).unwrap();
+        std::fs::write(flag.join("alpha"), "").unwrap();
+        assert_eq!(build(&app, "alpha-unit", Some(&flag)).unwrap(), flag);
         assert_eq!(
-            build(&app, "alpha-unit", Some(Path::new("/opt/alpha/bin"))).unwrap(),
-            PathBuf::from("/opt/alpha/bin")
-        );
-        assert_eq!(
-            build(&app, "alpha-unit", Some(Path::new("rel/./bin/../out"))).unwrap(),
-            std::env::current_dir().unwrap().join("rel/out")
+            build(
+                &app,
+                "alpha-unit",
+                Some(Path::new("tmp/app-unit/bin/./other/../flag"))
+            )
+            .unwrap(),
+            std::env::current_dir()
+                .unwrap()
+                .join("tmp/app-unit/bin/flag")
         );
         assert_eq!(build(&app, "alpha-unit", None).unwrap(), work);
         let release = resolved(
@@ -1093,6 +1108,35 @@ mod tests {
             dir.ends_with("tmp/tools/alpha-unit@local/target/release"),
             "{}",
             dir.display()
+        );
+        std::fs::remove_dir_all(&work).unwrap();
+        std::fs::remove_dir_all(paths::caller_tmp().unwrap().join("tools/alpha-unit@local"))
+            .unwrap();
+    }
+
+    #[test]
+    fn a_bin_flag_without_the_apps_binary_is_refused() {
+        let work = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tmp/app-unit/bin-refused");
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let app = resolved(&work, parsed(HEAD));
+        let gone = work.join("gone");
+        assert_eq!(
+            build(&app, "alpha-unit", Some(&gone)).unwrap_err(),
+            format!("--bin {}: no such folder", gone.display())
+        );
+        let empty = work.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        assert_eq!(
+            build(&app, "alpha-unit", Some(&empty)).unwrap_err(),
+            format!("{} is missing from --bin", empty.join("alpha").display())
+        );
+        let other = work.join("other");
+        std::fs::create_dir_all(other.join("alpha")).unwrap();
+        std::fs::write(other.join("beta"), "").unwrap();
+        assert_eq!(
+            build(&app, "alpha-unit", Some(&other)).unwrap_err(),
+            format!("{} is missing from --bin", other.join("alpha").display())
         );
         std::fs::remove_dir_all(&work).unwrap();
     }
@@ -1111,10 +1155,10 @@ mod tests {
             )
         };
         assert_eq!(
-            build(&with("exit 3"), "alpha", None).unwrap_err(),
-            "alpha's build command failed: exit 3"
+            build(&with("exit 3"), "alpha-build", None).unwrap_err(),
+            "alpha-build's build command failed: exit 3"
         );
-        let missing = build(&with("mkdir -p out"), "alpha", None).unwrap_err();
+        let missing = build(&with("mkdir -p out"), "alpha-build", None).unwrap_err();
         assert_eq!(
             missing,
             format!(
@@ -1124,12 +1168,14 @@ mod tests {
         );
         let made = build(
             &with("mkdir -p {app}/out && touch out/alpha"),
-            "alpha",
+            "alpha-build",
             None,
         )
         .unwrap();
         assert_eq!(made, work.join("out"));
         assert!(made.join("alpha").is_file());
         std::fs::remove_dir_all(&work).unwrap();
+        std::fs::remove_dir_all(paths::caller_tmp().unwrap().join("tools/alpha-build@local"))
+            .unwrap();
     }
 }
