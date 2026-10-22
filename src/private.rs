@@ -255,19 +255,13 @@ pub fn redact(text: &str, passed: &[(String, String)]) -> String {
             from = start + text[start..].chars().next().map_or(1, char::len_utf8);
         }
     }
-    let covered = |i: usize, (s, e, _): (usize, usize, &str)| {
-        spans
-            .iter()
-            .enumerate()
-            .any(|(j, &(js, je, _))| j != i && js <= s && e <= je && (je - js > e - s || j < i))
-    };
-    let mut kept: Vec<(usize, usize, &str)> = spans
-        .iter()
-        .enumerate()
-        .filter(|&(i, &span)| !covered(i, span))
-        .map(|(_, &span)| span)
-        .collect();
-    kept.sort_by_key(|&(s, e, _)| (s, std::cmp::Reverse(e)));
+    spans.sort_by_key(|&(s, e, _)| (s, std::cmp::Reverse(e)));
+    let mut reach = 0;
+    let kept = spans.into_iter().filter(|&(_, e, _)| {
+        let uncovered = e > reach;
+        reach = reach.max(e);
+        uncovered
+    });
     let mut out = String::new();
     let mut cursor = 0;
     let mut last: Option<&str> = None;
@@ -653,6 +647,16 @@ mod tests {
         assert_eq!(redact("x same y", &twice), "x <A> y");
         let wide = [("W".to_string(), "é1é".to_string())];
         assert_eq!(redact("aé1é1éb", &wide), "a<W>b");
+        let one = [
+            ("D".to_string(), "1".to_string()),
+            ("P".to_string(), "21".to_string()),
+        ];
+        let digits = format!("x{}y", "1".repeat(200_000));
+        assert_eq!(
+            redact(&digits, &one),
+            format!("x{}y", "<D>".repeat(200_000))
+        );
+        assert_eq!(redact(&"21".repeat(100_000), &one), "<P>".repeat(100_000));
         for (text, passed) in [
             ("abcdXYZW", pair("abcdXY", "XYZW")),
             ("value-one and TOKEN", named.clone()),

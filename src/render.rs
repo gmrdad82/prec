@@ -402,9 +402,13 @@ pub struct Run {
 }
 
 impl Run {
-    fn remove(self) {
-        if std::fs::remove_dir_all(&self.dir).is_ok() || !self.dir.exists() {
-            let _ = std::fs::remove_file(&self.lock_path);
+    fn remove(self) -> Result<(), String> {
+        match std::fs::remove_dir_all(&self.dir) {
+            Err(e) if self.dir.exists() => Err(format!("{} is kept: {e}", paths::shown(&self.dir))),
+            _ => {
+                let _ = std::fs::remove_file(&self.lock_path);
+                Ok(())
+            }
         }
     }
 }
@@ -875,10 +879,10 @@ fn record_prepared(
     if !opts.allow_private {
         let found = private::scan(&cast, &private::Needles::of_this_machine(&p.passed));
         if !to_out && let Err(refused) = private::refuse(&path, &found) {
-            if let Some(run) = kept {
-                run.remove();
-            }
-            return Err(refused);
+            return Err(match kept.map(Run::remove) {
+                Some(Err(e)) => format!("{refused}\nprec: {e}"),
+                _ => refused,
+            });
         }
         for line in private::lines(&path, &found) {
             eprintln!("prec: {line}");
@@ -2133,7 +2137,7 @@ mod tests {
             _lock: File::create(&lock_path).unwrap(),
         };
         std::fs::write(root.join("alpha-clip-s-cast-8.lock"), "").unwrap();
-        run.remove();
+        run.remove().unwrap();
         assert!(!dir.exists());
         assert!(!lock_path.exists());
         assert!(root.join("alpha-clip-s-cast-8.lock").exists());
@@ -2144,8 +2148,42 @@ mod tests {
             lock_path: lock_path.clone(),
             _lock: File::create(&lock_path).unwrap(),
         }
-        .remove();
+        .remove()
+        .unwrap();
         assert!(!lock_path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_run_that_cannot_be_removed_is_named_and_keeps_its_lock() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = work("run-remove-kept");
+        let dir = root.join("alpha-clip-s-cast-7");
+        std::fs::create_dir_all(dir.join("inner")).unwrap();
+        std::fs::write(dir.join("inner/alpha-clip-s.cast"), "x").unwrap();
+        let lock_path = root.join("alpha-clip-s-cast-7.lock");
+        let locked = |p: u32| {
+            std::fs::set_permissions(dir.join("inner"), std::fs::Permissions::from_mode(p))
+        };
+        locked(0o555).unwrap();
+        let said = Run {
+            dir: dir.clone(),
+            lock_path: lock_path.clone(),
+            _lock: File::create(&lock_path).unwrap(),
+        }
+        .remove();
+        let removable = !dir.exists();
+        let _ = locked(0o755);
+        if removable {
+            return;
+        }
+        let said = said.unwrap_err();
+        assert!(
+            said.starts_with(&format!("{} is kept: ", paths::shown(&dir))),
+            "{said}"
+        );
+        assert!(dir.join("inner/alpha-clip-s.cast").exists());
+        assert!(lock_path.exists());
     }
 
     fn listed(dir: &Path) -> Vec<String> {
