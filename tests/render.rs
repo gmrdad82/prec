@@ -1,6 +1,6 @@
 mod common;
 
-use common::{paint, tree};
+use common::{paint, tree, video};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
@@ -131,31 +131,6 @@ fn stamp(path: &Path, key: &str, value: Value) {
 fn painted_cast(path: &Path, shot: &str, kind: &str, rgb: [u32; 3], end: f64) {
     let events = vec![(0.0, format!("\x1b[?25l{}", paint(rgb[0], rgb[1], rgb[2])))];
     common::write_cast(path, "render", shot, kind, &events, end);
-}
-
-fn ffprobe(video: &Path) -> Value {
-    let out = Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-count_frames",
-            "-show_entries",
-            "stream=codec_name,profile,width,height,pix_fmt,r_frame_rate,avg_frame_rate,nb_read_frames,duration,has_b_frames",
-            "-of",
-            "json",
-        ])
-        .arg(video)
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
-    v["streams"][0].clone()
 }
 
 fn demo_with(w: &Path, shot: &str, kind: &str, extra: &str) -> PathBuf {
@@ -653,29 +628,21 @@ fn a_clip_writes_its_master_poster_and_manifest_at_a_film_rate() {
         (manifest["frames"]["seconds"].as_f64().unwrap() - count as f64 * 1001.0 / 24000.0).abs()
             < 1e-9
     );
-    let s = ffprobe(&dir.join(format!("{stem}.master.mp4")));
-    assert_eq!(s["codec_name"], "h264");
-    assert_eq!(s["profile"], "High");
-    assert_eq!(s["pix_fmt"], "yuv420p");
-    assert_eq!(
-        (s["width"].as_u64(), s["height"].as_u64()),
-        (Some(320), Some(180))
-    );
-    assert_eq!(s["r_frame_rate"], "24000/1001");
-    assert_eq!(s["avg_frame_rate"], "24000/1001");
-    assert_eq!(s["has_b_frames"].as_u64(), Some(0));
-    assert_eq!(
-        s["nb_read_frames"]
-            .as_str()
-            .unwrap()
-            .parse::<u64>()
-            .unwrap(),
-        count
-    );
-    let duration: f64 = s["duration"].as_str().unwrap().parse().unwrap();
+    let s = video::probe(&dir.join(format!("{stem}.master.mp4")));
+    assert_eq!(s.codec, "h264");
+    assert_eq!(s.profile, "High");
+    assert_eq!(s.pix_fmt, "yuv420p");
+    assert_eq!(s.color, [1, 1, 1], "BT.709 primaries, transfer and matrix");
+    assert_eq!((s.width, s.height), (320, 180));
+    assert_eq!(s.track_size, [320, 180]);
+    assert_eq!(s.r_frame_rate, "24000/1001");
+    assert_eq!(s.avg_frame_rate, "24000/1001");
+    assert_eq!((s.reordered, s.held), (0, 0));
+    assert_eq!((s.frames, s.samples), (count, count));
     assert!(
-        (duration - count as f64 * 1001.0 / 24000.0).abs() < 1e-3,
-        "{duration}"
+        (s.duration - count as f64 * 1001.0 / 24000.0).abs() < 1e-3,
+        "{}",
+        s.duration
     );
 
     let poster = dir.join(format!("{stem}.poster.png"));
@@ -749,28 +716,21 @@ fn a_cast_renders_at_every_exact_rate_with_its_frames_and_duration() {
             assert_eq!(manifest["frames"]["master"].as_u64(), Some(want), "{flag}");
             let dir = m.parent().unwrap();
             every_file_is_what_the_manifest_says(&manifest, dir);
-            let s = ffprobe(&dir.join(format!("render-clip-rates-160x90-{label}fps.master.mp4")));
+            let s =
+                video::probe(&dir.join(format!("render-clip-rates-160x90-{label}fps.master.mp4")));
             let rate = if *den == 1 {
                 format!("{num}/1")
             } else {
                 format!("{num}/{den}")
             };
-            assert_eq!(s["r_frame_rate"], json!(rate), "{flag}");
-            assert_eq!(s["has_b_frames"].as_u64(), Some(0), "{flag}");
-            assert_eq!(
-                s["nb_read_frames"]
-                    .as_str()
-                    .unwrap()
-                    .parse::<u64>()
-                    .unwrap(),
-                want,
-                "{flag}"
-            );
-            let duration: f64 = s["duration"].as_str().unwrap().parse().unwrap();
+            assert_eq!(s.r_frame_rate, rate, "{flag}");
+            assert_eq!((s.reordered, s.held), (0, 0), "{flag}");
+            assert_eq!((s.frames, s.samples), (want, want), "{flag}");
             let exact = want as f64 * *den as f64 / *num as f64;
             assert!(
-                (duration - exact).abs() < 1e-3,
-                "{flag}: {duration} vs {exact}"
+                (s.duration - exact).abs() < 1e-3,
+                "{flag}: {} vs {exact}",
+                s.duration
             );
         }
     }
@@ -948,12 +908,9 @@ fn a_recorded_cast_renders_at_another_size_rate_and_theme_without_the_app() {
     let dir = m.parent().unwrap();
     every_file_is_what_the_manifest_says(&manifest, dir);
     assert_eq!(pixel(&dir.join(format!("{stem}.poster.png")), 0, 0), bg);
-    let s = ffprobe(&dir.join(format!("{stem}.master.mp4")));
-    assert_eq!(s["r_frame_rate"], "30/1");
-    assert_eq!(
-        (s["width"].as_u64(), s["height"].as_u64()),
-        (Some(160), Some(90))
-    );
+    let s = video::probe(&dir.join(format!("{stem}.master.mp4")));
+    assert_eq!(s.r_frame_rate, "30/1");
+    assert_eq!((s.width, s.height), (160, 90));
     assert_eq!(std::fs::read(&cast).unwrap(), before);
     assert_eq!(
         std::fs::read(dir.join(format!("{stem}.cast"))).unwrap(),

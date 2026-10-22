@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod video;
+
 use serde_json::{Value, json};
 use std::fs::File;
 use std::path::{Path, PathBuf};

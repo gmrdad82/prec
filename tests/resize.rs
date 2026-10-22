@@ -1,8 +1,10 @@
 mod common;
 
+use common::video;
+
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 const SIZE: [u32; 2] = [320, 180];
 
@@ -87,27 +89,15 @@ fn edges(rgb: &[u8], size: [u32; 2]) -> Edges {
     }
 }
 
-fn frames(video: &Path) -> Vec<Vec<u8>> {
-    let out = Command::new("ffmpeg")
-        .args(["-v", "error", "-i"])
-        .arg(video)
-        .args([
-            "-vf",
-            "scale=in_color_matrix=bt709:in_range=tv:out_range=pc,format=rgb24",
-            "-f",
-            "rawvideo",
-            "-",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+fn frames(master: &Path) -> Vec<Vec<u8>> {
+    let all: Vec<Vec<u8>> = video::decode(master)
+        .frames
+        .iter()
+        .map(video::rgb)
+        .collect();
     let one = (SIZE[0] * SIZE[1] * 3) as usize;
-    assert_eq!(out.stdout.len() % one, 0);
-    out.stdout.chunks(one).map(<[u8]>::to_vec).collect()
+    assert!(all.iter().all(|f| f.len() == one));
+    all
 }
 
 #[test]
