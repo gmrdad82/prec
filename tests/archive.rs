@@ -470,6 +470,84 @@ fn a_queued_name_never_lands_outside_the_archive_root() {
 }
 
 #[test]
+fn a_refused_queue_entry_whose_data_is_no_object_is_settled_without_a_crash() {
+    let dir = scratch("retry-shapeless");
+    fs::create_dir_all(root(&dir)).unwrap();
+    master(&dir, "good");
+    let escape = json!("../../outside/alpha");
+    let mut jobs = Vec::new();
+    for key in [
+        "archive-text",
+        "data-text",
+        "data-missing",
+        "no-data-no-files",
+    ] {
+        let job = enqueue(
+            &dir,
+            key,
+            "v1.2.4",
+            LATER,
+            LATER_LEAF,
+            &[("shot.master.png", b"later!")],
+        );
+        let before = fs::read(&job.local).unwrap();
+        rewrite(&job, |r| {
+            let r = r.as_object_mut().unwrap();
+            match key {
+                "archive-text" => {
+                    r.insert("leaf".into(), escape.clone());
+                    r["data"]["archive"] = json!("queued");
+                }
+                "data-text" => {
+                    r.insert("leaf".into(), escape.clone());
+                    r.insert("data".into(), json!("queued"));
+                }
+                "data-missing" => {
+                    r.insert("leaf".into(), escape.clone());
+                    r.remove("data");
+                }
+                _ => {
+                    r.remove("data");
+                    r.remove("files");
+                }
+            }
+        });
+        jobs.push((key, job, before));
+    }
+    let o = retry(&dir);
+    let said = err(&o);
+    assert!(!said.contains("panicked"), "{said}");
+    for (key, job, before) in &jobs {
+        let prefix = format!("archive: refused: {}", queue(&dir).join(key).display());
+        if *key == "no-data-no-files" {
+            assert!(
+                said.contains("archive: refused: manifest has no made"),
+                "{said}"
+            );
+        } else {
+            assert!(said.contains(&prefix), "{key}: {said}");
+        }
+        let local = read(&job.local);
+        if *key == "archive-text" {
+            assert_eq!(local["archive"]["state"], "refused", "{key}");
+            assert!(
+                local["archive"]["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("leaves the archive")
+            );
+        } else {
+            assert_eq!(&fs::read(&job.local).unwrap(), before, "{key}");
+        }
+    }
+    assert!(queued(&dir).is_empty());
+    assert!(!dir.join("outside").exists());
+    assert!(!masters(&dir).join(LATER_LEAF).exists());
+    assert_eq!(lines(&catalog(&dir)).len(), 1);
+    assert_eq!(err(&retry(&dir)), "");
+}
+
+#[test]
 fn a_queued_web_copy_with_an_at_in_its_name_lands_in_the_archive() {
     let dir = scratch("retry-web");
     fs::create_dir_all(root(&dir)).unwrap();
@@ -1212,7 +1290,10 @@ fn the_cache_root_set_by_prec_cache_is_named() {
         .env("PREC_CACHE", &moved)
         .output()
         .unwrap();
-    assert_eq!(out(&o).lines().nth(1), Some("       set by PREC_CACHE"));
+    assert_eq!(
+        out(&o).lines().nth(1).map(str::trim),
+        Some("set by PREC_CACHE")
+    );
 }
 
 #[test]

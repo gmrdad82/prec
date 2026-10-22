@@ -626,6 +626,12 @@ fn conclude(
         Outcome::Refused(e) => Some(("refused", e)),
     };
     if let Some((state, error)) = state {
+        if !job.manifest.is_object() {
+            job.manifest = json!({});
+        }
+        if !job.manifest["archive"].is_object() {
+            job.manifest["archive"] = json!({});
+        }
         job.manifest["archive"]["state"] = json!(state);
         job.manifest["archive"]["error"] = json!(error);
     }
