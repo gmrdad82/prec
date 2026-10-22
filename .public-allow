@@ -2,7 +2,7 @@ assets/xterm/xterm.js:1 vendored xterm.js 5.5.0 as published (sha256 in assets/x
 assets/xterm/addon-canvas.js:1 vendored @xterm/addon-canvas 0.7.0 as published (sha256 in assets/xterm/VERSIONS); gitleaks' generic-api-key rule matches a minified identifier, not a secret
 tests/environment.rs:272 the made-up neutral home the integration test runs its session under
 commit/becd0845980a:src/mask.rs:174 a made-up home path in the mask unit test of that commit, replaced by /srv/x in the next one
-tests/paths.rs:424 the made-up neutral home the integration test runs its session under
+tests/paths.rs:426 the made-up neutral home the integration test runs its session under
 commit/1d3b98c1863a:src/private.rs:263 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
 commit/1d3b98c1863a:src/private.rs:281 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
 commit/1d3b98c1863a:src/private.rs:357 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
@@ -63,3 +63,4 @@ commit/2b17f591c28a:src/app.rs:903 a made-up home path in the app model unit tes
 commit/e05fae7c9d25:src/private.rs:258 a made-up home path or email in the private-data scan's unit test as the branch started, replaced by /srv paths and example.com on main
 commit/e05fae7c9d25:src/private.rs:276 a made-up home path or email in the private-data scan's unit test as the branch started, replaced by /srv paths and example.com on main
 commit/e05fae7c9d25:src/private.rs:352 a made-up home path or email in the private-data scan's unit test as the branch started, replaced by /srv paths and example.com on main
+commit/1c10c055a6f5:tests/paths.rs:449 the made-up neutral home the integration test runs its session under, at its line in the branch's first commit

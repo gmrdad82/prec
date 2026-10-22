@@ -232,7 +232,7 @@ impl Shot {
     }
 }
 
-pub const OWN_ENV: [&str; 9] = [
+pub const OWN_ENV: [&str; 11] = [
     "HOME",
     "PATH",
     "TERM",
@@ -242,6 +242,8 @@ pub const OWN_ENV: [&str; 9] = [
     "LANG",
     "LC_ALL",
     "COLORTERM",
+    "USER",
+    "LOGNAME",
 ];
 
 pub const DEFAULT_HOSTNAME: &str = "prec";
@@ -864,6 +866,17 @@ mod tests {
         assert_eq!(
             refusal("pass_env = [\"PATH\"]\n"),
             "pass_env PATH: prec sets PATH itself"
+        );
+        for own in ["USER", "LOGNAME"] {
+            assert_eq!(
+                refusal(&format!("pass_env = [\"ALPHA\", \"{own}\"]\n")),
+                format!("pass_env {own}: prec sets {own} itself")
+            );
+        }
+        assert!(
+            parsed(&format!("{HEAD}pass_env = [\"User\", \"LOGNAME_2\"]\n"))
+                .private()
+                .is_ok()
         );
         assert_eq!(
             refusal("pass_env = [\"ALPHA\"]\n[env]\nALPHA = \"1\"\n"),
