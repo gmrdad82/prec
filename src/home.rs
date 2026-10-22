@@ -50,7 +50,7 @@ impl Ns {
             return Err("home needs Linux user namespaces".into());
         }
         let home = PathBuf::from(home);
-        if home.exists() {
+        if home.symlink_metadata().is_ok() {
             return Err(format!(
                 "home {}: that path exists on this machine; name one that doesn't",
                 home.display()
@@ -275,39 +275,63 @@ mod tests {
         let mut n = ns(&dir, &dir.join("alpha").display().to_string()).unwrap();
         n.cwd = dir.join("alpha/work");
         let argv = n.argv(&["bash", "-i"]);
-        let mut want: Vec<String> = [
-            "unshare",
-            "--user",
-            "--map-root-user",
-            "--mount",
-            "--uts",
-            "--propagation",
-            "private",
-            "sh",
-            "-c",
-            PRELUDE,
-            "sh",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-        want.extend([
-            dir.join("stash").display().to_string(),
-            dir.display().to_string(),
-            "alpha".to_string(),
-            dir.join("scratch-home").display().to_string(),
-            "beta-box".to_string(),
-            dir.join("alpha/work").display().to_string(),
-            n.uid.to_string(),
-            n.gid.to_string(),
-            "bash".to_string(),
-            "-i".to_string(),
-        ]);
-        assert_eq!(argv, want);
+        assert_eq!(
+            argv[..11],
+            [
+                "unshare",
+                "--user",
+                "--map-root-user",
+                "--mount",
+                "--uts",
+                "--propagation",
+                "private",
+                "sh",
+                "-c",
+                PRELUDE,
+                "sh",
+            ]
+        );
+        let meant = |name: &str| -> String {
+            match name {
+                "stash" => dir.join("stash").display().to_string(),
+                "parent" => dir.display().to_string(),
+                "name" => "alpha".to_string(),
+                "home" => dir.join("scratch-home").display().to_string(),
+                "host" => "beta-box".to_string(),
+                "cwd" => dir.join("alpha/work").display().to_string(),
+                "uid" => n.uid.to_string(),
+                "gid" => n.gid.to_string(),
+                other => panic!("the prelude names {other}, which no test value means"),
+            }
+        };
         let names = PRELUDE.lines().nth(1).unwrap();
-        assert_eq!(names.matches("=$").count(), 8);
+        let mut seen = Vec::new();
+        for field in names.split_whitespace() {
+            let (name, at) = field.split_once("=$").unwrap();
+            let at: usize = at.parse().unwrap();
+            assert_eq!(argv[10 + at], meant(name), "${at} is {name}");
+            seen.push(at);
+        }
+        seen.sort_unstable();
+        assert_eq!(seen, (1..=8).collect::<Vec<_>>());
         assert!(PRELUDE.contains("\nshift 8\n"));
+        assert_eq!(argv[19..], ["bash", "-i"]);
+        assert_eq!(argv.len(), 21);
         assert!(PRELUDE.ends_with("--map-user=\"$uid\" --map-group=\"$gid\" \"$@\"\n"));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_dangling_link_where_the_home_would_be_is_refused_as_existing() {
+        let dir = test_dir("dangling");
+        let home = dir.join("alpha");
+        std::os::unix::fs::symlink(dir.join("nowhere"), &home).unwrap();
+        assert!(!home.exists());
+        let shown = home.display().to_string();
+        assert_eq!(
+            ns(&dir, &shown).err().unwrap(),
+            format!("home {shown}: that path exists on this machine; name one that doesn't")
+        );
     }
 
     #[test]

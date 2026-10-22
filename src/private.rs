@@ -51,8 +51,24 @@ fn host_name(text: &str) -> Option<String> {
 
 impl Needles {
     pub fn of_this_machine(passed: &[(String, String)]) -> Needles {
+        Needles::of(
+            std::env::var("HOME").ok(),
+            std::env::var("USER").ok(),
+            std::env::var("LOGNAME").ok(),
+            hostname(),
+            passed,
+        )
+    }
+
+    fn of(
+        home: Option<String>,
+        user: Option<String>,
+        logname: Option<String>,
+        hostname: Option<String>,
+        passed: &[(String, String)],
+    ) -> Needles {
         let mut homes: Vec<String> = Vec::new();
-        if let Some(h) = std::env::var("HOME").ok().as_deref().and_then(real_home) {
+        if let Some(h) = home.as_deref().and_then(real_home) {
             if let Some(c) = std::fs::canonicalize(&h)
                 .ok()
                 .and_then(|c| real_home(&c.to_string_lossy()))
@@ -62,11 +78,8 @@ impl Needles {
             }
             homes.push(h);
         }
-        let user = std::env::var("USER")
-            .ok()
-            .filter(|u| !u.is_empty())
-            .or_else(|| std::env::var("LOGNAME").ok());
-        Needles::new(homes, hostname(), user, passed)
+        let user = user.filter(|u| !u.is_empty()).or(logname);
+        Needles::new(homes, hostname, user, passed)
     }
 
     fn new(
@@ -219,13 +232,42 @@ pub fn refuse(cast: &Path, findings: &[Finding]) -> Result<(), String> {
 }
 
 pub fn redact(text: &str, passed: &[(String, String)]) -> String {
-    let mut longest_first: Vec<&(String, String)> =
-        passed.iter().filter(|(_, v)| !v.is_empty()).collect();
-    longest_first.sort_by_key(|(_, v)| std::cmp::Reverse(v.len()));
-    let mut out = text.to_string();
-    for (name, value) in longest_first {
-        out = out.replace(value.as_str(), &format!("<{name}>"));
+    let mut spans: Vec<(usize, usize, &str)> = Vec::new();
+    for (name, value) in passed.iter().filter(|(_, v)| !v.is_empty()) {
+        let mut from = 0;
+        while let Some(at) = text.get(from..).and_then(|rest| rest.find(value.as_str())) {
+            let start = from + at;
+            spans.push((start, start + value.len(), name.as_str()));
+            from = start + text[start..].chars().next().map_or(1, char::len_utf8);
+        }
     }
+    let covered = |i: usize, (s, e, _): (usize, usize, &str)| {
+        spans.iter().enumerate().any(|(j, &(js, je, _))| {
+            j != i && js <= s && e <= je && (je - js > e - s || j < i)
+        })
+    };
+    let mut kept: Vec<(usize, usize, &str)> = spans
+        .iter()
+        .enumerate()
+        .filter(|&(i, &span)| !covered(i, span))
+        .map(|(_, &span)| span)
+        .collect();
+    kept.sort_by_key(|&(s, e, _)| (s, std::cmp::Reverse(e)));
+    let mut out = String::new();
+    let mut cursor = 0;
+    let mut last: Option<&str> = None;
+    for (s, e, name) in kept {
+        if s >= cursor {
+            out.push_str(&text[cursor..s]);
+            out.push_str(&format!("<{name}>"));
+            last = Some(name);
+        } else if last != Some(name) {
+            out.push_str(&format!("<{name}>"));
+            last = Some(name);
+        }
+        cursor = cursor.max(e);
+    }
+    out.push_str(&text[cursor..]);
     out
 }
 
@@ -457,6 +499,65 @@ mod tests {
         }
     }
 
+    fn test_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tmp/test-private")
+            .join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::canonicalize(&dir).unwrap()
+    }
+
+    #[test]
+    fn this_machines_home_is_looked_for_as_given_and_where_its_link_leads() {
+        let dir = test_dir("linked-home");
+        std::fs::create_dir_all(dir.join("real")).unwrap();
+        std::os::unix::fs::symlink(dir.join("real"), dir.join("link")).unwrap();
+        let link = dir.join("link").display().to_string();
+        let real = dir.join("real").display().to_string();
+        let n = Needles::of(Some(format!("{link}/")), None, None, None, &[]);
+        assert_eq!(n.homes, [real.as_str(), link.as_str()]);
+        assert_eq!(n.found(&format!("cd {real}/x")), ["the home path"]);
+        assert_eq!(n.found(&format!("cd {link}/x")), ["the home path"]);
+        let n = Needles::of(Some(real.clone()), None, None, None, &[]);
+        assert_eq!(n.homes, [real.as_str()]);
+        let absent = dir.join("absent").display().to_string();
+        assert_eq!(
+            Needles::of(Some(absent.clone()), None, None, None, &[]).homes,
+            [absent]
+        );
+        for none in ["/", "", "relative/home", "~"] {
+            let n = Needles::of(Some(none.into()), None, None, None, &[]);
+            assert!(n.homes.is_empty(), "{none:?}");
+        }
+        assert!(Needles::of(None, None, None, None, &[]).homes.is_empty());
+    }
+
+    #[test]
+    fn this_machines_user_is_user_else_logname() {
+        let user = |u: Option<&str>, l: Option<&str>| {
+            Needles::of(None, u.map(str::to_string), l.map(str::to_string), None, &[]).user
+        };
+        assert_eq!(user(Some("alpha"), Some("beta")).as_deref(), Some("alpha"));
+        assert_eq!(user(Some(""), Some("beta")).as_deref(), Some("beta"));
+        assert_eq!(user(None, Some("beta")).as_deref(), Some("beta"));
+        assert_eq!(user(Some(""), None), None);
+        assert_eq!(user(None, None), None);
+        assert_eq!(user(Some("ab"), Some("beta")), None);
+        let n = Needles::of(
+            None,
+            Some("".into()),
+            Some("gamma".into()),
+            Some("delta-box".into()),
+            &[("K".into(), "passed-1".into())],
+        );
+        assert_eq!(
+            n.found("gamma on delta-box with passed-1"),
+            ["the hostname", "the user name", "a passed variable K"]
+        );
+        assert!(n.found("gammas on delta-boxes").is_empty());
+    }
+
     #[test]
     fn a_generic_hostname_is_not_looked_for() {
         assert_eq!(host_name("beta-box\n").as_deref(), Some("beta-box"));
@@ -480,6 +581,42 @@ mod tests {
         assert_eq!(redact("abcd123 bcd1234", &passed), "abcd123 bcd1234");
         assert_eq!(redact("nothing here", &passed), "nothing here");
         assert_eq!(redact("abcd1234", &[]), "abcd1234");
+    }
+
+    #[test]
+    fn overlapping_passed_values_are_both_hidden_and_a_mask_is_never_matched_again() {
+        let pair = |a: &str, b: &str| {
+            [
+                ("A".to_string(), a.to_string()),
+                ("B".to_string(), b.to_string()),
+            ]
+        };
+        assert_eq!(redact("abcdXYZW", &pair("abcdXY", "XYZW")), "<A><B>");
+        assert_eq!(redact("<abcdXYZW>", &pair("XYZW", "abcdXY")), "<<B><A>>");
+        let named = [
+            ("NAME_HOLDS_TOKEN".to_string(), "value-one".to_string()),
+            ("T".to_string(), "TOKEN".to_string()),
+        ];
+        assert_eq!(
+            redact("value-one and TOKEN", &named),
+            "<NAME_HOLDS_TOKEN> and <T>"
+        );
+        let short = [("N".to_string(), "aa".to_string())];
+        assert_eq!(redact("aaaa", &short), "<N>");
+        assert_eq!(redact("aa-aa", &short), "<N>-<N>");
+        let twice = pair("same", "same");
+        assert_eq!(redact("x same y", &twice), "x <A> y");
+        let wide = [("W".to_string(), "é1é".to_string())];
+        assert_eq!(redact("aé1é1éb", &wide), "a<W>b");
+        for (text, passed) in [
+            ("abcdXYZW", pair("abcdXY", "XYZW")),
+            ("value-one and TOKEN", named.clone()),
+        ] {
+            let hidden = redact(text, &passed);
+            for (_, v) in &passed {
+                assert!(!hidden.contains(v.as_str()), "{v} in {hidden}");
+            }
+        }
     }
 
     #[test]

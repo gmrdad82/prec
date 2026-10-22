@@ -129,7 +129,7 @@ fn only_the_built_environment_reaches_the_session_and_a_callers_variable_never_d
     common::add_shot(
         &app,
         "env",
-        "Type@5ms \"env | cut -d= -f1 | sort | sed 's/^/N:/'\"\nEnter\nSleep 1s\nType@5ms 'test -z \"${PREC_PATHS_SENTINEL+x}\" && echo sentinel-absent'\nEnter\nSleep 1s\n",
+        "Type@5ms \"env | cut -d= -f1 | sort | sed 's/^/N:/'; echo done-$((1+1))\"\nEnter\nWait+Screen /done-2/\nType@5ms 'test -z \"${PREC_PATHS_SENTINEL+x}\" && echo sentinel-absent; echo end-$((2+1))'\nEnter\nWait+Screen /end-3/\n",
         "",
     );
     let (_, o) = record(&dir, &dir, &app, "env", "tmp/out");
@@ -194,7 +194,7 @@ fn a_passed_value_the_app_prints_is_named_never_shown_and_a_clip_of_it_is_refuse
     common::add_shot(
         &app,
         "echo",
-        "Type@5ms 'echo \"$PREC_PATHS_PASSED\"'\nEnter\nSleep 1s\n",
+        "Type@5ms 'echo \"$PREC_PATHS_PASSED\"; echo done-$((1+1))'\nEnter\nWait+Screen /done-2/\n",
         "",
     );
     let (_, o) = record(&dir, &dir, &app, "echo", "tmp/out");
@@ -401,7 +401,7 @@ fn a_home_without_a_hostname_shows_the_default_one() {
     common::add_shot(
         &app,
         "host",
-        "Type@5ms 'hostname; echo \"$HOME\"'\nEnter\nSleep 1s\n",
+        "Type@5ms 'hostname; echo \"$HOME\"; echo done-$((1+1))'\nEnter\nWait+Screen /done-2/\n",
         "",
     );
     let (_, o) = record(&dir, &dir, &app, "host", "tmp/out");
@@ -587,6 +587,7 @@ fn without_a_config_file_the_defaults_apply_and_nothing_is_archived() {
     );
     for tool in ["systemd-run", "prlimit", "taskset"] {
         assert_eq!(detail(&o, tool), None, "{tool} is checked unconfined");
+        assert!(!out(&o).contains(tool), "{tool}: {}", out(&o));
     }
     let path = config(&dir, "");
     let o = doctor(&dir, &[]);
@@ -699,4 +700,195 @@ fn an_unreadable_or_unknown_config_is_refused_before_anything_runs() {
     std::fs::write(&named, "theme = \"nord\"\n").unwrap();
     let o = doctor(&dir, &[("PREC_CONFIG", &named)]);
     assert_eq!(detail(&o, "config"), Some(named.display().to_string()));
+}
+
+#[test]
+fn two_records_of_one_shot_at_once_take_turns_through_the_shots_lock() {
+    let dir = common::caller(GROUP, "same-shot");
+    let app = common::demo_app(&dir, "");
+    let start = |out: &str| {
+        prec(
+            &dir,
+            &dir,
+            &[
+                "record",
+                "demo",
+                "palette",
+                "--app-dir",
+                app.to_str().unwrap(),
+                "--out",
+                out,
+            ],
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap()
+    };
+    let a = start("tmp/out-a");
+    let b = start("tmp/out-b");
+    let pids = [a.id(), b.id()];
+    let outs = [a.wait_with_output().unwrap(), b.wait_with_output().unwrap()];
+    for (o, out) in outs.iter().zip(["out-a", "out-b"]) {
+        common::expect_ok(o, out);
+        let cast_path = dir.join(format!("tmp/{out}/demo/still/demo-still-palette.cast"));
+        assert_eq!(common::last_path(o), cast_path);
+        let cast = std::fs::read_to_string(&cast_path).unwrap();
+        let head: Value = serde_json::from_str(cast.lines().next().unwrap()).unwrap();
+        assert_eq!(head["version"], 2, "{out}");
+        assert!(!printed(&cast).is_empty(), "{out} recorded nothing");
+        assert!(
+            cast.lines().skip(1).all(|l| serde_json::from_str::<Value>(l).is_ok()),
+            "{out}"
+        );
+    }
+    let run = dir.join("tmp/prec/run");
+    let records: Vec<String> = std::fs::read_dir(&run)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.starts_with("demo-still-palette-record"))
+        .collect();
+    assert_eq!(records, ["demo-still-palette-record"]);
+    let holder = std::fs::read_to_string(dir.join("tmp/prec/locks/demo-palette.lock")).unwrap();
+    assert!(
+        pids.iter()
+            .any(|pid| holder == format!("prec {pid} (record demo palette)\n")),
+        "{holder}"
+    );
+    let waited: Vec<bool> = outs
+        .iter()
+        .map(|o| err(o).contains("waiting for prec "))
+        .collect();
+    assert!(waited.iter().filter(|w| **w).count() <= 1, "{waited:?}");
+}
+
+#[test]
+fn a_hook_that_prints_a_passed_value_shows_it_on_precs_own_output() {
+    let dir = common::caller(GROUP, "passed-hook");
+    let app = common::demo_app(
+        &dir,
+        "pass_env = [\"PREC_PATHS_PASSED\"]\nsetup = 'echo \"hook-saw-$PREC_PATHS_PASSED\"; exit 3'\n",
+    );
+    let (_, o) = record(&dir, &dir, &app, "palette", "tmp/out");
+    assert_eq!(o.status.code(), Some(1), "{}", err(&o));
+    assert_eq!(out(&o), format!("hook-saw-{PASSED}\n"));
+    assert_eq!(
+        err(&o).trim_end().lines().last(),
+        Some("prec: echo \"hook-saw-$PREC_PATHS_PASSED\"; exit 3 failed")
+    );
+    assert!(!err(&o).contains(PASSED), "{}", err(&o));
+    assert!(!dir.join("tmp/out/demo/still/demo-still-palette.cast").exists());
+}
+
+#[test]
+fn a_user_or_logname_in_pass_env_is_taken_though_prec_sets_both() {
+    let dir = common::caller(GROUP, "passed-user");
+    let app = common::demo_app(&dir, "");
+    for own in ["USER", "LOGNAME"] {
+        set_hooks(&app, &format!("pass_env = [\"{own}\"]\n"), "");
+        let o = shots(&dir, &app);
+        common::expect_ok(&o, own);
+        assert!(out(&o).starts_with("demo — grid 60x16"), "{}", out(&o));
+    }
+}
+
+#[test]
+fn the_callers_home_path_on_screen_is_named_in_a_warning() {
+    let dir = common::caller(GROUP, "scan-home");
+    let app = common::demo_app(&dir, "");
+    common::add_shot(
+        &app,
+        "home",
+        "Type@5ms 'echo /prec-paths-scan/alpha/notes; echo done-$((1+1))'\nEnter\nWait+Screen /done-2/\n",
+        "",
+    );
+    let child = prec(
+        &dir,
+        &dir,
+        &[
+            "record",
+            "demo",
+            "home",
+            "--app-dir",
+            app.to_str().unwrap(),
+            "--out",
+            "tmp/out",
+        ],
+    )
+    .env("HOME", "/prec-paths-scan/alpha")
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .unwrap();
+    let o = child.wait_with_output().unwrap();
+    common::expect_ok(&o, "prec record");
+    let said = err(&o);
+    assert!(
+        said.lines().any(|l| l.starts_with(
+            "prec: tmp/out/demo/clip/demo-clip-home.cast: the picture shows the home path at "
+        )),
+        "{said}"
+    );
+    assert!(!Path::new("/prec-paths-scan").exists());
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn this_machines_hostname_on_screen_is_named_in_a_warning() {
+    let host = std::fs::read_to_string("/proc/sys/kernel/hostname").unwrap();
+    let host = host.trim();
+    if host.is_empty() || host == "localhost" || host == "(none)" {
+        return;
+    }
+    let dir = common::caller(GROUP, "scan-host");
+    let app = common::demo_app(&dir, "");
+    common::add_shot(
+        &app,
+        "host",
+        "Type@5ms 'cat /proc/sys/kernel/hostname; echo done-$((1+1))'\nEnter\nWait+Screen /done-2/\n",
+        "",
+    );
+    let (_, o) = record(&dir, &dir, &app, "host", "tmp/out");
+    common::expect_ok(&o, "prec record");
+    let said = err(&o);
+    assert!(
+        said.lines().any(|l| l.starts_with(
+            "prec: tmp/out/demo/clip/demo-clip-host.cast: the picture shows the hostname at "
+        )),
+        "{said}"
+    );
+}
+
+#[test]
+fn an_empty_prec_config_means_the_default_file() {
+    let dir = common::caller(GROUP, "config-empty-env");
+    let from_config = dir.join("from-config");
+    std::fs::create_dir_all(&from_config).unwrap();
+    let path = config(&dir, &format!("archive = \"{}\"\n", from_config.display()));
+    let o = doctor(&dir, &[("PREC_CONFIG", Path::new(""))]);
+    assert_eq!(detail(&o, "config"), Some(path.display().to_string()), "{}", out(&o));
+    assert_eq!(
+        detail(&o, "archive root"),
+        Some(format!("{} (reachable)", from_config.display()))
+    );
+}
+
+#[test]
+fn a_config_file_prec_cannot_read_is_refused_by_name() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = common::caller(GROUP, "config-unreadable");
+    let path = config(&dir, "archive = \"/srv\"\n");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read(&path).is_ok() {
+        return;
+    }
+    let o = doctor(&dir, &[]);
+    let said = refused(&o);
+    assert!(
+        said.starts_with(&format!("prec: {}: ", path.display())),
+        "{said}"
+    );
+    assert!(!said.contains("unknown field"), "{said}");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
 }

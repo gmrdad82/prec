@@ -51,10 +51,6 @@ pub fn path() -> Option<PathBuf> {
     }
 }
 
-pub fn expand(p: &Path) -> PathBuf {
-    expand_in(p, home())
-}
-
 fn expand_in(p: &Path, home: Option<PathBuf>) -> PathBuf {
     match p.strip_prefix("~") {
         Ok(rest) => home.map(|h| h.join(rest)).unwrap_or_else(|| p.into()),
@@ -63,6 +59,11 @@ fn expand_in(p: &Path, home: Option<PathBuf>) -> PathBuf {
 }
 
 pub fn parse(text: &str) -> Result<Config, String> {
+    parse_in(text, home())
+}
+
+fn parse_in(text: &str, home: Option<PathBuf>) -> Result<Config, String> {
+    let expand = |p: &Path| expand_in(p, home.clone());
     let mut c: Config = toml::from_str(text).map_err(|e| e.message().to_string())?;
     c.archive = c.archive.as_deref().map(expand);
     c.chromium = c.chromium.as_deref().map(expand);
@@ -208,14 +209,27 @@ mod tests {
 
     #[test]
     fn a_tilde_in_a_path_key_is_expanded_and_left_alone_elsewhere() {
-        let c = parse(
-            "archive = \"~/arch\"\nchromium = \"~/bin/chrome\"\ntheme = \"~nord\"\n[confine]\ncpus_from = \"~/m.env\"\n",
-        )
-        .unwrap();
-        assert_eq!(c.archive, Some(expand(Path::new("~/arch"))));
-        assert_eq!(c.chromium, Some(expand(Path::new("~/bin/chrome"))));
-        assert_eq!(c.confine.unwrap().cpus_from, Some(expand(Path::new("~/m.env"))));
+        let text = "archive = \"~/arch\"\nchromium = \"~/bin/chrome\"\ntheme = \"~nord\"\n[confine]\ncpus_from = \"~/m.env\"\n";
+        let c = parse_in(text, Some(PathBuf::from("/home/alpha"))).unwrap();
+        assert_eq!(c.archive.as_deref(), Some(Path::new("/home/alpha/arch")));
+        assert_eq!(
+            c.chromium.as_deref(),
+            Some(Path::new("/home/alpha/bin/chrome"))
+        );
+        assert_eq!(
+            c.confine.unwrap().cpus_from.as_deref(),
+            Some(Path::new("/home/alpha/m.env"))
+        );
         assert_eq!(c.theme.as_deref(), Some("~nord"));
+        let c = parse_in(text, None).unwrap();
+        assert_eq!(c.archive.as_deref(), Some(Path::new("~/arch")));
+        assert_eq!(c.chromium.as_deref(), Some(Path::new("~/bin/chrome")));
+        assert_eq!(
+            c.confine.unwrap().cpus_from.as_deref(),
+            Some(Path::new("~/m.env"))
+        );
+        let c = parse_in("archive = \"/srv/~/a\"\n", Some(PathBuf::from("/home/alpha"))).unwrap();
+        assert_eq!(c.archive.as_deref(), Some(Path::new("/srv/~/a")));
     }
 
     #[test]
