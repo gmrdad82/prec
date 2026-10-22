@@ -65,3 +65,4 @@ commit/e05fae7c9d25:src/private.rs:276 a made-up home path or email in the priva
 commit/e05fae7c9d25:src/private.rs:352 a made-up home path or email in the private-data scan's unit test as the branch started, replaced by /srv paths and example.com on main
 commit/1c10c055a6f5:tests/paths.rs:449 the made-up neutral home the integration test runs its session under, at its line in the branch's first commit
 commit/37d22777a3f0:tests/paths.rs:426 the made-up neutral home the integration test runs its session under, at its line in the privacy branch's second commit
+commit/384fc3a0d3ab:tests/environment.rs:272 the made-up neutral home the integration test runs its session under, at its line in the oracle branch's first commit
