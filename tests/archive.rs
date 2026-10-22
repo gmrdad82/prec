@@ -314,6 +314,7 @@ fn a_read_only_archive_keeps_the_queue_and_says_so() {
     if fs::write(&probe, b"").is_ok() {
         fs::remove_file(&probe).unwrap();
         fs::set_permissions(root(&dir), fs::Permissions::from_mode(0o755)).unwrap();
+        eprintln!("skipped: this user writes into a read-only folder");
         return;
     }
     let o = retry(&dir);
@@ -446,12 +447,14 @@ fn a_queued_name_never_lands_outside_the_archive_root() {
     let o = retry(&dir);
     let said = err(&o);
     for (key, _, _) in &cases {
+        let prefix = format!("archive: refused: {}: ", queue(&dir).join(key).display());
+        assert!(said.contains(&prefix), "{key}: {said}");
+        let local = read(&dir.join("renders").join(key).join("shot.json"));
+        assert_eq!(local["archive"]["state"], "refused", "{key}");
+        let error = local["archive"]["error"].as_str().unwrap();
         assert!(
-            said.contains(&format!(
-                "archive: refused: {}: ",
-                queue(&dir).join(key).display()
-            )),
-            "{key}: {said}"
+            error.contains("leaves the archive") || error.contains("leaves its leaf"),
+            "{key}: {error}"
         );
     }
     assert!(!outside.exists());
@@ -459,11 +462,99 @@ fn a_queued_name_never_lands_outside_the_archive_root() {
     assert!(!dir.join("escaped.png").exists());
     assert!(!dir.join("abs.png").exists());
     assert!(!masters(&dir).join(LATER_LEAF).exists());
-    assert_eq!(
-        queued(&dir),
-        BTreeSet::from(["dots", "absolute", "file-dots", "file-absolute"].map(String::from))
-    );
+    assert!(queued(&dir).is_empty());
     assert_eq!(lines(&catalog(&dir)).len(), 1);
+
+    let again = retry(&dir);
+    assert_eq!(err(&again), "");
+}
+
+#[test]
+fn a_queued_web_copy_with_an_at_in_its_name_lands_in_the_archive() {
+    let dir = scratch("retry-web");
+    fs::create_dir_all(root(&dir)).unwrap();
+    let web = "alpha-still-shot-1280x720-web-640@2x.png";
+    let job = enqueue(
+        &dir,
+        "one",
+        "v1.2.3",
+        MADE,
+        LEAF,
+        &[
+            ("shot.master.png", b"master"),
+            ("alpha-still-shot-1280x720-web-640.png", b"web"),
+            (web, b"web@2x"),
+        ],
+    );
+    let o = retry(&dir);
+    assert!(!err(&o).contains("refused"), "{}", err(&o));
+    assert!(queued(&dir).is_empty());
+    let leaf = masters(&dir).join(LEAF);
+    assert_eq!(fs::read(leaf.join(web)).unwrap(), b"web@2x");
+    let rows = lines(&catalog(&dir));
+    assert_eq!(rows.len(), 1);
+    assert_eq!(sorted_files(&rows[0]), hashed_files(&leaf));
+    assert_eq!(read(&job.local)["archive"]["state"], "archived");
+}
+
+#[test]
+fn a_queued_copy_lands_under_the_root_it_was_queued_for() {
+    let dir = scratch("retry-recorded-root");
+    let recorded = dir.join("old-archive");
+    fs::create_dir_all(&recorded).unwrap();
+    fs::create_dir_all(root(&dir)).unwrap();
+    let job = master(&dir, "one");
+    rewrite(&job, |r| r["root"] = json!(recorded.display().to_string()));
+    retry(&dir);
+    assert!(queued(&dir).is_empty());
+    assert_eq!(
+        fs::read(recorded.join("Masters").join(LEAF).join("shot.master.png")).unwrap(),
+        b"master"
+    );
+    assert_eq!(lines(&recorded.join("Masters/catalog.jsonl")).len(), 1);
+    assert!(!masters(&dir).exists());
+}
+
+#[test]
+fn a_queue_entry_missing_a_listed_file_is_kept_and_lands_once_it_is_whole() {
+    let dir = scratch("retry-half-files");
+    fs::create_dir_all(root(&dir)).unwrap();
+    let job = enqueue(
+        &dir,
+        "one",
+        "v1.2.3",
+        MADE,
+        LEAF,
+        &[
+            ("shot.master.png", b"master"),
+            ("shot.cast", b"{\"v\":2}\n"),
+        ],
+    );
+    fs::remove_file(job.entry.join("shot.cast")).unwrap();
+    let o = retry(&dir);
+    let said = err(&o);
+    assert!(said.contains("shot.cast"), "{said}");
+    assert!(said.ends_with("; queued\n"), "{said}");
+    assert!(!masters(&dir).join(LEAF).exists());
+    assert!(!catalog(&dir).exists());
+    assert_eq!(queued(&dir), BTreeSet::from(["one".to_string()]));
+    assert!(job.entry.join("source.json").is_file());
+    assert_eq!(read(&job.local)["archive"]["state"], "queued");
+
+    fs::write(job.entry.join("shot.cast"), b"{\"v\"").unwrap();
+    let o = retry(&dir);
+    assert!(err(&o).ends_with("; queued\n"), "{}", err(&o));
+    assert!(!masters(&dir).join(LEAF).exists());
+    assert_eq!(queued(&dir), BTreeSet::from(["one".to_string()]));
+
+    fs::write(job.entry.join("shot.cast"), b"{\"v\":2}\n").unwrap();
+    retry(&dir);
+    assert!(queued(&dir).is_empty());
+    assert_eq!(
+        hashed_files(&masters(&dir).join(LEAF)),
+        sorted_files(&lines(&catalog(&dir))[0])
+    );
+    assert!(no_partials(&dir));
 }
 
 #[test]
@@ -695,6 +786,117 @@ fn a_reindex_rebuilds_the_catalog_from_the_folders_byte_stable() {
     let o = reindex(&dir);
     assert_eq!(o.status.code(), Some(0), "{}", err(&o));
     assert_eq!(fs::read(catalog(&dir)).unwrap(), first);
+}
+
+#[test]
+fn a_reindex_trusts_the_catalog_each_leaf_stored_and_reads_no_file() {
+    let dir = scratch("reindex-stored");
+    fs::create_dir_all(root(&dir)).unwrap();
+    enqueue(
+        &dir,
+        "one",
+        "v1.2.3",
+        MADE,
+        LEAF,
+        &[
+            ("shot.master.png", b"master"),
+            ("shot.cast", b"{\"v\":2}\n"),
+        ],
+    );
+    retry(&dir);
+    let stored = lines(&catalog(&dir));
+    let leaf = masters(&dir).join(LEAF);
+    fs::write(leaf.join("shot.master.png"), b"changed after the copy").unwrap();
+    fs::remove_file(leaf.join("shot.cast")).unwrap();
+    let o = reindex(&dir);
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert_eq!(out(&o), "archive: reindexed 1 lines\n");
+    assert_eq!(lines(&catalog(&dir)), stored);
+    assert_eq!(
+        sorted_files(&stored[0])
+            .iter()
+            .map(|f| f["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["shot.cast", "shot.master.png"]
+    );
+}
+
+#[test]
+fn a_reindex_leaves_out_a_leaf_with_no_stored_catalog() {
+    let dir = scratch("reindex-no-catalog");
+    fs::create_dir_all(root(&dir)).unwrap();
+    master(&dir, "one");
+    retry(&dir);
+    assert_eq!(reindex(&dir).status.code(), Some(0));
+    let before = fs::read(catalog(&dir)).unwrap();
+    for (name, archive) in [
+        (
+            "skipped",
+            json!({"state": "skipped", "reason": "unconfigured"}),
+        ),
+        ("queued", json!({"state": "queued", "leaf": LATER_LEAF})),
+        ("legacy", Value::Null),
+    ] {
+        let leaf = masters(&dir).join(format!("prec/alpha/shot/{name}"));
+        fs::create_dir_all(&leaf).unwrap();
+        fs::write(leaf.join("shot.master.png"), b"other").unwrap();
+        fs::write(
+            leaf.join("manifest.json"),
+            json!({"made": LATER, "archive": archive}).to_string(),
+        )
+        .unwrap();
+    }
+    let o = reindex(&dir);
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert_eq!(out(&o), "archive: reindexed 1 lines\n");
+    assert_eq!(fs::read(catalog(&dir)).unwrap(), before);
+}
+
+#[test]
+fn a_reindex_refuses_a_broken_manifest_outside_a_partial_and_keeps_the_catalog() {
+    let dir = scratch("reindex-broken");
+    fs::create_dir_all(root(&dir)).unwrap();
+    master(&dir, "one");
+    retry(&dir);
+    let before = fs::read(catalog(&dir)).unwrap();
+    let broken = masters(&dir).join("prec/alpha/shot/broken/manifest.json");
+    fs::create_dir_all(broken.parent().unwrap()).unwrap();
+    fs::write(&broken, b"{\"made\":").unwrap();
+    let o = reindex(&dir);
+    assert_eq!(o.status.code(), Some(1), "{}", err(&o));
+    assert_eq!(out(&o), "");
+    let said = err(&o);
+    assert!(said.starts_with("prec: "), "{said}");
+    assert!(said.contains(&broken.display().to_string()), "{said}");
+    assert_eq!(said.lines().count(), 1, "{said}");
+    assert_eq!(fs::read(catalog(&dir)).unwrap(), before);
+    assert!(!masters(&dir).join("catalog.jsonl.partial").exists());
+}
+
+#[test]
+fn a_reindex_refuses_an_unreadable_folder_and_keeps_the_catalog() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = scratch("reindex-unreadable");
+    fs::create_dir_all(root(&dir)).unwrap();
+    master(&dir, "one");
+    retry(&dir);
+    let before = fs::read(catalog(&dir)).unwrap();
+    let locked = masters(&dir).join("prec/beta");
+    fs::create_dir_all(locked.join("shot")).unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read_dir(&locked).is_ok() {
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        eprintln!("skipped: this user reads a folder with no permissions");
+        return;
+    }
+    let o = reindex(&dir);
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(o.status.code(), Some(1), "{}", err(&o));
+    let said = err(&o);
+    assert!(said.starts_with("prec: "), "{said}");
+    assert!(said.contains(&locked.display().to_string()), "{said}");
+    assert_eq!(fs::read(catalog(&dir)).unwrap(), before);
+    assert!(!masters(&dir).join("catalog.jsonl.partial").exists());
 }
 
 #[test]
