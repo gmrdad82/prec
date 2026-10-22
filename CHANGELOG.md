@@ -1,5 +1,34 @@
 # Changelog
 
+## v1.4.8 — 2026-10-22
+
+### Changed
+
+- `prec cache --json prune --dry-run` is accepted with the flags in any order.
+- An `--out` that reaches outside `tmp/` through a symlink, dangling or not, is now refused: prec judges a path by where it leads. A caller whose `tmp/renders` links to another disk gets a one-line refusal.
+- `USER` and `LOGNAME` in a shot's `pass_env` are refused, since prec sets both itself.
+
+### Fixed
+
+- A `pass_env` value no longer shows in what a setup or teardown hook prints: hook output is masked line by line as it arrives.
+- A clip refused by the private-data scan no longer leaves its run cast, which held the passed value, on disk.
+- Redaction masks every passed value even when one contains or overlaps another.
+- A bad `render/terminal.toml` is refused on one line naming its line and column, instead of several lines of the parser's snippet.
+- `--bin` pointing at a folder without the app's binary, or a build that leaves a folder where the binary should be, is refused instead of recording "command not found".
+- `prec doctor` and the Chromium lookup walk `PATH` themselves, so they work without bash.
+- A bad `--size` or `--derive`, or a size past 16384 on a side, is refused before the app records, and opens no job record.
+- Tapes with an `inf`, `nan` or overlong duration, unknown `Wait` modifiers, stray arguments, impossible Ctrl keys or zero or huge repeat counts are refused with their line instead of panicking or misbehaving; `Ctrl+@` works.
+- A step typed after the session's terminal has closed is refused, instead of recording keys nobody received.
+- An app that ignores SIGHUP and is still in the foreground when a tape ends is killed with its process group instead of hanging the recording.
+- Casts with no events, a zero or oversized size, a negative time or times that go back are refused, naming the file and line.
+- The browser timeout no longer reads "within 0 s" for a deadline under a second.
+- A queued archive copy whose leaf or file name would land outside the archive is refused and settled; a queued web copy named with `@2x` archives; a queue entry whose record isn't an object no longer crashes every run; an `--older-than` too large to count is refused.
+- A missing `cpus_from` file is told apart from one that lacks the key, and a home behind a dangling link is refused.
+
+### Added
+
+- Tests across every command's happy and bad paths: 469 tests, covering 96% of lines (docs/coverage.md has the numbers per file and how to measure them).
+
 ## v1.4.7 — 2026-10-22
 
 ### Changed
