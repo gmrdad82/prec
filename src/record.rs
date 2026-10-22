@@ -143,6 +143,7 @@ struct Session {
     screen: Screen,
     events: Vec<Event>,
     writer: Box<dyn Write + Send>,
+    ended: bool,
 }
 
 impl Session {
@@ -170,7 +171,11 @@ impl Session {
         loop {
             match self.rx.try_recv() {
                 Ok((at, bytes)) => fresh |= self.absorb(at, &bytes),
-                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => return fresh,
+                Err(TryRecvError::Empty) => return fresh,
+                Err(TryRecvError::Disconnected) => {
+                    self.ended = true;
+                    return fresh;
+                }
             }
         }
     }
@@ -185,6 +190,7 @@ impl Session {
             }
             Err(RecvTimeoutError::Timeout) => false,
             Err(RecvTimeoutError::Disconnected) => {
+                self.ended = true;
                 std::thread::sleep(limit);
                 false
             }
@@ -214,6 +220,9 @@ impl Session {
 
     fn send(&mut self, bytes: &[u8]) -> Result<(), String> {
         self.pump();
+        if self.ended {
+            return Err("writing to the terminal: the session has ended".into());
+        }
         let t = self.now();
         self.writer
             .write_all(bytes)
@@ -300,6 +309,7 @@ pub fn record(spec: &Spec) -> Result<Vec<Event>, String> {
         screen: Screen::new(spec.grid),
         events: vec![],
         writer,
+        ended: false,
     };
     let result = drive(&mut s, spec);
     s.pump();
@@ -759,6 +769,38 @@ impl Timeline {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_key_sent_after_the_terminal_closed_is_refused_once_its_last_output_is_kept() {
+        let (tx, rx) = channel();
+        let mut s = Session {
+            start: Instant::now(),
+            rx,
+            decoder: Utf8 { pending: vec![] },
+            screen: Screen::new([20, 4]),
+            events: vec![],
+            writer: Box::new(std::io::sink()),
+            ended: false,
+        };
+        s.send(b"exit\r").unwrap();
+        tx.send((Duration::from_millis(5), b"bye".to_vec()))
+            .unwrap();
+        drop(tx);
+        assert_eq!(
+            s.send(b"late\r").unwrap_err(),
+            "writing to the terminal: the session has ended"
+        );
+        let kept: Vec<(&Kind, &str)> = s
+            .events
+            .iter()
+            .map(|e| (&e.kind, e.data.as_str()))
+            .collect();
+        assert_eq!(kept, [(&Kind::Input, "exit\r"), (&Kind::Output, "bye")]);
+        assert_eq!(
+            s.type_text("x", Duration::ZERO).unwrap_err(),
+            "writing to the terminal: the session has ended"
+        );
+    }
 
     fn m(t: f64, d: &str) -> Event {
         Event {

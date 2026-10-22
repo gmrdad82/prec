@@ -886,7 +886,7 @@ fn a_missing_cast_a_cast_of_another_format_and_an_unknown_theme_are_refused() {
         ],
         &w,
     );
-    refused(&o, "an empty cast");
+    refused(&o, &format!("{}: an empty cast", empty.display()));
 
     let themed = w.join("cast/themed.cast");
     painted_cast(&themed, "themed", "clip", [1, 2, 3], 0.2);
@@ -952,7 +952,10 @@ fn a_mask_paints_its_cells_in_the_theme_background_and_nothing_else() {
     let (left, right, corner) = found[0];
     assert!(distance(left, red) <= 2, "unmasked left {left:?}");
     assert!(distance(right, red) <= 2, "unmasked right {right:?}");
-    assert_eq!(corner, BG);
+    assert!(
+        distance(corner, red) <= 2,
+        "a bare frame keeps the app's ground to the edge, not {corner:?}"
+    );
     let (left, right, _) = found[1];
     assert!(distance(left, BG) <= 2, "masked left {left:?}");
     assert!(distance(right, red) <= 2, "masked right {right:?}");

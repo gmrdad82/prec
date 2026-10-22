@@ -246,9 +246,8 @@ fn a_session_that_exits_non_zero_is_still_recorded() {
     );
 }
 
-#[cfg(target_os = "linux")]
 #[test]
-fn a_step_typed_after_the_shell_quits_is_refused_on_linux() {
+fn a_step_typed_after_the_shell_quits_is_refused() {
     let (dir, app) = case("typed-late", "");
     common::add_shot(
         &app,
@@ -258,7 +257,10 @@ fn a_step_typed_after_the_shell_quits_is_refused_on_linux() {
     );
     let o = record(&dir, &app, "late");
     let said = refused(&o);
-    assert!(said.contains("prec: writing to the terminal: "), "{said}");
+    assert!(
+        said.contains("prec: writing to the terminal: the session has ended\n"),
+        "{said}"
+    );
     assert!(!cast_of(&dir, "late").exists());
 }
 
