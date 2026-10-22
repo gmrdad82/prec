@@ -839,7 +839,7 @@ mod tests {
         assert_eq!(t.frame, "window");
         assert_eq!(t.font, None);
         let both = parsed(&format!(
-            "{HEAD}home = \"/home/alpha\"\n[env]\nHOME = \"home\"\n"
+            "{HEAD}home = \"/srv/alpha\"\n[env]\nHOME = \"home\"\n"
         ));
         assert_eq!(
             both.private().unwrap_err(),
@@ -881,26 +881,26 @@ mod tests {
         );
         for bad in [
             "/alpha",
-            "home/alpha",
-            "/home/al pha",
-            "/home/../x",
-            "/home//x",
+            "srv/alpha",
+            "/srv/al pha",
+            "/srv/../x",
+            "/srv//x",
         ] {
             let e = check(&format!("home = {bad:?}\n")).unwrap_err();
             assert!(e.starts_with(&format!("home {bad:?}: ")), "{bad}: {e}");
         }
         let long = "h".repeat(64);
         for bad in ["a_b", "a b", "..", long.as_str()] {
-            let e = check(&format!("home = \"/home/alpha\"\nhostname = {bad:?}\n")).unwrap_err();
+            let e = check(&format!("home = \"/srv/alpha\"\nhostname = {bad:?}\n")).unwrap_err();
             assert!(e.starts_with(&format!("hostname {bad:?}: ")), "{bad}: {e}");
         }
         let named = parsed(&format!(
-            "{HEAD}home = \"/home/alpha\"\nhostname = \"{}\"\n",
+            "{HEAD}home = \"/srv/alpha\"\nhostname = \"{}\"\n",
             "h".repeat(63)
         ));
         assert!(named.private().is_ok());
         assert_eq!(named.hostname(), Some("h".repeat(63).as_str()));
-        let plain = parsed(&format!("{HEAD}home = \"/home/alpha\"\n"));
+        let plain = parsed(&format!("{HEAD}home = \"/srv/alpha\"\n"));
         assert!(plain.private().is_ok());
         assert_eq!(plain.hostname(), Some(DEFAULT_HOSTNAME));
     }
