@@ -260,33 +260,10 @@ fn a_passed_value_the_app_prints_is_named_never_shown_and_a_clip_of_it_is_refuse
         ))),
         "{said}"
     );
-    assert_eq!(
-        said.lines().filter(|l| l.starts_with("prec: ")).count(),
-        1,
-        "{said}"
-    );
-    assert_eq!(
-        said.trim_end().lines().last(),
-        said.lines().find(|l| l.starts_with("prec: "))
-    );
-    let run = dir.join(format!("tmp/prec/run/demo-clip-echo-cast-{pid}"));
-    assert!(!run.exists(), "a refused clip left {}", run.display());
-    assert!(!run.with_extension("lock").exists());
-    for left in files(&dir.join("tmp/prec"), &[]) {
-        let text = std::fs::read(dir.join("tmp/prec").join(&left)).unwrap();
-        assert!(
-            !String::from_utf8_lossy(&text).contains(PASSED),
-            "{} holds the passed value",
-            left.display()
-        );
-    }
+    refused_without_its_run(&dir, &said, pid);
     assert!(
         !dir.join("tmp/clip").exists(),
         "a refused clip wrote {said}"
-    );
-    assert!(
-        dir.join("tmp/out/demo/clip/demo-clip-echo.cast").is_file(),
-        "record's own cast stays"
     );
 }
 
@@ -1135,4 +1112,31 @@ fn a_config_file_prec_cannot_read_is_refused_by_name() {
     );
     assert!(!said.contains("unknown field"), "{said}");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+}
+
+fn refused_without_its_run(dir: &Path, said: &str, pid: u32) {
+    assert_eq!(
+        said.lines().filter(|l| l.starts_with("prec: ")).count(),
+        1,
+        "{said}"
+    );
+    assert_eq!(
+        said.trim_end().lines().last(),
+        said.lines().find(|l| l.starts_with("prec: "))
+    );
+    let run = dir.join(format!("tmp/prec/run/demo-clip-echo-cast-{pid}"));
+    assert!(!run.exists(), "a refused clip left {}", run.display());
+    assert!(!run.with_extension("lock").exists());
+    for left in files(&dir.join("tmp/prec"), &[]) {
+        let text = std::fs::read(dir.join("tmp/prec").join(&left)).unwrap();
+        assert!(
+            !String::from_utf8_lossy(&text).contains(PASSED),
+            "{} holds the passed value",
+            left.display()
+        );
+    }
+    assert!(
+        dir.join("tmp/out/demo/clip/demo-clip-echo.cast").is_file(),
+        "record's own cast stays"
+    );
 }
