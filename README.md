@@ -309,11 +309,11 @@ An archive is optional and off unless `archive` (or `PITO_ARCHIVE`) names a root
 
 ## Job records
 
-Every `clip`, `still`, `record` and `render` publishes a live job record through [pito-jobs](https://github.com/gmrdad82/pito-jobs), in RAM only, in `$XDG_RUNTIME_DIR/pito-jobs/` (or `PITO_JOBS_DIR`), with its stages (`build`, `record`, `replay`, `master` or `derive`, `archive`) and progress, for a dashboard to show. Without `XDG_RUNTIME_DIR` there is none, and `PITO_JOBS=off` turns it off.
+Every `clip`, `still`, `record` and `render` publishes a live job record, in RAM only, in `$XDG_RUNTIME_DIR/pito-jobs/` (or `PITO_JOBS_DIR`; on macOS without `XDG_RUNTIME_DIR`, `$TMPDIR/pito-jobs/`), with its stages (`build`, `record`, `replay`, `master` or `derive`, `archive`) and progress, for a dashboard to show. prec writes the record itself, in the job-record format of pito-jobs v1.0.3: one JSON file per render, `<pid>-<started ms>.json`, rewritten atomically, at most once a second for progress, and at most 4 KiB. It reads `PITO_JOB_ID` as its parent job, `PITO_INVOKER` as its invoker and `GPU_QUEUE_PID` as its GPU queue. With neither `PITO_JOBS_DIR` nor `XDG_RUNTIME_DIR` (nor `TMPDIR` on macOS) there is none, `PITO_JOBS=off` turns it off, and a record that can't be written never fails the render.
 
 ## Part of PITO MD
 
-prec is one of the open tools of [PITO MD](https://pitomd.com), made for its apps and games and free for yours. It is the terminal half of the renders: [pfx](https://github.com/gmrdad82/pfx) and Manfred render the 3D and app scenes, prec renders the TUIs and CLIs. pcod from [pito-codecs](https://github.com/gmrdad82/pito-codecs) turns prec's masters into GIFs, WebP and web MP4s, and [pito-compare](https://github.com/gmrdad82/pito-compare) draws the charts on this page. [pito-jobs](https://github.com/gmrdad82/pito-jobs) carries its live job records.
+prec is one of the open tools of [PITO MD](https://pitomd.com), made for its apps and games and free for yours. It is the terminal half of the renders: [pfx](https://github.com/gmrdad82/pfx) and Manfred render the 3D and app scenes, prec renders the TUIs and CLIs. pcod from [pito-codecs](https://github.com/gmrdad82/pito-codecs) turns prec's masters into GIFs, WebP and web MP4s, and [pito-compare](https://github.com/gmrdad82/pito-compare) draws the charts on this page. prec writes its own live job records.
 
 ## Contributing
 

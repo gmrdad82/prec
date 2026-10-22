@@ -5,10 +5,12 @@ sidebar:
   order: 13
 ---
 
-Every `clip`, `still`, `record` and `render` publishes a live job record through [pito-jobs](https://docs.pitomd.com/pito-jobs/), so a dashboard can show what is rendering and how far it got.
+Every `clip`, `still`, `record` and `render` publishes a live job record, which prec writes itself, so a dashboard can show what is rendering and how far it got.
 
-- The record lives in RAM only, in `$XDG_RUNTIME_DIR/pito-jobs/`, or `PITO_JOBS_DIR`.
+- The record lives in RAM only, in `$XDG_RUNTIME_DIR/pito-jobs/`, or `PITO_JOBS_DIR`; on macOS without `XDG_RUNTIME_DIR`, in `$TMPDIR/pito-jobs/`.
+- It is one JSON file per render, `<pid>-<started ms>.json`, rewritten atomically, at most once a second for progress, and at most 4 KiB.
 - Its stages are `build`, `record`, `replay`, `master` (a clip) or `derive` (a still), and `archive`, each with its progress.
-- Without `XDG_RUNTIME_DIR` there is none, and `PITO_JOBS=off` turns it off.
+- `PITO_JOB_ID` names its parent job, `PITO_INVOKER` its invoker and `GPU_QUEUE_PID` its GPU queue.
+- With neither `PITO_JOBS_DIR` nor `XDG_RUNTIME_DIR` (nor `TMPDIR` on macOS) there is no record, `PITO_JOBS=off` turns it off, and a record that can't be written never fails the render.
 
-The record's format belongs to pito-jobs; prec only fills in its stages.
+The folder and the `PITO_JOBS*` variables keep their names, so a dashboard that already reads these records keeps reading prec's.

@@ -576,16 +576,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pito-jobs"
-version = "1.0.2"
-source = "git+https://github.com/gmrdad82/pito-jobs?tag=v1.0.2#a84beb7aea30447ab7ecfe20ff3723f7b9518c2c"
-dependencies = [
- "libc",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "png"
 version = "0.17.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -634,7 +624,7 @@ dependencies = [
 
 [[package]]
 name = "prec"
-version = "1.4.6"
+version = "1.4.7"
 dependencies = [
  "base64",
  "chrono",
@@ -642,7 +632,6 @@ dependencies = [
  "image",
  "nix",
  "pito-codecs",
- "pito-jobs",
  "png 0.18.1",
  "portable-pty",
  "regex",
