@@ -213,15 +213,15 @@ mod tests {
     #[test]
     fn a_tilde_in_a_path_key_is_expanded_and_left_alone_elsewhere() {
         let text = "archive = \"~/arch\"\nchromium = \"~/bin/chrome\"\ntheme = \"~nord\"\n[confine]\ncpus_from = \"~/m.env\"\n";
-        let c = parse_in(text, Some(PathBuf::from("/home/alpha"))).unwrap();
-        assert_eq!(c.archive.as_deref(), Some(Path::new("/home/alpha/arch")));
+        let c = parse_in(text, Some(PathBuf::from("/srv/alpha"))).unwrap();
+        assert_eq!(c.archive.as_deref(), Some(Path::new("/srv/alpha/arch")));
         assert_eq!(
             c.chromium.as_deref(),
-            Some(Path::new("/home/alpha/bin/chrome"))
+            Some(Path::new("/srv/alpha/bin/chrome"))
         );
         assert_eq!(
             c.confine.unwrap().cpus_from.as_deref(),
-            Some(Path::new("/home/alpha/m.env"))
+            Some(Path::new("/srv/alpha/m.env"))
         );
         assert_eq!(c.theme.as_deref(), Some("~nord"));
         let c = parse_in(text, None).unwrap();
@@ -233,7 +233,7 @@ mod tests {
         );
         let c = parse_in(
             "archive = \"/srv/~/a\"\n",
-            Some(PathBuf::from("/home/alpha")),
+            Some(PathBuf::from("/srv/alpha")),
         )
         .unwrap();
         assert_eq!(c.archive.as_deref(), Some(Path::new("/srv/~/a")));

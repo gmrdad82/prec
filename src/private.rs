@@ -303,7 +303,7 @@ mod tests {
 
     fn needles() -> Needles {
         Needles::new(
-            vec!["/home/alpha".into()],
+            vec!["/srv/alpha".into()],
             Some("Beta-Box".into()),
             Some("alpha".into()),
             &[("TOKEN".into(), "s3cret-value".into())],
@@ -321,9 +321,12 @@ mod tests {
     fn what_the_screen_shows_is_found_through_escapes_and_what_was_cleared_while_hidden_is_not() {
         let hidden = cast(
             &[
-                (0.1, "export PATH=/home/alpha/bin a@b.io s3cret-value\r\n"),
+                (
+                    0.1,
+                    "export PATH=/srv/alpha/bin a@example.com s3cret-value\r\n",
+                ),
                 (0.2, "\x1b[H\x1b[2J"),
-                (1.5, "/ho\x1b[1;31mme/al\x1b[0mpha/work\r\n"),
+                (1.5, "/sr\x1b[1;31mv/al\x1b[0mpha/work\r\n"),
             ],
             &[(0.0, "hide"), (1.0, "show"), (3.0, "end")],
         );
@@ -397,7 +400,7 @@ mod tests {
         assert!(n.found("beta-boxes alphabet _alpha").is_empty());
         assert_eq!(n.found("(alpha)"), ["the user name"]);
         assert!(n.found("user@host").is_empty());
-        assert_eq!(n.found("me@site.dev"), ["an email"]);
+        assert_eq!(n.found("me@example.com"), ["an email"]);
         assert!(
             Needles::new(vec![], None, Some("ab".into()), &[])
                 .user
@@ -417,10 +420,10 @@ mod tests {
         let n = needles();
         for (text, what) in [
             (
-                "cd /home/alpha/work",
+                "cd /srv/alpha/work",
                 &["the home path", "the user name"][..],
             ),
-            ("/home/alphabet/x", &["the home path"]),
+            ("/srv/alphabet/x", &["the home path"]),
             ("user@beta-box:~$", &["the hostname"]),
             ("BETA-BOX ready", &["the hostname"]),
             ("logged in as alpha", &["the user name"]),
@@ -452,7 +455,7 @@ mod tests {
     #[test]
     fn a_line_showing_several_kinds_names_each_once_in_a_fixed_order() {
         assert_eq!(
-            needles().found("alpha@beta-box /home/alpha a@b.io s3cret-value usage limit"),
+            needles().found("alpha@beta-box /srv/alpha a@example.com s3cret-value usage limit"),
             [
                 "the home path",
                 "the hostname",
@@ -507,7 +510,7 @@ mod tests {
 
     #[test]
     fn a_home_needle_is_an_absolute_path_below_the_root() {
-        assert_eq!(real_home("/home/alpha/").as_deref(), Some("/home/alpha"));
+        assert_eq!(real_home("/srv/alpha/").as_deref(), Some("/srv/alpha"));
         assert_eq!(real_home("/alpha").as_deref(), Some("/alpha"));
         for none in ["/", "", "home/alpha", "~"] {
             assert_eq!(real_home(none), None, "{none:?}");

@@ -363,12 +363,12 @@ fn a_home_must_be_absolute_with_two_plain_parts_and_a_hostname_needs_it() {
     for home in [
         "home/alpha",
         "/alpha",
-        "/home/al pha",
-        "/home/../alpha",
-        "/home/./alpha",
-        "/home/alpha/",
-        "/home//alpha",
-        "/home/~",
+        "/srv/al pha",
+        "/srv/../alpha",
+        "/srv/./alpha",
+        "/srv/alpha/",
+        "/srv//alpha",
+        "/srv/~",
         "",
     ] {
         set_hooks(&app, &format!("home = \"{home}\"\n"), "");
@@ -386,7 +386,7 @@ fn a_home_must_be_absolute_with_two_plain_parts_and_a_hostname_needs_it() {
     for host in ["a_b", "a b", "", long.as_str(), "..", "a/b"] {
         set_hooks(
             &app,
-            &format!("home = \"/home/prec-alpha\"\nhostname = \"{host}\"\n"),
+            &format!("home = \"/srv/prec-alpha\"\nhostname = \"{host}\"\n"),
             "",
         );
         assert_eq!(
@@ -397,16 +397,16 @@ fn a_home_must_be_absolute_with_two_plain_parts_and_a_hostname_needs_it() {
             "{host}"
         );
     }
-    set_hooks(&app, "home = \"/home/prec-alpha\"\n", "HOME = \"/x\"\n");
+    set_hooks(&app, "home = \"/srv/prec-alpha\"\n", "HOME = \"/x\"\n");
     assert_eq!(
         refused(&shots(&dir, &app)),
         at("home and [env] HOME both set the session's home; keep one")
     );
     for hooks in [
-        "home = \"/home/prec-alpha\"\n".to_string(),
+        "home = \"/srv/prec-alpha\"\n".to_string(),
         "home = \"/srv/prec/alpha.v2\"\nhostname = \"beta-box.lan\"\n".to_string(),
         format!(
-            "home = \"/home/prec-alpha\"\nhostname = \"{}\"\n",
+            "home = \"/srv/prec-alpha\"\nhostname = \"{}\"\n",
             "a".repeat(63)
         ),
     ] {
