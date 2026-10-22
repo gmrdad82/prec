@@ -646,15 +646,28 @@ mod tests {
 
     #[test]
     fn a_browser_that_closes_when_asked_is_reaped_without_a_kill() {
+        let seen = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tmp")
+            .join("cdp-unit-close")
+            .join("seen");
+        let _ = std::fs::remove_file(&seen);
         let b = peer_in(
             "cdp-unit-close",
-            r#"IFS= read -r -d '' m; case "$m" in *Browser.close*) exit 0;; esac; exec sleep 30"#,
+            &format!(
+                r#"IFS= read -r -d '' m; case "$m" in *Browser.close*) printf '%s\n' "$m" > '{0}'; printf 'exited\n' >> '{0}'; exit 0;; esac; exec sleep 30"#,
+                seen.display()
+            ),
         );
         let pid = b.child.id();
-        let started = Instant::now();
         drop(b);
-        assert!(started.elapsed() < Duration::from_secs(3));
         assert!(gone_by(pid));
+        let text = std::fs::read_to_string(&seen).unwrap();
+        let mut lines = text.lines();
+        let asked: Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+        assert_eq!(asked["method"], "Browser.close");
+        assert!(asked["id"].is_u64());
+        assert_eq!(lines.next(), Some("exited"));
+        assert_eq!(lines.next(), None);
     }
 
     #[test]

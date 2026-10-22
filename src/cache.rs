@@ -12,6 +12,7 @@ pub const ENV: &str = "PREC_CACHE";
 pub const PRUNE_DAYS: u64 = 30;
 const USED: &str = ".used";
 const OK: &str = ".ok";
+const NAME_CAP: usize = 64;
 const SECTIONS: [&str; 5] = ["git", "src", "work", "target", "bin"];
 
 static HELD: Mutex<Vec<File>> = Mutex::new(Vec::new());
@@ -49,13 +50,20 @@ pub fn normalize(identity: &str) -> String {
 pub fn repo_key(identity: &str) -> String {
     let n = normalize(identity);
     let name = n.rsplit('/').next().unwrap_or("repo");
-    let name = paths::slug(name);
-    let name = if name.is_empty() { "repo".into() } else { name };
+    let mut name = paths::slug(name);
+    name.truncate(NAME_CAP);
+    let name = name.trim_end_matches('-');
+    let name = if name.is_empty() { "repo" } else { name };
     format!("{name}-{}", &paths::hash_bytes(n.as_bytes())[..12])
 }
 
 pub fn build_key(commit: &str, command: &str, bin_dir: &str) -> String {
-    let h = paths::hash_bytes(format!("{command}\n{bin_dir}").as_bytes());
+    let keyed = if command.contains('\n') || bin_dir.contains('\n') {
+        format!("\0{}\n{command}\n{bin_dir}", command.len())
+    } else {
+        format!("{command}\n{bin_dir}")
+    };
+    let h = paths::hash_bytes(keyed.as_bytes());
     format!("{}-{}", &commit[..commit.len().min(12)], &h[..12])
 }
 
@@ -1235,5 +1243,156 @@ mod tests {
             assert_eq!((root.as_path(), s.as_str(), n.as_str()), (r, section, name));
         }
         assert!(named(Path::new("/c/elsewhere/x")).is_none());
+    }
+
+    fn one_safe_name(key: &str) {
+        assert!(!key.is_empty());
+        assert!(key.len() <= NAME_CAP + 13, "{} bytes", key.len());
+        assert!(
+            key.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
+            "{key}"
+        );
+        assert!(!key.starts_with('-') && !key.contains("--"), "{key}");
+        let r = Path::new("/c");
+        for section in ["git", "work", "target"] {
+            let path = entry_path(r, section, key);
+            assert_eq!(path.parent(), Some(r.join(section).as_path()), "{key}");
+            let (root, s, n) = named(&path).unwrap();
+            assert_eq!((root.as_path(), s.as_str(), n.as_str()), (r, section, key));
+        }
+    }
+
+    #[test]
+    fn a_repo_key_is_one_folder_inside_its_section_whatever_the_identity() {
+        let long = format!("ssh://h/{}", "x".repeat(10_000));
+        let dashes = "a-".repeat(40);
+        for identity in [
+            "",
+            "   ",
+            "/",
+            "//",
+            ".",
+            "..",
+            "../../etc",
+            "ssh://h/a/../..",
+            "git@h:..",
+            "git@h:/abs/app",
+            ".git",
+            "a/b/.git",
+            "ÜNÏ/çödé",
+            "日本",
+            "a\0b",
+            "C:\\Users\\x\\app",
+            "app@v1",
+            "-app-",
+            long.as_str(),
+            dashes.as_str(),
+        ] {
+            one_safe_name(&repo_key(identity));
+        }
+        assert!(repo_key("").starts_with("repo-"));
+        assert!(repo_key("..").starts_with("repo-"));
+        assert!(repo_key("日本").starts_with("repo-"));
+        assert!(repo_key("app@v1").starts_with("app-v1-"));
+        assert!(repo_key("ÜNÏ/çödé").starts_with("d-"));
+    }
+
+    #[test]
+    fn repos_whose_names_slug_alike_keep_their_own_folders() {
+        let keys = [
+            repo_key("ssh://git@github.com/alpha/App.git"),
+            repo_key("ssh://git@github.com/beta/app.git"),
+            repo_key("/work/one/app"),
+            repo_key("/work/one/APP"),
+            repo_key("/work/one/a.p.p"),
+            repo_key(""),
+            repo_key(".."),
+        ];
+        for (i, a) in keys.iter().enumerate() {
+            for b in &keys[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
+        assert!(keys[0].starts_with("app-") && keys[1].starts_with("app-"));
+        assert_eq!(repo_key("/work/one/app/"), keys[2]);
+    }
+
+    #[test]
+    fn an_over_long_repo_name_still_makes_a_folder_and_stays_apart() {
+        let r = scratch_root("over-long-name");
+        let stem = "n".repeat(300);
+        let a = repo_key(&format!("/work/{stem}a"));
+        let b = repo_key(&format!("/work/{stem}b"));
+        assert_ne!(a, b);
+        for key in [&a, &b] {
+            one_safe_name(key);
+            assert!(key.starts_with(&"n".repeat(NAME_CAP)));
+            let made = entry_path(&r, "target", key);
+            fs::create_dir_all(&made).unwrap();
+            assert!(made.is_dir());
+            fs::create_dir_all(lock_path(&r, "target", key).parent().unwrap()).unwrap();
+            File::create(lock_path(&r, "target", key)).unwrap();
+        }
+        assert_eq!(fs::read_dir(r.join("target")).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn a_build_key_is_a_short_safe_name_whatever_the_command() {
+        let c = "0123456789abcdef0123456789abcdef01234567";
+        for (command, bin_dir) in [
+            ("", ""),
+            ("../../x", "/"),
+            ("cargo build @ ..", "{target}/../.."),
+            ("a\nb", "c"),
+            (&"y".repeat(10_000)[..], "z"),
+        ] {
+            let k = build_key(c, command, bin_dir);
+            assert_eq!(k.len(), 25, "{k}");
+            assert!(k.starts_with("0123456789ab-"));
+            assert!(k.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-'), "{k}");
+        }
+        assert!(build_key("abc", "x", "y").starts_with("abc-"));
+        assert_eq!(build_key("abc", "x", "y").len(), 16);
+    }
+
+    #[test]
+    fn a_newline_moved_between_command_and_bin_dir_is_another_build() {
+        let c = "0123456789abcdef0123456789abcdef01234567";
+        assert_ne!(build_key(c, "a\nb", "c"), build_key(c, "a", "b\nc"));
+        assert_ne!(build_key(c, "a\nb", "c"), build_key(c, "a\nb\nc", ""));
+        assert_ne!(build_key(c, "a", "b"), build_key(c, "a\nb", ""));
+        assert_ne!(build_key(c, "a", "b"), build_key(c, "", "a\nb"));
+    }
+
+    #[test]
+    fn a_one_line_build_keeps_the_key_its_cached_binaries_already_have() {
+        let c = "0123456789abcdef0123456789abcdef01234567";
+        let old = paths::hash_bytes(b"cargo build --release\n{target}/release");
+        assert_eq!(
+            build_key(c, "cargo build --release", "{target}/release"),
+            format!("0123456789ab-{}", &old[..12])
+        );
+    }
+
+    #[test]
+    fn a_source_and_a_bin_entry_nest_their_commit_under_the_repo_folder() {
+        let r = Path::new("/c");
+        let key = repo_key("ssh://h/../../app");
+        let commit = "0123456789abcdef0123456789abcdef01234567";
+        let bin = format!("{key}@{}", build_key(commit, "make", "out"));
+        for (section, name) in [("src", format!("{key}@{commit}")), ("bin", bin)] {
+            let path = entry_path(r, section, &name);
+            assert_eq!(
+                path.parent().and_then(Path::parent),
+                Some(r.join(section).as_path())
+            );
+            assert!(
+                path.components()
+                    .all(|part| !matches!(part, std::path::Component::ParentDir))
+            );
+            let (root, s, n) = named(&path).unwrap();
+            assert_eq!((root.as_path(), s.as_str(), n), (r, section, name));
+        }
     }
 }

@@ -507,7 +507,7 @@ fn a_step_typed_after_the_shell_quits_is_refused() {
     common::add_shot(
         &app,
         "late",
-        "Type@0ms \"exit 3\"\nEnter\nSleep 3s\nType@0ms \"echo late\"\nEnter\n",
+        "Type@0ms \"trap 'echo gone-$((40+2))' EXIT; exit 3\"\nEnter\nWait+Screen /gone-42/\nSleep 3s\nType@0ms \"echo late\"\nEnter\n",
         "",
     );
     let o = record(&dir, &app, "late");
