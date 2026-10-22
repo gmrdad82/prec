@@ -1306,6 +1306,10 @@ fn a_prune_removes_the_stale_and_keeps_the_fresh_and_the_held() {
         .count();
     let dry = json_of(&prec(&dir, &["cache", "prune", "--json", "--dry-run"]));
     assert_eq!(
+        json_of(&prec(&dir, &["cache", "--json", "prune", "--dry-run"])),
+        dry
+    );
+    assert_eq!(
         fs::read_dir(cache_root(&dir).join("src/app-aaaaaaaaaaaa"))
             .unwrap()
             .count(),

@@ -303,6 +303,7 @@ pub fn master(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn a_palindrome_never_repeats_its_ends_and_a_crossfade_starts_where_the_master_does() {
@@ -429,5 +430,220 @@ mod tests {
         assert!(win[0] >= 43 && win[0] + win[2] <= 1080 - 162);
         assert!(win[1] >= 77 && win[1] + win[3] <= 1920 - 384);
         assert!(Layout::new(100, 100, false).boxed([50, 0, 50, 0]).is_err());
+    }
+
+    fn px(pm: &Pixmap, x: u32, y: u32) -> [u8; 3] {
+        let c = pm.pixel(x, y).unwrap();
+        assert_eq!(c.alpha(), 255, "({x}, {y})");
+        [c.red(), c.green(), c.blue()]
+    }
+
+    #[test]
+    fn a_bare_frame_is_the_theme_background_edge_to_edge() {
+        let bg = [10, 20, 30];
+        let l = Layout::new(64, 36, false);
+        let pm = background(&l, [40, 20], bg, [200, 0, 0]).unwrap();
+        assert_eq!((pm.width(), pm.height()), (64, 36));
+        for (x, y) in [(0, 0), (63, 0), (0, 35), (63, 35), (32, 18)] {
+            assert_eq!(px(&pm, x, y), bg, "({x}, {y})");
+        }
+    }
+
+    #[test]
+    fn a_window_sits_on_its_ground_with_the_background_inside_and_three_lights() {
+        let bg = [30, 30, 46];
+        let ground = [200, 210, 220];
+        let l = Layout::new(400, 300, true);
+        let canvas = [200, 100];
+        let (win, at) = l.place(canvas);
+        assert!(win[0] > 0 && win[1] > 0, "{win:?}");
+        assert!(win[0] + win[2] < 400 && win[1] + win[3] < 300, "{win:?}");
+        assert!((2 * win[0] + win[2]).abs_diff(400) <= 1, "{win:?}");
+        assert!((2 * win[1] + win[3]).abs_diff(300) <= 1, "{win:?}");
+        assert!(
+            at[0] > win[0] && at[0] + canvas[0] < win[0] + win[2],
+            "{at:?} in {win:?}"
+        );
+        assert!(
+            at[1] > win[1] && at[1] + canvas[1] < win[1] + win[3],
+            "{at:?} in {win:?}"
+        );
+        let pm = background(&l, canvas, bg, ground).unwrap();
+        let mid = win[1] + win[3] / 2;
+        let right = win[0] + win[2];
+        let below = win[1] + win[3];
+        for (x, y) in [
+            (win[0] / 2, mid),
+            (right + (400 - right) / 2, mid),
+            (200, win[1] / 2),
+            (200, below + (300 - below) / 2),
+        ] {
+            assert_eq!(px(&pm, x, y), ground, "({x}, {y})");
+        }
+        for (x, y) in [(win[0] - 1, mid), (right, mid), (200, below)] {
+            let c = px(&pm, x, y);
+            assert!(
+                (0..3).all(|i| c[i] <= ground[i]),
+                "shadow at ({x}, {y}): {c:?}"
+            );
+        }
+        for (x, y) in [(0, 0), (399, 0), (0, 299), (399, 299)] {
+            assert_eq!(px(&pm, x, y), ground, "corner ({x}, {y})");
+        }
+        assert_eq!(px(&pm, 200, 150), bg);
+        assert_eq!(px(&pm, at[0], at[1]), bg);
+        assert_eq!(px(&pm, at[0] + canvas[0] - 1, at[1] + canvas[1] - 1), bg);
+        let lit = (win[1]..at[1])
+            .flat_map(|y| (win[0]..win[0] + win[2] / 4).map(move |x| (x, y)))
+            .map(|(x, y)| px(&pm, x, y))
+            .any(|c| c[0] > 200 && c[2] < 150);
+        assert!(lit, "no red light in the bar of {win:?}");
+        assert!(Layout::new(0, 10, false).boxed([0; 4]).is_err());
+    }
+
+    #[test]
+    fn a_frame_too_small_to_draw_is_refused() {
+        let l = Layout {
+            width: 0,
+            ..Layout::new(10, 10, false)
+        };
+        assert_eq!(
+            background(&l, [1, 1], [0; 3], [0; 3]).unwrap_err(),
+            "bad frame size"
+        );
+    }
+
+    #[test]
+    fn the_ground_darkens_a_dark_background_more_than_a_light_one() {
+        assert_eq!(default_ground([30, 30, 46]), [21, 21, 32]);
+        assert_eq!(default_ground([240, 240, 240]), [216, 216, 216]);
+        assert_eq!(default_ground([0, 0, 0]), [0, 0, 0]);
+        assert_eq!(mix([0, 100, 255], [255, 0, 255], 0.5), [128, 50, 255]);
+        assert_eq!(mix([7, 8, 9], [200, 200, 200], 0.0), [7, 8, 9]);
+        assert_eq!(mix([7, 8, 9], [200, 200, 200], 1.0), [200, 200, 200]);
+    }
+
+    #[test]
+    fn an_inset_box_drops_the_margin_and_a_bare_pad_but_no_inset_keeps_them() {
+        let none = Layout::new(400, 300, true).boxed([0; 4]).unwrap();
+        assert_eq!((none.margin, none.pad), (17, 7));
+        let w = Layout::new(400, 300, true).boxed([10, 20, 30, 40]).unwrap();
+        assert_eq!((w.margin, w.pad, w.bar), (0, 7, 12));
+        assert_eq!(w.avail(), [400 - 60 - 14, 300 - 40 - 14 - 12]);
+        let b = Layout::new(400, 300, false)
+            .boxed([10, 20, 30, 40])
+            .unwrap();
+        assert_eq!((b.margin, b.pad), (0, 0));
+        assert_eq!(b.avail(), [340, 260]);
+        assert_eq!(b.place([340, 260]), ([40, 10, 340, 260], [40, 10]));
+        assert_eq!(b.place([100, 60]).1, [40 + 120, 10 + 100]);
+        assert_eq!(
+            Layout::new(400, 300, false)
+                .boxed([0, 200, 0, 200])
+                .unwrap_err(),
+            "inset 0,200,0,200 px leaves no box in 400x300"
+        );
+        assert!(
+            Layout::new(400, 300, false)
+                .boxed([150, 0, 150, 0])
+                .is_err()
+        );
+        assert!(
+            Layout::new(400, 300, false)
+                .boxed([149, 199, 150, 200])
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_canvas_bigger_than_its_box_starts_at_the_box_corner() {
+        let b = Layout::new(400, 300, false)
+            .boxed([10, 20, 30, 40])
+            .unwrap();
+        let (win, at) = b.place([1000, 1000]);
+        assert_eq!(win, [40, 10, 1000, 1000]);
+        assert_eq!(at, [40, 10]);
+    }
+
+    #[test]
+    fn a_crossfade_blends_the_tail_into_the_head_with_eased_weights() {
+        let names: Vec<PathBuf> = (0..6).map(|i| PathBuf::from(format!("{i}.png"))).collect();
+        let files: Vec<&Path> = names.iter().map(PathBuf::as_path).collect();
+        let open = pictures(&files, None);
+        assert_eq!(open.len(), 6);
+        assert!(
+            open.iter()
+                .zip(&files)
+                .all(|(p, f)| *p == encode::Pic::One(f))
+        );
+        let faded = pictures(&files, Some(2));
+        assert_eq!(
+            faded,
+            vec![
+                encode::Pic::One(files[0]),
+                encode::Pic::One(files[1]),
+                encode::Pic::Blend(files[2], files[4], 0.15625),
+                encode::Pic::Blend(files[3], files[5], 0.84375),
+            ]
+        );
+        let ws: Vec<f32> = (0..5).map(|i| fade_weight(i, 5)).collect();
+        assert!(ws.windows(2).all(|w| w[0] < w[1]), "{ws:?}");
+        assert!(ws[0] > 0.0 && ws[4] < 1.0);
+        assert!((ws[2] - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_poster_of_an_empty_or_too_short_clip_is_refused() {
+        use crate::app::{Closure, Poster};
+        let thirty = Fps::new(30, 1);
+        assert_eq!(
+            poster_frame(0, &Closure::Open, thirty, &Poster::First).unwrap_err(),
+            "poster: the clip has no frames"
+        );
+        assert!(
+            poster_frame(4, &Closure::Crossfade(0.1), thirty, &Poster::First)
+                .unwrap_err()
+                .contains("needs more than 6 frames")
+        );
+        assert_eq!(
+            poster_frame(1, &Closure::Palindrome, thirty, &Poster::BeforeClosure).unwrap(),
+            (0, 0)
+        );
+        assert_eq!(
+            poster_frame(24, &Closure::Open, thirty, &Poster::Seconds(0.0)).unwrap(),
+            (0, 0)
+        );
+        assert_eq!(
+            closure(&[0, 1], &Closure::Palindrome, thirty).unwrap().0,
+            vec![0, 1]
+        );
+        assert_eq!(
+            closure(&[0, 1, 2], &Closure::Palindrome, thirty).unwrap().0,
+            vec![0, 1, 2, 1]
+        );
+    }
+
+    #[test]
+    fn a_crossfaded_master_holds_one_frame_per_picture() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tmp/unit-compose/master");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let names: Vec<PathBuf> = (0..6u8)
+            .map(|i| {
+                let p = dir.join(format!("{i}.png"));
+                encode::write_png8(&p, [64, 64], &[i * 40; 64 * 64 * 3]).unwrap();
+                p
+            })
+            .collect();
+        let files: Vec<&Path> = names.iter().map(PathBuf::as_path).collect();
+        let out = dir.join("a.master.mp4");
+        let (count, used) = master(&files, Some(2), [64, 64], Fps::new(30, 1), &out).unwrap();
+        assert_eq!(count, 4);
+        assert!(used.contains(&"bframes 0".to_string()));
+        assert_eq!(
+            encode::probe(&out).unwrap(),
+            ([64, 64], 4, Some(Fps::new(30, 1)))
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

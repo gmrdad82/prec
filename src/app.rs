@@ -328,10 +328,26 @@ pub struct Resolved {
     pub clean: bool,
 }
 
+fn toml_error(path: &Path, text: &str, e: &toml::de::Error) -> String {
+    let message = e.message().trim().replace('\n', " ");
+    match e.span() {
+        Some(span) => {
+            let before = text.get(..span.start).unwrap_or(text);
+            let line = before.matches('\n').count() + 1;
+            let column = before.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+            format!(
+                "{}: line {line}, column {column}: {message}",
+                path.display()
+            )
+        }
+        None => format!("{}: {message}", path.display()),
+    }
+}
+
 pub fn load(dir: &Path) -> Result<(Terminal, String), String> {
     let path = dir.join("render/terminal.toml");
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let t: Terminal = toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    let t: Terminal = toml::from_str(&text).map_err(|e| toml_error(&path, &text, &e))?;
     if t.frame != "window" && t.frame != "bare" {
         return Err(format!("{}: frame is window or bare", path.display()));
     }
@@ -557,7 +573,15 @@ pub fn build(
     bin_override: Option<&Path>,
 ) -> Result<PathBuf, String> {
     if let Some(b) = bin_override {
-        return paths::absolute(b);
+        let dir = paths::absolute(b)?;
+        if !dir.is_dir() {
+            return Err(format!("--bin {}: no such folder", dir.display()));
+        }
+        let bin = dir.join(&app.terminal.bin);
+        if !bin.is_file() {
+            return Err(format!("{} is missing from --bin", bin.display()));
+        }
+        return Ok(dir);
     }
     let target = target_dir(app, product)?;
     std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
@@ -597,7 +621,7 @@ pub fn build(
             g.report();
         }
         let dir = PathBuf::from(expand(&build.bin_dir, &vars));
-        if !dir.join(&app.terminal.bin).exists() {
+        if !dir.join(&app.terminal.bin).is_file() {
             return Err(format!(
                 "{} is missing after the build",
                 dir.join(&app.terminal.bin).display()
@@ -625,7 +649,7 @@ pub fn build(
         let from = PathBuf::from(expand(&build.bin_dir, &vars));
         paths::fresh(entry)?;
         cache::keep(&from, entry)?;
-        if !entry.join(&app.terminal.bin).exists() {
+        if !entry.join(&app.terminal.bin).is_file() {
             return Err(format!(
                 "{} is missing after the build",
                 from.join(&app.terminal.bin).display()
@@ -765,5 +789,398 @@ mod tests {
             serde_json::json!("before-closure")
         );
         assert_eq!(Poster::Seconds(1.5).to_json().as_f64(), Some(1.5));
+    }
+
+    const HEAD: &str = "app = \"alpha\"\nbin = \"alpha\"\ngrid = [80, 24]\n";
+
+    fn parsed(text: &str) -> Terminal {
+        toml::from_str::<Terminal>(text).unwrap()
+    }
+
+    fn written(case: &str, text: Option<&str>) -> PathBuf {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tmp/app-unit/load")
+            .join(case);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("render")).unwrap();
+        if let Some(t) = text {
+            std::fs::write(dir.join("render/terminal.toml"), t).unwrap();
+        }
+        dir
+    }
+
+    fn refused(case: &str, text: Option<&str>) -> String {
+        let dir = written(case, text);
+        let e = load(&dir).unwrap_err();
+        let path = dir.join("render/terminal.toml").display().to_string();
+        assert!(e.starts_with(&format!("{path}: ")), "{e}");
+        assert!(!e.contains('\n'), "a refusal is one line: {e:?}");
+        std::fs::remove_dir_all(&dir).unwrap();
+        e
+    }
+
+    fn resolved(dir: &Path, terminal: Terminal) -> Resolved {
+        Resolved {
+            dir: dir.to_path_buf(),
+            commit: None,
+            rev: "local".into(),
+            tag: None,
+            pinned: false,
+            terminal,
+            source_sha256: String::new(),
+            gitdir: None,
+            key: None,
+            clean: false,
+        }
+    }
+
+    #[test]
+    fn env_keeps_home_as_written_and_home_beside_env_home_is_refused() {
+        let t = parsed(&format!(
+            "{HEAD}[env]\nHOME = \"home\"\nTMPDIR = \"temp\"\n"
+        ));
+        assert_eq!(t.env.get("HOME").map(String::as_str), Some("home"));
+        assert_eq!(t.env.get("TMPDIR").map(String::as_str), Some("temp"));
+        assert_eq!(t.env.len(), 2);
+        assert!(t.private().is_ok());
+        assert_eq!(t.hostname(), None);
+        assert_eq!(t.frame, "window");
+        assert_eq!(t.font, None);
+        let both = parsed(&format!(
+            "{HEAD}home = \"/srv/alpha\"\n[env]\nHOME = \"home\"\n"
+        ));
+        assert_eq!(
+            both.private().unwrap_err(),
+            "home and [env] HOME both set the session's home; keep one"
+        );
+    }
+
+    #[test]
+    fn pass_env_names_are_checked_one_by_one() {
+        let refusal = |extra: &str| parsed(&format!("{HEAD}{extra}")).private().unwrap_err();
+        assert!(refusal("pass_env = [\"1ALPHA\"]\n").contains("not starting with a digit"));
+        assert!(refusal("pass_env = [\"AL-PHA\"]\n").contains("letters, digits and '_'"));
+        assert!(refusal("pass_env = [\"\"]\n").contains("letters, digits and '_'"));
+        assert_eq!(
+            refusal("pass_env = [\"PATH\"]\n"),
+            "pass_env PATH: prec sets PATH itself"
+        );
+        assert_eq!(
+            refusal("pass_env = [\"ALPHA\"]\n[env]\nALPHA = \"1\"\n"),
+            "pass_env ALPHA is also in [env]"
+        );
+        assert_eq!(
+            refusal("pass_env = [\"ALPHA\", \"BETA\", \"ALPHA\"]\n"),
+            "pass_env ALPHA is named twice"
+        );
+        assert!(
+            parsed(&format!("{HEAD}pass_env = [\"ALPHA\", \"_BETA2\"]\n"))
+                .private()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn home_and_hostname_are_checked_and_the_hostname_defaults_with_a_home() {
+        let check = |extra: &str| parsed(&format!("{HEAD}{extra}")).private();
+        assert_eq!(
+            check("hostname = \"box\"\n").unwrap_err(),
+            "hostname needs home"
+        );
+        for bad in ["/alpha", "srv/alpha", "/srv/al pha", "/srv/../x", "/srv//x"] {
+            let e = check(&format!("home = {bad:?}\n")).unwrap_err();
+            assert!(e.starts_with(&format!("home {bad:?}: ")), "{bad}: {e}");
+        }
+        let long = "h".repeat(64);
+        for bad in ["a_b", "a b", "..", long.as_str()] {
+            let e = check(&format!("home = \"/srv/alpha\"\nhostname = {bad:?}\n")).unwrap_err();
+            assert!(e.starts_with(&format!("hostname {bad:?}: ")), "{bad}: {e}");
+        }
+        let named = parsed(&format!(
+            "{HEAD}home = \"/srv/alpha\"\nhostname = \"{}\"\n",
+            "h".repeat(63)
+        ));
+        assert!(named.private().is_ok());
+        assert_eq!(named.hostname(), Some("h".repeat(63).as_str()));
+        let plain = parsed(&format!("{HEAD}home = \"/srv/alpha\"\n"));
+        assert!(plain.private().is_ok());
+        assert_eq!(plain.hostname(), Some(DEFAULT_HOSTNAME));
+    }
+
+    #[test]
+    fn a_shots_fps_takes_every_form_its_size_stays_as_written_and_odd_rates_are_refused() {
+        let t = parsed(&format!(
+            "{HEAD}[shots.a]\nkind = \"clip\"\ntape = \"a.tape\"\nfps = 30\nsize = \"1080p\"\n[shots.b]\nkind = \"clip\"\ntape = \"b.tape\"\nfps = \"30000/1001\"\nsize = \"1280x720\"\n[shots.c]\nkind = \"clip\"\ntape = \"c.tape\"\nfps = 29.97\n[shots.d]\nkind = \"clip\"\ntape = \"d.tape\"\nfps = \"23.976\"\ngrid = [100, 30]\n[shots.e]\nkind = \"clip\"\ntape = \"e.tape\"\nfps = 60.0\n[shots.f]\nkind = \"still\"\ntape = \"f.tape\"\n"
+        ));
+        assert_eq!(t.shots["a"].fps, Some(Fps::new(30, 1)));
+        assert_eq!(t.shots["a"].size.as_deref(), Some("1080p"));
+        assert_eq!(t.shots["b"].fps, Some(Fps::new(30000, 1001)));
+        assert_eq!(t.shots["b"].size.as_deref(), Some("1280x720"));
+        assert_eq!(t.shots["c"].fps, Some(Fps::new(30000, 1001)));
+        assert_eq!(t.shots["d"].fps, Some(Fps::new(24000, 1001)));
+        assert_eq!(t.shots["d"].grid, Some([100, 30]));
+        assert_eq!(t.shots["e"].fps, Some(Fps::new(60, 1)));
+        assert_eq!(t.shots["f"].fps, None);
+        assert_eq!(t.shots["f"].size, None);
+        assert_eq!(t.shots["f"].grid, None);
+        for (fps, said) in [
+            ("25", "fps 25"),
+            ("29.9", "not an exact rate"),
+            ("\"30/0\"", "fps 30/0"),
+            ("\"fast\"", "fps fast"),
+        ] {
+            let e = toml::from_str::<Terminal>(&format!(
+                "{HEAD}[shots.a]\nkind = \"clip\"\ntape = \"a.tape\"\nfps = {fps}\n"
+            ))
+            .unwrap_err()
+            .to_string();
+            assert!(e.contains(said), "{fps}: {e}");
+        }
+    }
+
+    #[test]
+    fn a_good_terminal_toml_loads_with_the_hash_of_its_text() {
+        let text = format!(
+            "{HEAD}frame = \"bare\"\nfont = \"Alpha Mono\"\n[shots.a]\nkind = \"still\"\ntape = \"a.tape\"\n[shots.b]\nkind = \"clip\"\ntape = \"b.tape\"\nposter = \"first\"\nclosure = \"palindrome\"\n"
+        );
+        let dir = written("good", Some(&text));
+        let (t, sha) = load(&dir).unwrap();
+        assert_eq!(sha, paths::hash_bytes(text.as_bytes()));
+        assert_eq!(sha.len(), 64);
+        assert_eq!(t.frame, "bare");
+        assert_eq!(t.font.as_deref(), Some("Alpha Mono"));
+        assert_eq!(t.shots.keys().collect::<Vec<_>>(), ["a", "b"]);
+        assert!(checked("alpha", &dir).is_ok());
+        let other = checked("beta", &dir).unwrap_err();
+        assert!(other.ends_with("describes alpha, not beta"), "{other}");
+        std::fs::write(dir.join("render/terminal.toml"), format!("{text}\n")).unwrap();
+        assert_ne!(load(&dir).unwrap().1, sha);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn every_bad_terminal_toml_is_refused_on_one_line_with_its_path() {
+        assert!(refused("missing", None).contains("render/terminal.toml: "));
+        let bad = refused("syntax", Some("app = \n"));
+        assert!(bad.contains(": line 1, column "), "{bad}");
+        let unknown = refused("unknown", Some(&format!("{HEAD}colour = 1\n")));
+        assert!(
+            unknown.contains("line 4, column 1: unknown field `colour`"),
+            "{unknown}"
+        );
+        let untaped = refused(
+            "untaped",
+            Some(&format!("{HEAD}[shots.a]\nkind = \"clip\"\n")),
+        );
+        assert!(untaped.contains("missing field `tape`"), "{untaped}");
+        let twice = refused(
+            "twice",
+            Some(&format!(
+                "{HEAD}[shots.a]\nkind = \"clip\"\ntape = \"a\"\n[shots.a]\nkind = \"clip\"\ntape = \"b\"\n"
+            )),
+        );
+        assert!(twice.contains("line 7, column 8: duplicate key"), "{twice}");
+        for (case, extra, said) in [
+            (
+                "frame",
+                "frame = \"round\"\n",
+                "frame is window or bare".to_string(),
+            ),
+            ("camera", "camera = { zoom = 2 }\n", NO_CAMERA.to_string()),
+            (
+                "keys",
+                "[shots.a]\nkind = \"clip\"\ntape = \"a\"\nkeys = []\n",
+                format!("shot a: {NO_CAMERA}"),
+            ),
+            (
+                "shot-camera",
+                "[shots.a]\nkind = \"clip\"\ntape = \"a\"\ncamera = {}\n",
+                format!("shot a: {NO_CAMERA}"),
+            ),
+            (
+                "closure",
+                "[shots.a]\nkind = \"clip\"\ntape = \"a\"\nclosure = \"loop\"\n",
+                "shot a: closure \"loop\"".to_string(),
+            ),
+            (
+                "poster",
+                "[shots.a]\nkind = \"still\"\ntape = \"a\"\nposter = \"first\"\n",
+                "shot a: poster is for clips".to_string(),
+            ),
+            (
+                "kind",
+                "[shots.a]\nkind = \"gif\"\ntape = \"a\"\n",
+                "shot a kind is clip or still".to_string(),
+            ),
+            (
+                "pass-env",
+                "pass_env = [\"HOME\"]\n",
+                "pass_env HOME: prec sets HOME itself".to_string(),
+            ),
+        ] {
+            let e = refused(case, Some(&format!("{HEAD}{extra}")));
+            assert!(e.contains(&said), "{case}: {e}");
+        }
+    }
+
+    #[test]
+    fn closure_spellings_from_set_and_back_to_json() {
+        assert_eq!(Closure::from_set("closure", "none").unwrap(), Closure::Open);
+        assert_eq!(Closure::from_set("closure", "open").unwrap(), Closure::Open);
+        assert_eq!(
+            Closure::from_set("closure", "palindrome").unwrap(),
+            Closure::Palindrome
+        );
+        assert!(
+            Closure::from_set("closure.crossfade", "soon")
+                .unwrap_err()
+                .contains("seconds")
+        );
+        assert!(
+            Closure::from_set("closure.crossfade", "0")
+                .unwrap_err()
+                .contains("more than 0 seconds")
+        );
+        assert!(Closure::from_value(&serde_json::json!({"crossfade": "1"})).is_err());
+        assert!(Closure::from_value(&serde_json::json!({"crossfade": 1, "extra": 2})).is_err());
+        assert_eq!(Closure::Open.to_json(), Value::Null);
+        assert_eq!(
+            Closure::Palindrome.to_json(),
+            serde_json::json!("palindrome")
+        );
+        assert_eq!(
+            Closure::Crossfade(0.4).to_json(),
+            serde_json::json!({"crossfade": 0.4})
+        );
+        for c in [Closure::Open, Closure::Palindrome, Closure::Crossfade(0.4)] {
+            assert_eq!(Closure::from_value(&c.to_json()).unwrap(), c);
+        }
+        assert_eq!(Closure::Crossfade(0.001).fade_frames(Fps::new(30, 1)), 1);
+        assert_eq!(Closure::Palindrome.fade_frames(Fps::new(30, 1)), 0);
+        assert_eq!(Closure::Open.fade_frames(Fps::new(30, 1)), 0);
+    }
+
+    #[test]
+    fn a_poster_serializes_the_way_it_reads() {
+        for p in [Poster::First, Poster::BeforeClosure, Poster::Seconds(2.5)] {
+            let v = serde_json::to_value(&p).unwrap();
+            assert_eq!(v, p.to_json());
+            assert_eq!(serde_json::from_value::<Poster>(v).unwrap(), p);
+        }
+        assert!(Poster::from_value(&Value::Null).is_err());
+        assert!(
+            Poster::from_flag("inf")
+                .unwrap_err()
+                .contains("zero or more")
+        );
+    }
+
+    #[test]
+    fn bin_comes_from_the_bin_flag_or_from_bin_dir_without_a_command() {
+        let work = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tmp/app-unit/bin");
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let app = resolved(&work, parsed(HEAD));
+        let flag = work.join("flag");
+        std::fs::create_dir_all(&flag).unwrap();
+        std::fs::write(flag.join("alpha"), "").unwrap();
+        assert_eq!(build(&app, "alpha-unit", Some(&flag)).unwrap(), flag);
+        assert_eq!(
+            build(
+                &app,
+                "alpha-unit",
+                Some(Path::new("tmp/app-unit/bin/./other/../flag"))
+            )
+            .unwrap(),
+            std::env::current_dir()
+                .unwrap()
+                .join("tmp/app-unit/bin/flag")
+        );
+        assert_eq!(build(&app, "alpha-unit", None).unwrap(), work);
+        let release = resolved(
+            &work,
+            parsed(&format!(
+                "{HEAD}[build]\nbin_dir = \"{{target}}/release\"\n"
+            )),
+        );
+        let dir = build(&release, "alpha-unit", None).unwrap();
+        assert!(
+            dir.ends_with("tmp/tools/alpha-unit@local/target/release"),
+            "{}",
+            dir.display()
+        );
+        std::fs::remove_dir_all(&work).unwrap();
+        std::fs::remove_dir_all(paths::caller_tmp().unwrap().join("tools/alpha-unit@local"))
+            .unwrap();
+    }
+
+    #[test]
+    fn a_bin_flag_without_the_apps_binary_is_refused() {
+        let work = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tmp/app-unit/bin-refused");
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let app = resolved(&work, parsed(HEAD));
+        let gone = work.join("gone");
+        assert_eq!(
+            build(&app, "alpha-unit", Some(&gone)).unwrap_err(),
+            format!("--bin {}: no such folder", gone.display())
+        );
+        let empty = work.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        assert_eq!(
+            build(&app, "alpha-unit", Some(&empty)).unwrap_err(),
+            format!("{} is missing from --bin", empty.join("alpha").display())
+        );
+        let other = work.join("other");
+        std::fs::create_dir_all(other.join("alpha")).unwrap();
+        std::fs::write(other.join("beta"), "").unwrap();
+        assert_eq!(
+            build(&app, "alpha-unit", Some(&other)).unwrap_err(),
+            format!("{} is missing from --bin", other.join("alpha").display())
+        );
+        std::fs::remove_dir_all(&work).unwrap();
+    }
+
+    #[test]
+    fn a_build_command_runs_in_the_app_and_its_binary_must_be_there_after() {
+        let work = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tmp/app-unit/build");
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let with = |command: &str| {
+            resolved(
+                &work,
+                parsed(&format!(
+                    "{HEAD}[build]\ncommand = {command:?}\nbin_dir = \"{{app}}/out\"\n"
+                )),
+            )
+        };
+        assert_eq!(
+            build(&with("exit 3"), "alpha-build", None).unwrap_err(),
+            "alpha-build's build command failed: exit 3"
+        );
+        let missing = build(&with("mkdir -p out"), "alpha-build", None).unwrap_err();
+        assert_eq!(
+            missing,
+            format!(
+                "{} is missing after the build",
+                work.join("out/alpha").display()
+            )
+        );
+        assert_eq!(
+            build(&with("mkdir -p out/alpha"), "alpha-build", None).unwrap_err(),
+            missing
+        );
+        std::fs::remove_dir_all(work.join("out")).unwrap();
+        let made = build(
+            &with("mkdir -p {app}/out && touch out/alpha"),
+            "alpha-build",
+            None,
+        )
+        .unwrap();
+        assert_eq!(made, work.join("out"));
+        assert!(made.join("alpha").is_file());
+        std::fs::remove_dir_all(&work).unwrap();
+        std::fs::remove_dir_all(paths::caller_tmp().unwrap().join("tools/alpha-build@local"))
+            .unwrap();
     }
 }

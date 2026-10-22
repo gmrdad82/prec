@@ -55,3 +55,11 @@ commit/ab0ad8d19ad0:tests/paths.rs:400 a made-up home path or email in a unit or
 commit/ab0ad8d19ad0:tests/paths.rs:406 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
 commit/ab0ad8d19ad0:tests/paths.rs:409 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
 commit/ab0ad8d19ad0:tests/paths.rs:424 a made-up home path or email in a unit or integration test of the private-data scan, config and home checks, replaced by /srv paths and example.com in a later commit
+commit/2b17f591c28a:src/app.rs:842 a made-up home path in the app model unit test of that commit, replaced by /srv/alpha in the next one
+commit/2b17f591c28a:src/app.rs:885 a made-up home path in the app model unit test of that commit, replaced by /srv/alpha in the next one
+commit/2b17f591c28a:src/app.rs:894 a made-up home path in the app model unit test of that commit, replaced by /srv/alpha in the next one
+commit/2b17f591c28a:src/app.rs:898 a made-up home path in the app model unit test of that commit, replaced by /srv/alpha in the next one
+commit/2b17f591c28a:src/app.rs:903 a made-up home path in the app model unit test of that commit, replaced by /srv/alpha in the next one
+commit/e05fae7c9d25:src/private.rs:258 a made-up home path or email in the private-data scan's unit test as the branch started, replaced by /srv paths and example.com on main
+commit/e05fae7c9d25:src/private.rs:276 a made-up home path or email in the private-data scan's unit test as the branch started, replaced by /srv paths and example.com on main
+commit/e05fae7c9d25:src/private.rs:352 a made-up home path or email in the private-data scan's unit test as the branch started, replaced by /srv paths and example.com on main

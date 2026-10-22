@@ -307,7 +307,6 @@ enum CacheAction {
         all: bool,
         #[arg(
             long,
-            requires = "json",
             help = "With --json, report what would be removed and remove nothing"
         )]
         dry_run: bool,
@@ -402,9 +401,9 @@ fn begin(verb: &str, kind: &str, s: &Shot) -> Result<(), String> {
 
 fn shoot(kind: &str, s: &Shot, made: &str) -> Result<(), String> {
     s.camera.refuse()?;
-    begin(kind, kind, s)?;
     let first = opts(s, &s.theme, made);
     render::validate(kind, &first)?;
+    begin(kind, kind, s)?;
     let build = s.bin.is_none();
     let guess = serde_json::json!({
         "rev": s.source.rev.as_deref().unwrap_or("local"),
@@ -638,8 +637,31 @@ fn watch_signals() -> Result<(), String> {
     Ok(())
 }
 
+fn parse_from<I, T>(args: I) -> Result<Kind, clap::Error>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
+    let command = Cli::try_parse_from(&args)?.command;
+    if matches!(
+        command,
+        Kind::Cache {
+            json: false,
+            action: Some(CacheAction::Prune { dry_run: true, .. })
+        }
+    ) {
+        use clap::CommandFactory;
+        let strict = Cli::command().mut_subcommand("cache", |c| {
+            c.mut_subcommand("prune", |p| p.mut_arg("dry_run", |a| a.requires("json")))
+        });
+        strict.try_get_matches_from(&args)?;
+    }
+    Ok(command)
+}
+
 fn main() {
-    let command = Cli::parse().command;
+    let command = parse_from(std::env::args_os()).unwrap_or_else(|e| e.exit());
     if let Err(e) = config::load() {
         eprintln!("prec: {e}");
         std::process::exit(1);
@@ -659,22 +681,310 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::Cli;
-    use clap::Parser;
+    use super::*;
+    use clap::CommandFactory;
     use clap::error::ErrorKind;
+
+    fn parsed(args: &[&str]) -> Kind {
+        parse_from(args).unwrap_or_else(|e| panic!("{args:?}: {e}"))
+    }
+
+    fn shot(args: &[&str]) -> Shot {
+        match parsed(args) {
+            Kind::Clip(s) | Kind::Still(s) | Kind::Record(s) => s,
+            _ => panic!("{args:?} is no shot"),
+        }
+    }
+
+    fn refusal(args: &[&str]) -> clap::Error {
+        parse_from(args).err().unwrap()
+    }
+
+    #[test]
+    fn a_clip_takes_its_flags_and_keeps_its_defaults() {
+        let s = shot(&["prec", "clip", "alpha", "intro"]);
+        assert_eq!((s.product.as_str(), s.shot.as_str()), ("alpha", "intro"));
+        assert_eq!(s.out, PathBuf::from("tmp/renders"));
+        assert_eq!(s.seed, 7);
+        assert_eq!(s.theme, "app");
+        assert!(s.themes.is_empty() && s.derive.is_empty() && s.web.is_empty());
+        assert!(s.fps.is_none() && s.size.is_none() && s.bin.is_none());
+        assert!(s.source.app_dir.is_none() && s.source.rev.is_none());
+        assert!(!s.no_archive && !s.allow_private && !s.keep_frames && !s.no_encode);
+        assert!(s.camera.refuse().is_ok());
+        let s = shot(&[
+            "prec",
+            "still",
+            "alpha",
+            "intro",
+            "--fps",
+            "30000/1001",
+            "--themes",
+            "Catppuccin Latte,Catppuccin Mocha",
+            "--derive",
+            "720p,1080p",
+            "--web",
+            "640,1280",
+            "--set",
+            "grid=80x24",
+            "--set",
+            "typing=10ms",
+            "--bin",
+            "tmp/bin",
+            "--app-dir",
+            "examples/demo",
+            "--rev",
+            "v1.0.0",
+            "--seed",
+            "9",
+            "--no-archive",
+        ]);
+        assert_eq!(s.fps, Some(fps::Fps::new(30000, 1001)));
+        assert_eq!(s.themes, ["Catppuccin Latte", "Catppuccin Mocha"]);
+        assert_eq!(s.derive, ["720p", "1080p"]);
+        assert_eq!(s.web, [640, 1280]);
+        assert_eq!(s.set, ["grid=80x24", "typing=10ms"]);
+        assert_eq!(s.bin, Some(PathBuf::from("tmp/bin")));
+        assert_eq!(s.source.app_dir, Some(PathBuf::from("examples/demo")));
+        assert_eq!(s.source.rev.as_deref(), Some("v1.0.0"));
+        assert_eq!(s.seed, 9);
+        assert!(s.no_archive);
+    }
+
+    #[test]
+    fn every_hidden_camera_flag_parses_and_is_refused() {
+        for flag in [
+            &["--turn", "10"][..],
+            &["--tilt", "5"],
+            &["--roll", "1"],
+            &["--zoom", "2"],
+            &["--move", "1,0"],
+            &["--target", "0,0"],
+            &["--lens", "35"],
+            &["--ortho"],
+            &["--margin", "4"],
+            &["--key", "0:zoom=1"],
+        ] {
+            let mut args = vec!["prec", "clip", "alpha", "intro"];
+            args.extend_from_slice(flag);
+            assert_eq!(
+                shot(&args).camera.refuse().unwrap_err(),
+                app::NO_CAMERA,
+                "{flag:?}"
+            );
+            let mut cast = vec!["prec", "render", "a.cast"];
+            cast.extend_from_slice(flag);
+            let Kind::Render(r) = parsed(&cast) else {
+                panic!("{cast:?}")
+            };
+            assert_eq!(r.camera.refuse().unwrap_err(), app::NO_CAMERA, "{flag:?}");
+        }
+        let mut cli = Cli::command();
+        cli.build();
+        for name in ["clip", "still", "record", "render"] {
+            let help = cli
+                .find_subcommand_mut(name)
+                .unwrap()
+                .render_help()
+                .to_string();
+            assert!(help.contains("--theme"), "{help}");
+            assert!(
+                !help.contains("--turn") && !help.contains("--key"),
+                "{help}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_shots_options_reach_the_render_and_a_replay_has_no_product() {
+        let s = shot(&[
+            "prec",
+            "clip",
+            "alpha",
+            "intro",
+            "--size",
+            "1080p",
+            "--poster",
+            "first",
+            "--frame",
+            "bare",
+            "--font",
+            "Alpha Mono",
+            "--fixtures",
+            "tmp/set",
+            "--profile",
+            "web",
+            "--youtube",
+            "--keep-frames",
+            "--no-encode",
+            "--allow-private",
+        ]);
+        let o = opts(&s, "nord", "2026-01-02T03:04:05+00:00");
+        assert_eq!(o.made, "2026-01-02T03:04:05+00:00");
+        assert_eq!((o.product.as_str(), o.shot.as_str()), ("alpha", "intro"));
+        assert_eq!(o.theme, "nord");
+        assert_eq!(o.size.as_deref(), Some("1080p"));
+        assert_eq!(o.poster.as_deref(), Some("first"));
+        assert_eq!(o.frame.as_deref(), Some("bare"));
+        assert_eq!(o.font.as_deref(), Some("Alpha Mono"));
+        assert_eq!(o.fixtures, Some(PathBuf::from("tmp/set")));
+        assert_eq!(o.profile, ["web"]);
+        assert!(o.youtube && o.keep_frames && o.no_encode && o.allow_private);
+        assert_eq!(o.seed, 7);
+        let Kind::Render(r) = parsed(&["prec", "render", "a.cast", "--seed", "3", "--no-archive"])
+        else {
+            panic!("render")
+        };
+        assert_eq!(r.cast, PathBuf::from("a.cast"));
+        let o = replay_opts(&r, "Dracula", "made");
+        assert_eq!(o.product, "");
+        assert_eq!(o.shot, "");
+        assert_eq!(o.bin, None);
+        assert_eq!(o.fixtures, None);
+        assert_eq!(o.theme, "Dracula");
+        assert_eq!(o.seed, 3);
+        assert!(o.no_archive);
+    }
+
+    #[test]
+    fn the_other_commands_parse_their_flags() {
+        let Kind::Shots { product, source } =
+            parsed(&["prec", "shots", "alpha", "--app-dir", "app"])
+        else {
+            panic!("shots")
+        };
+        assert_eq!(product, "alpha");
+        assert_eq!(source.app_dir, Some(PathBuf::from("app")));
+        assert!(matches!(
+            parsed(&["prec", "archive", "--retry"]),
+            Kind::Archive {
+                retry: true,
+                reindex: false
+            }
+        ));
+        assert!(matches!(
+            parsed(&["prec", "archive", "--reindex"]),
+            Kind::Archive {
+                retry: false,
+                reindex: true
+            }
+        ));
+        assert!(matches!(
+            parsed(&["prec", "themes"]),
+            Kind::Themes { all: false }
+        ));
+        assert!(matches!(
+            parsed(&["prec", "themes", "--all"]),
+            Kind::Themes { all: true }
+        ));
+        assert!(matches!(parsed(&["prec", "doctor"]), Kind::Doctor));
+        assert!(matches!(
+            parsed(&["prec", "cache"]),
+            Kind::Cache {
+                json: false,
+                action: None
+            }
+        ));
+        for args in [
+            &["prec", "cache", "--json", "prune", "--dry-run"][..],
+            &["prec", "cache", "prune", "--json", "--dry-run"],
+            &["prec", "cache", "prune", "--dry-run", "--json"],
+        ] {
+            let Kind::Cache {
+                json: true,
+                action:
+                    Some(CacheAction::Prune {
+                        older_than: None,
+                        all: false,
+                        dry_run: true,
+                    }),
+            } = parsed(args)
+            else {
+                panic!("{args:?}")
+            };
+        }
+        let Kind::Cache {
+            action: Some(CacheAction::Prune {
+                older_than, all, ..
+            }),
+            ..
+        } = parsed(&["prec", "cache", "prune", "--older-than", "2w", "--all"])
+        else {
+            panic!("prune")
+        };
+        assert_eq!(older_than.as_deref(), Some("2w"));
+        assert!(all);
+    }
+
+    #[test]
+    fn a_refused_value_or_a_missing_one_is_clap_error_with_exit_2() {
+        let e = refusal(&["prec", "clip", "alpha", "intro", "--fps", "25"]);
+        assert_eq!((e.kind(), e.exit_code()), (ErrorKind::ValueValidation, 2));
+        assert!(
+            e.render()
+                .to_string()
+                .starts_with("error: invalid value '25' for '--fps <FPS>': 24, 30, 48, 60, 120"),
+            "{e}"
+        );
+        let e = refusal(&["prec", "still", "alpha", "intro", "--web", "wide"]);
+        assert_eq!((e.kind(), e.exit_code()), (ErrorKind::ValueValidation, 2));
+        let e = refusal(&["prec", "clip", "alpha"]);
+        assert_eq!(
+            (e.kind(), e.exit_code()),
+            (ErrorKind::MissingRequiredArgument, 2)
+        );
+        let e = refusal(&["prec", "cache", "prune", "--dry-run"]);
+        assert_eq!(
+            (e.kind(), e.exit_code()),
+            (ErrorKind::MissingRequiredArgument, 2)
+        );
+        let e = refusal(&["prec", "cache", "prune", "--older-than"]);
+        assert_eq!(e.exit_code(), 2);
+        let said = e.render().to_string();
+        assert_eq!(
+            said,
+            "error: a value is required for '--older-than <OLDER_THAN>' but none was supplied\n\nFor more information, try '--help'.\n"
+        );
+    }
+
+    #[test]
+    fn help_and_version_exit_0_with_the_crates_version() {
+        for flag in ["--help", "-h"] {
+            let e = refusal(&["prec", flag]);
+            assert_eq!((e.kind(), e.exit_code()), (ErrorKind::DisplayHelp, 0));
+            let said = e.render().to_string();
+            assert!(said.contains("Usage: prec <COMMAND>"), "{said}");
+            for c in Cli::command().get_subcommands() {
+                assert!(said.contains(&format!("\n  {}", c.get_name())), "{said}");
+            }
+        }
+        for flag in ["--version", "-V"] {
+            let e = refusal(&["prec", flag]);
+            assert_eq!((e.kind(), e.exit_code()), (ErrorKind::DisplayVersion, 0));
+            assert_eq!(
+                e.render().to_string(),
+                format!("prec {}\n", env!("CARGO_PKG_VERSION"))
+            );
+        }
+    }
 
     #[test]
     fn unparsed_input_gets_the_short_answer() {
         for (args, kind) in [
             (&["prec"][..], ErrorKind::MissingSubcommand),
             (&["prec", "tui"][..], ErrorKind::InvalidSubcommand),
+            (&["prec", "--x"][..], ErrorKind::UnknownArgument),
             (&["prec", "archive"][..], ErrorKind::MissingRequiredArgument),
             (
                 &["prec", "archive", "--retry", "--reindex"][..],
                 ErrorKind::ArgumentConflict,
             ),
+            (
+                &["prec", "cache", "prune", "--dry-run"][..],
+                ErrorKind::MissingRequiredArgument,
+            ),
         ] {
-            let e = Cli::try_parse_from(args).err().unwrap();
+            let e = refusal(args);
             assert_eq!((e.kind(), e.exit_code()), (kind, 2), "{args:?}");
             let said = e.render().to_string();
             assert!(said.starts_with("error: "), "{said}");
@@ -684,5 +994,37 @@ mod tests {
             );
             assert!(!said.contains("Commands:"), "{said}");
         }
+    }
+
+    #[test]
+    fn a_dry_run_without_json_is_refused_as_clap_refuses_a_missing_flag() {
+        for args in [
+            &["prec", "cache", "prune", "--dry-run"][..],
+            &["prec", "cache", "prune", "--all", "--dry-run"],
+            &["prec", "cache", "prune", "--dry-run", "--older-than", "2w"],
+        ] {
+            let e = refusal(args);
+            assert_eq!(
+                (e.kind(), e.exit_code()),
+                (ErrorKind::MissingRequiredArgument, 2),
+                "{args:?}"
+            );
+            let said = e.render().to_string();
+            assert!(
+                said.starts_with("error: the following required arguments were not provided:\n  --json\n\nUsage: prec cache prune "),
+                "{said}"
+            );
+            assert!(
+                said.ends_with("\n\nFor more information, try '--help'.\n"),
+                "{said}"
+            );
+        }
+        let Kind::Cache {
+            json: false,
+            action: Some(CacheAction::Prune { dry_run: false, .. }),
+        } = parsed(&["prec", "cache", "prune", "--all"])
+        else {
+            panic!("a prune without --dry-run needs no --json")
+        };
     }
 }
