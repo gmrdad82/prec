@@ -1,4 +1,6 @@
 use crate::tape::{self, Step};
+use nix::sys::signal::{Signal, killpg};
+use nix::unistd::Pid;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde_json::{Value, json};
 use std::io::{Read, Write};
@@ -302,6 +304,17 @@ pub fn record(spec: &Spec) -> Result<Vec<Event>, String> {
     let result = drive(&mut s, spec);
     s.pump();
     let end = s.now();
+    let groups: Vec<i32> = [
+        pair.master.process_group_leader(),
+        child.process_id().map(|p| p as i32),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|g| *g > 1)
+    .collect();
+    for g in &groups {
+        let _ = killpg(Pid::from_raw(*g), Signal::SIGHUP);
+    }
     let _ = child.kill();
     s.writer = Box::new(std::io::sink());
     drop(pair.master);
@@ -314,6 +327,9 @@ pub fn record(spec: &Spec) -> Result<Vec<Event>, String> {
             break;
         }
         std::thread::sleep(Duration::from_millis(20));
+    }
+    for g in &groups {
+        let _ = killpg(Pid::from_raw(*g), Signal::SIGKILL);
     }
     let _ = reader_thread.join();
     s.pump();
@@ -583,19 +599,54 @@ pub fn write(path: &Path, cast: &Cast) -> Result<(), String> {
 pub fn read(path: &Path) -> Result<Cast, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut lines = text.lines();
-    let header: Value = serde_json::from_str(lines.next().ok_or("an empty cast")?)
-        .map_err(|e| format!("{}: header: {e}", path.display()))?;
+    let first = lines
+        .next()
+        .ok_or_else(|| format!("{}: an empty cast", path.display()))?;
+    let header: Value =
+        serde_json::from_str(first).map_err(|e| format!("{}: header: {e}", path.display()))?;
     if header["version"] != 2 {
         return Err(format!("{}: an asciicast v2 file", path.display()));
     }
-    let mut events = vec![];
+    let side = |key: &str, default: u64| -> Result<u32, String> {
+        match &header[key] {
+            Value::Null => Ok(default as u32),
+            v => v
+                .as_u64()
+                .filter(|n| (1..=u16::MAX as u64).contains(n))
+                .map(|n| n as u32)
+                .ok_or_else(|| {
+                    format!(
+                        "{}: header: {key} {v} is not a size from 1 to {}",
+                        path.display(),
+                        u16::MAX
+                    )
+                }),
+        }
+    };
+    let cols = side("width", 80)?;
+    let rows = side("height", 24)?;
+    let mut events: Vec<Event> = vec![];
     for (i, line) in lines.enumerate() {
         if line.trim().is_empty() {
             continue;
         }
         let v: Value = serde_json::from_str(line)
             .map_err(|e| format!("{}: line {}: {e}", path.display(), i + 2))?;
-        let t = v[0].as_f64().ok_or("a cast event without a time")?;
+        let at = |why: &str| format!("{}: line {}: {why}", path.display(), i + 2);
+        let t = v[0]
+            .as_f64()
+            .ok_or_else(|| at("a cast event without a time"))?;
+        if t < 0.0 {
+            return Err(at(&format!("a time of {t}s is negative")));
+        }
+        if let Some(last) = events.last()
+            && t < last.t
+        {
+            return Err(at(&format!(
+                "a time of {t}s comes before the {}s above it",
+                last.t
+            )));
+        }
         let kind = match v[1].as_str() {
             Some("o") => Kind::Output,
             Some("i") => Kind::Input,
@@ -608,9 +659,12 @@ pub fn read(path: &Path) -> Result<Cast, String> {
             data: v[2].as_str().unwrap_or_default().to_string(),
         });
     }
+    if events.is_empty() {
+        return Err(format!("{}: a cast with no events", path.display()));
+    }
     Ok(Cast {
-        cols: header["width"].as_u64().unwrap_or(80) as u32,
-        rows: header["height"].as_u64().unwrap_or(24) as u32,
+        cols,
+        rows,
         meta: header["x_terminal_renderer"].clone(),
         events,
     })
@@ -924,8 +978,8 @@ mod tests {
 
     #[test]
     fn a_cast_without_a_v2_header_is_refused() {
-        let (_, got) = read_text("empty", "");
-        assert_eq!(got.unwrap_err(), "an empty cast");
+        let (p, got) = read_text("empty", "");
+        assert_eq!(got.unwrap_err(), format!("{}: an empty cast", p.display()));
         let (p, got) = read_text("garbled", "not json\n[0.1, \"o\", \"a\"]\n");
         assert!(
             got.unwrap_err()
@@ -963,10 +1017,19 @@ mod tests {
             got.unwrap_err()
                 .starts_with(&format!("{}: line 3: ", p.display()))
         );
-        let (_, got) = read_text("timeless", &format!("{head}[\"soon\", \"o\", \"a\"]\n"));
-        assert_eq!(got.unwrap_err(), "a cast event without a time");
-        let (_, got) = read_text("notarray", &format!("{head}{{}}\n"));
-        assert_eq!(got.unwrap_err(), "a cast event without a time");
+        let (p, got) = read_text(
+            "timeless",
+            &format!("{head}[0.1, \"o\", \"a\"]\n\n[\"soon\", \"o\", \"a\"]\n"),
+        );
+        assert_eq!(
+            got.unwrap_err(),
+            format!("{}: line 4: a cast event without a time", p.display())
+        );
+        let (p, got) = read_text("notarray", &format!("{head}{{}}\n"));
+        assert_eq!(
+            got.unwrap_err(),
+            format!("{}: line 2: a cast event without a time", p.display())
+        );
     }
 
     #[test]
@@ -984,14 +1047,111 @@ mod tests {
     }
 
     #[test]
-    fn a_cast_with_no_events_reads_back_and_shows_nothing() {
-        let (_, got) = read_text("bare", "{\"version\": 2, \"width\": 8, \"height\": 4}\n");
-        let cast = got.unwrap();
-        assert!(cast.events.is_empty());
-        let tl = Timeline::of(&cast.events);
+    fn a_cast_with_no_events_is_refused() {
+        let head = "{\"version\": 2, \"width\": 8, \"height\": 4}\n";
+        for (name, text) in [
+            ("bare", head.to_string()),
+            ("blank", format!("{head}\n  \n")),
+            ("unreplayed", format!("{head}[0.1, \"r\", \"80x24\"]\n")),
+        ] {
+            let (p, got) = read_text(name, &text);
+            assert_eq!(
+                got.unwrap_err(),
+                format!("{}: a cast with no events", p.display()),
+                "{name}"
+            );
+        }
+        let (_, got) = read_text("one", &format!("{head}[0.0, \"m\", \"end\"]\n"));
+        assert_eq!(got.unwrap().events.len(), 1);
+        let tl = Timeline::of(&[]);
         assert!(tl.segments.is_empty());
         assert_eq!(tl.shown(), 0.0);
         assert_eq!(tl.at(1.0), 0.0);
+    }
+
+    #[test]
+    fn a_cast_header_size_out_of_range_is_refused() {
+        let event = "[0.0, \"m\", \"show\"]\n";
+        for (name, header, key, shown) in [
+            (
+                "zerow",
+                r#"{"version": 2, "width": 0, "height": 4}"#,
+                "width",
+                "0",
+            ),
+            (
+                "zeroh",
+                r#"{"version": 2, "width": 8, "height": 0}"#,
+                "height",
+                "0",
+            ),
+            (
+                "wide",
+                r#"{"version": 2, "width": 65536, "height": 4}"#,
+                "width",
+                "65536",
+            ),
+            (
+                "negative",
+                r#"{"version": 2, "width": -8, "height": 4}"#,
+                "width",
+                "-8",
+            ),
+            (
+                "text",
+                r#"{"version": 2, "width": "8", "height": 4}"#,
+                "width",
+                "\"8\"",
+            ),
+            (
+                "fraction",
+                r#"{"version": 2, "width": 8, "height": 4.5}"#,
+                "height",
+                "4.5",
+            ),
+        ] {
+            let (p, got) = read_text(name, &format!("{header}\n{event}"));
+            assert_eq!(
+                got.unwrap_err(),
+                format!(
+                    "{}: header: {key} {shown} is not a size from 1 to 65535",
+                    p.display()
+                ),
+                "{name}"
+            );
+        }
+        let (_, got) = read_text(
+            "edges",
+            &format!("{{\"version\": 2, \"width\": 65535, \"height\": 1}}\n{event}"),
+        );
+        let cast = got.unwrap();
+        assert_eq!((cast.cols, cast.rows), (65535, 1));
+    }
+
+    #[test]
+    fn a_cast_event_time_that_is_negative_or_goes_back_is_refused_by_its_line() {
+        let head = "{\"version\": 2, \"width\": 8, \"height\": 4}\n";
+        let (p, got) = read_text("negative", &format!("{head}[-0.5, \"o\", \"a\"]\n"));
+        assert_eq!(
+            got.unwrap_err(),
+            format!("{}: line 2: a time of -0.5s is negative", p.display())
+        );
+        let (p, got) = read_text(
+            "backwards",
+            &format!("{head}[0.0, \"m\", \"show\"]\n[2.0, \"o\", \"a\"]\n[1.5, \"o\", \"b\"]\n"),
+        );
+        assert_eq!(
+            got.unwrap_err(),
+            format!(
+                "{}: line 4: a time of 1.5s comes before the 2s above it",
+                p.display()
+            )
+        );
+        let (_, got) = read_text(
+            "ties",
+            &format!("{head}[0.0, \"m\", \"show\"]\n[0.0, \"o\", \"a\"]\n[0.0, \"m\", \"end\"]\n"),
+        );
+        assert_eq!(got.unwrap().events.len(), 3);
     }
 
     #[test]
@@ -1024,14 +1184,17 @@ mod tests {
         assert!((tl.at(0.5) - 0.5).abs() < 1e-9);
         assert!((tl.at(1.0) - 3.0).abs() < 1e-9);
         assert!((tl.at(2.5) - 4.5).abs() < 1e-9);
-        let whole = Timeline::of(&[
+        let tail = Timeline::of(&[
             m(0.0, "show"),
-            m(0.0, "cut"),
-            m(9.0, "resume"),
-            m(2.0, "end"),
+            m(2.0, "cut"),
+            m(5.0, "resume"),
+            m(5.0, "end"),
         ]);
-        assert!(whole.segments.is_empty());
-        assert_eq!(whole.at(0.0), 2.0);
+        assert_eq!(tail.segments, vec![(0.0, 2.0)]);
+        assert!((tail.shown() - 2.0).abs() < 1e-9);
+        assert!((tail.at(1.5) - 1.5).abs() < 1e-9);
+        assert_eq!(tail.at(2.0), 2.0);
+        assert_eq!(tail.at(9.0), 2.0);
     }
 
     #[test]

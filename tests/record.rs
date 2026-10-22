@@ -115,27 +115,43 @@ fn a_recorded_shot_is_an_asciicast_v2_cast_its_header_and_events_read_back() {
     );
 }
 
+fn shown_pid(said: &str, label: &str) -> i32 {
+    regex::Regex::new(&format!(r"{label}=(\d+)"))
+        .unwrap()
+        .captures_iter(said)
+        .find_map(|c| c[1].parse().ok())
+        .unwrap_or_else(|| panic!("no {label} pid on the screen:\n{said}"))
+}
+
 #[test]
-fn a_wait_that_never_matches_fails_at_its_timeout_and_leaves_no_shell() {
+fn a_wait_that_never_matches_fails_at_its_timeout_and_leaves_no_shell_or_app() {
     let (dir, app) = case("wait", "");
     common::add_shot(
         &app,
         "stuck",
-        "Type@0ms \"echo shell=$$\"\nEnter\nWait@1s /never-shown/\nType \"demo show\"\n",
+        "Type@0ms \"echo shell=$$\"\nEnter\nType@0ms `sh -c 'trap \"\" HUP; echo app=$$; exec sleep 600'`\nEnter\nWait@3s /never-shown/\nType \"demo show\"\n",
         "",
     );
+    let started = std::time::Instant::now();
     let o = record(&dir, &app, "stuck");
+    let took = started.elapsed();
     let said = refused(&o);
     assert!(
-        said.contains("prec: Wait /never-shown/ timed out after 1.0s; the screen showed:\n"),
+        said.contains("prec: Wait /never-shown/ timed out after 3.0s; the screen showed:\n"),
         "{said}"
     );
-    let pid: i32 = regex::Regex::new(r"shell=(\d+)")
-        .unwrap()
-        .captures_iter(&said)
-        .find_map(|c| c[1].parse().ok())
-        .unwrap_or_else(|| panic!("no shell pid on the screen:\n{said}"));
-    assert!(gone(pid), "the recording's shell {pid} outlived prec");
+    assert!(
+        took >= Duration::from_secs(3),
+        "the 3s Wait failed after {took:?}"
+    );
+    let shell = shown_pid(&said, "shell");
+    let held = shown_pid(&said, "app");
+    assert_ne!(shell, held);
+    assert!(gone(shell), "the recording's shell {shell} outlived prec");
+    assert!(
+        gone(held),
+        "the app {held} that ignores SIGHUP outlived prec's recording"
+    );
     assert!(!cast_of(&dir, "stuck").exists());
     assert!(!said.contains("recorded "), "{said}");
 }
@@ -176,6 +192,44 @@ fn a_session_that_exits_non_zero_is_still_recorded() {
     assert!(shown.contains("status=7"), "{shown:?}");
     assert!(shown.contains("truecolor"), "{shown:?}");
     assert!(text.trim_end().ends_with(r#""m","end"]"#), "{text}");
+    let events: Vec<Value> = text
+        .lines()
+        .skip(1)
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let quit = events
+        .iter()
+        .filter(|e| e[1] == "i" && e[2] == "\r")
+        .map(|e| e[0].as_f64().unwrap())
+        .next_back()
+        .unwrap();
+    let end = events.last().unwrap()[0].as_f64().unwrap();
+    assert!(
+        end - quit >= 0.5,
+        "the cast ends {end}s, before the last Sleep after the shell quit at {quit}s"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| e[1] == "i" && e[0].as_f64().unwrap() > quit),
+        "a key was sent after the shell quit"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_step_typed_after_the_shell_quits_is_refused_on_linux() {
+    let (dir, app) = case("typed-late", "");
+    common::add_shot(
+        &app,
+        "late",
+        "Type@0ms \"exit 3\"\nEnter\nSleep 500ms\nType@0ms \"echo late\"\nEnter\n",
+        "",
+    );
+    let o = record(&dir, &app, "late");
+    let said = refused(&o);
+    assert!(said.contains("prec: writing to the terminal: "), "{said}");
+    assert!(!cast_of(&dir, "late").exists());
 }
 
 #[test]
@@ -239,7 +293,7 @@ fn a_cast_that_is_empty_truncated_or_of_another_version_is_refused() {
     let dir = common::caller("record", "casts");
     let head = r#"{"version": 2, "width": 8, "height": 4, "x_terminal_renderer": {"product": "demo", "shot": "a", "kind": "clip"}}"#;
     let cases = [
-        ("empty", String::new(), "an empty cast".to_string()),
+        ("empty", String::new(), "empty.cast: an empty cast".to_string()),
         (
             "truncated",
             format!("{head}\n[0.0, \"m\", \"show\"]\n[0.5, \"o\", \"ab"),
@@ -259,6 +313,27 @@ fn a_cast_that_is_empty_truncated_or_of_another_version_is_refused() {
             "garbled",
             "{not json\n".to_string(),
             "garbled.cast: header: ".to_string(),
+        ),
+        (
+            "bare",
+            format!("{head}\n"),
+            "bare.cast: a cast with no events".to_string(),
+        ),
+        (
+            "timeless",
+            format!("{head}\n[0.0, \"m\", \"show\"]\n[\"soon\", \"o\", \"a\"]\n"),
+            "timeless.cast: line 3: a cast event without a time".to_string(),
+        ),
+        (
+            "backwards",
+            format!("{head}\n[0.5, \"m\", \"show\"]\n[0.2, \"o\", \"a\"]\n"),
+            "backwards.cast: line 3: a time of 0.2s comes before the 0.5s above it".to_string(),
+        ),
+        (
+            "rowless",
+            r#"{"version": 2, "width": 8, "height": 0, "x_terminal_renderer": {"product": "demo", "shot": "a", "kind": "clip"}}"#.to_string()
+                + "\n[0.0, \"m\", \"show\"]\n[0.5, \"m\", \"end\"]\n",
+            "rowless.cast: header: height 0 is not a size from 1 to 65535".to_string(),
         ),
     ];
     for (name, text, want) in cases {
