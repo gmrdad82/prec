@@ -503,14 +503,16 @@ pub fn parse_age(s: &str) -> Result<Duration, String> {
     let n: u64 = num
         .parse()
         .map_err(|_| format!("--older-than {s}: e.g. 30d, 12h or 90m"))?;
-    let secs = match unit {
-        "" | "d" => n * 86400,
-        "h" => n * 3600,
-        "m" => n * 60,
-        "w" => n * 7 * 86400,
+    let unit = match unit {
+        "" | "d" => 86400,
+        "h" => 3600,
+        "m" => 60,
+        "w" => 7 * 86400,
         _ => return Err(format!("--older-than {s}: e.g. 30d, 12h or 90m")),
     };
-    Ok(Duration::from_secs(secs))
+    n.checked_mul(unit)
+        .map(Duration::from_secs)
+        .ok_or_else(|| format!("--older-than {s}: e.g. 30d, 12h or 90m"))
 }
 
 fn now_secs() -> u64 {
@@ -727,7 +729,25 @@ mod tests {
         assert_eq!(parse_age("90m").unwrap(), Duration::from_secs(90 * 60));
         assert_eq!(parse_age("2w").unwrap(), Duration::from_secs(14 * 86400));
         assert_eq!(parse_age("30").unwrap(), Duration::from_secs(30 * 86400));
-        assert!(parse_age("soon").is_err());
+        assert_eq!(parse_age(" 3h ").unwrap(), Duration::from_secs(3 * 3600));
+        for bad in [
+            "soon",
+            "",
+            "d",
+            "-1d",
+            "5x",
+            "1.5d",
+            "7 d",
+            "99999999999999999999d",
+            "999999999999999d",
+            "99999999999999999w",
+        ] {
+            assert_eq!(
+                parse_age(bad).unwrap_err(),
+                format!("--older-than {}: e.g. 30d, 12h or 90m", bad.trim()),
+                "{bad}"
+            );
+        }
     }
 
     fn populate(r: &Path, now: u64) -> PathBuf {

@@ -744,10 +744,35 @@ fn retry_entry(dir: &Path, lock_file: &Path, online: &mut dyn FnMut(&Path) -> bo
         Ok(job) => job,
         Err(e) => return Outcome::Retry(format!("{}: {e}", dir.display())),
     };
+    if let Err(e) = contained(&job) {
+        return Outcome::Refused(format!("{}: {e}", dir.display()));
+    }
     if !online(&job.root) {
         return Outcome::Retry(format!("{} is unavailable", job.root.display()));
     }
     settle(&mut job, dir, Some(dir), lock_file).unwrap_or_else(Outcome::Retry)
+}
+
+fn inside(path: &Path) -> bool {
+    let mut parts = path.components().peekable();
+    parts.peek().is_some()
+        && parts.all(|c| match c {
+            std::path::Component::Normal(part) => part.to_str().is_some_and(paths::safe_name),
+            _ => false,
+        })
+}
+
+fn contained(job: &Queued) -> Result<(), String> {
+    if !inside(&job.base) {
+        return Err(format!(
+            "the queued leaf {:?} leaves the archive",
+            job.base.display().to_string()
+        ));
+    }
+    match job.files.iter().find(|f| !inside(Path::new(&f.name))) {
+        Some(f) => Err(format!("the queued file {:?} leaves its leaf", f.name)),
+        None => Ok(()),
+    }
 }
 
 fn read_queued(dir: &Path) -> Result<Queued, String> {
@@ -1925,5 +1950,67 @@ mod tests {
         assert!(reindex_at(&root, &lock_file).is_err());
         assert_eq!(fs::read(catalog.join("catalog.jsonl")).unwrap(), old);
         assert!(!masters(&root).join("catalog.jsonl.partial").exists());
+    }
+
+    #[test]
+    fn only_a_relative_path_of_safe_names_stays_inside() {
+        assert!(inside(Path::new(
+            "prec/alpha/shot/2026-10-02_091407_v1.2.3_site"
+        )));
+        assert!(inside(Path::new("shot.master.png")));
+        for path in [
+            "",
+            "..",
+            "../alpha",
+            "prec/../../alpha",
+            "prec/./alpha",
+            "/srv/archive/alpha",
+            "prec/a b",
+        ] {
+            assert!(!inside(Path::new(path)), "{path}");
+        }
+    }
+
+    #[test]
+    fn a_queued_leaf_or_file_outside_the_archive_is_refused_and_kept() {
+        let w = work("escape");
+        let (local, root, base, manifest) = fixture(&w, MADE);
+        let queue_root = w.join("queue");
+        let lock_file = w.join("runtime/catalog.lock");
+        let entry = queue(
+            &queued(&local, &root, &base, &manifest),
+            local.parent().unwrap(),
+            &queue_root,
+        )
+        .unwrap();
+        let record = entry.join("source.json");
+        let good = read(&record);
+        for (key, value) in [
+            ("leaf", json!("../../outside/alpha")),
+            (
+                "leaf",
+                json!(w.join("elsewhere/alpha").display().to_string()),
+            ),
+            (
+                "files",
+                json!([{"name":"../../../../../../escaped.png","bytes":6,"sha256":"00"}]),
+            ),
+            (
+                "files",
+                json!([{"name":w.join("abs.png").display().to_string(),"bytes":6,"sha256":"00"}]),
+            ),
+        ] {
+            let mut bad = good.clone();
+            bad[key] = value;
+            fs::write(&record, serde_json::to_vec(&bad).unwrap()).unwrap();
+            let outcome = retry_entry(&entry, &lock_file, &mut |_: &Path| true);
+            assert!(matches!(outcome, Outcome::Refused(_)), "{outcome:?}");
+            assert!(record.is_file());
+        }
+        assert!(!w.join("outside").exists());
+        assert!(!w.join("elsewhere").exists());
+        assert!(!w.join("abs.png").exists());
+        assert!(!masters(&root).exists());
+        assert_eq!(read(&local)["archive"]["state"], "queued");
     }
 }
