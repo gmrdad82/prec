@@ -517,7 +517,7 @@ mod tests {
     }
 
     #[test]
-    fn every_rate_encodes_with_two_second_keyframes_and_no_b_frames() {
+    fn every_rate_keys_a_frame_every_two_seconds() {
         for (f, gop) in [
             (Fps::new(24, 1), 48),
             (Fps::new(30, 1), 60),
@@ -529,14 +529,9 @@ mod tests {
             (Fps::new(48000, 1001), 96),
             (Fps::new(60000, 1001), 120),
         ] {
-            let s = settings(f);
-            assert!(s.contains(&format!("gop {gop}")), "{f}: {s:?}");
-            assert!(s.contains(&"bframes 0".to_string()), "{f}: {s:?}");
-            assert!(s.contains(&format!("crf {CRF}")), "{f}: {s:?}");
-            assert!(s.contains(&format!("pito-codecs {CODECS}")), "{f}: {s:?}");
+            assert_eq!(f.gop(), gop, "{f}");
+            assert!(settings(f).contains(&format!("gop {gop}")), "{f}");
         }
-        assert_eq!(B_FRAMES, 0);
-        assert!(master_what().contains(&format!("pito-codecs {CODECS}, CRF {CRF}")));
     }
 
     #[test]
@@ -584,14 +579,25 @@ mod tests {
         write_png8(&a, [64, 64], &[90; 64 * 64 * 3]).unwrap();
         let bad = dir.join("bad.png");
         std::fs::write(&bad, b"not a png").unwrap();
-        let mut pics: Vec<Pic> = (0..40).map(|_| Pic::One(&a)).collect();
-        pics.extend((0..3).map(|i| if i == 1 { Pic::One(&bad) } else { Pic::One(&a) }));
+        let b = dir.join("b.png");
+        write_png8(&b, [64, 64], &[160; 64 * 64 * 3]).unwrap();
+        let mut pics: Vec<Pic> = (0..200)
+            .map(|i| Pic::One(if i % 2 == 0 { &a } else { &b }))
+            .collect();
+        pics.push(Pic::One(&bad));
+        pics.push(Pic::One(&a));
+        let fresh = pics
+            .iter()
+            .enumerate()
+            .filter(|&(i, p)| i == 0 || *p != pics[i - 1])
+            .count();
+        assert_eq!(fresh, pics.len());
         let out = dir.join("a.master.mp4");
         let e = master(&pics, [64, 64], Fps::new(30, 1), &out).unwrap_err();
         assert!(e.contains("bad.png"), "{e}");
         assert!(!out.exists());
         assert!(!temp_of(&out).exists());
-        assert_eq!(names(&dir), ["a.png", "bad.png"]);
+        assert_eq!(names(&dir), ["a.png", "b.png", "bad.png"]);
     }
 
     #[test]

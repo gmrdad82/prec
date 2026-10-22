@@ -119,6 +119,8 @@ pub fn validate(kind: &str, opts: &Opts) -> Result<(), String> {
     Ok(())
 }
 
+pub const MAX_SIDE: u32 = 16384;
+
 pub fn parse_size(s: &str, kind: &str) -> Result<[u32; 2], String> {
     let size = match s {
         "720p" => [1280, 720],
@@ -133,6 +135,9 @@ pub fn parse_size(s: &str, kind: &str) -> Result<[u32; 2], String> {
     };
     if size[0] == 0 || size[1] == 0 {
         return Err(format!("size {s}: a width and height above 0"));
+    }
+    if size[0] > MAX_SIDE || size[1] > MAX_SIDE {
+        return Err(format!("size {s}: at most {MAX_SIDE} on a side"));
     }
     if kind == "clip" && (size[0] % 2 == 1 || size[1] % 2 == 1) {
         return Err(format!("size {s}: even width and height, for 4:2:0 video"));
@@ -1640,6 +1645,37 @@ mod tests {
         assert!(parse_size("1x1", "clip").is_err());
         assert!(parse_size("2x0", "clip").unwrap_err().contains("above 0"));
         assert_eq!(parse_size("720p", "clip"), Ok([1280, 720]));
+    }
+
+    #[test]
+    fn a_size_past_the_encoder_ceiling_is_refused_and_the_edge_is_taken() {
+        assert_eq!(MAX_SIDE, 16384);
+        for kind in ["still", "clip"] {
+            assert_eq!(parse_size("16384", kind), Ok([16384, 16384]), "{kind}");
+            assert_eq!(parse_size("16384x2", kind), Ok([16384, 2]), "{kind}");
+            assert_eq!(parse_size("2x16384", kind), Ok([2, 16384]), "{kind}");
+            for s in ["16386x2", "2x16386", "16386", "60000x60000", "4294967294x2"] {
+                assert_eq!(
+                    parse_size(s, kind),
+                    Err(format!("size {s}: at most 16384 on a side")),
+                    "{kind} {s}"
+                );
+            }
+        }
+        assert_eq!(
+            parse_size("16385x2", "still"),
+            Err("size 16385x2: at most 16384 on a side".into())
+        );
+        assert!(parse_size("16385x2", "clip").is_err());
+        let big = Opts {
+            size: Some("320x180".into()),
+            derive: vec!["16386x2".into()],
+            ..opts()
+        };
+        assert_eq!(
+            validate("still", &big),
+            Err("size 16386x2: at most 16384 on a side".into())
+        );
     }
 
     #[test]

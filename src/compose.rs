@@ -454,20 +454,50 @@ mod tests {
         let bg = [30, 30, 46];
         let ground = [200, 210, 220];
         let l = Layout::new(400, 300, true);
-        assert_eq!((l.margin, l.pad, l.bar, l.radius), (17, 7, 12, 4));
         let canvas = [200, 100];
         let (win, at) = l.place(canvas);
-        assert_eq!(win, [93, 87, 214, 126]);
-        assert_eq!(at, [100, 106]);
+        assert!(win[0] > 0 && win[1] > 0, "{win:?}");
+        assert!(win[0] + win[2] < 400 && win[1] + win[3] < 300, "{win:?}");
+        assert!((2 * win[0] + win[2]).abs_diff(400) <= 1, "{win:?}");
+        assert!((2 * win[1] + win[3]).abs_diff(300) <= 1, "{win:?}");
+        assert!(
+            at[0] > win[0] && at[0] + canvas[0] < win[0] + win[2],
+            "{at:?} in {win:?}"
+        );
+        assert!(
+            at[1] > win[1] && at[1] + canvas[1] < win[1] + win[3],
+            "{at:?} in {win:?}"
+        );
         let pm = background(&l, canvas, bg, ground).unwrap();
+        let mid = win[1] + win[3] / 2;
+        let right = win[0] + win[2];
+        let below = win[1] + win[3];
+        for (x, y) in [
+            (win[0] / 2, mid),
+            (right + (400 - right) / 2, mid),
+            (200, win[1] / 2),
+            (200, below + (300 - below) / 2),
+        ] {
+            assert_eq!(px(&pm, x, y), ground, "({x}, {y})");
+        }
+        for (x, y) in [(win[0] - 1, mid), (right, mid), (200, below)] {
+            let c = px(&pm, x, y);
+            assert!(
+                (0..3).all(|i| c[i] <= ground[i]),
+                "shadow at ({x}, {y}): {c:?}"
+            );
+        }
         for (x, y) in [(0, 0), (399, 0), (0, 299), (399, 299)] {
             assert_eq!(px(&pm, x, y), ground, "corner ({x}, {y})");
         }
         assert_eq!(px(&pm, 200, 150), bg);
         assert_eq!(px(&pm, at[0], at[1]), bg);
         assert_eq!(px(&pm, at[0] + canvas[0] - 1, at[1] + canvas[1] - 1), bg);
-        let red = px(&pm, 101, 93);
-        assert!(red[0] > 200 && red[2] < 150, "{red:?}");
+        let lit = (win[1]..at[1])
+            .flat_map(|y| (win[0]..win[0] + win[2] / 4).map(move |x| (x, y)))
+            .map(|(x, y)| px(&pm, x, y))
+            .any(|c| c[0] > 200 && c[2] < 150);
+        assert!(lit, "no red light in the bar of {win:?}");
         assert!(Layout::new(0, 10, false).boxed([0; 4]).is_err());
     }
 

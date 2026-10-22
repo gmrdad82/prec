@@ -266,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn overlapping_masks_hide_their_union_once() {
+    fn overlapping_masks_blank_their_union_and_list_every_rectangle_they_were_given() {
         let p = screen("0123456789\r\nabcdefghij\r\nKLMNOPQRST");
         let m = Masks::new(
             &[

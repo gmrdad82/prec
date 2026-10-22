@@ -298,6 +298,20 @@ fn a_bad_size_is_refused_before_the_app_records() {
             "320x181",
             "size 320x181: even width and height, for 4:2:0 video",
         ),
+        (
+            "still",
+            "covbad",
+            &app,
+            "16385x180",
+            "size 16385x180: at most 16384 on a side",
+        ),
+        (
+            "clip",
+            "covbadclip",
+            &clip_app,
+            "320x16386",
+            "size 320x16386: at most 16384 on a side",
+        ),
     ] {
         let record = format!("demo-{kind}-{shot}-record");
         let _ = std::fs::remove_dir_all(tree().join("tmp/prec/run").join(&record));
@@ -335,6 +349,124 @@ fn a_bad_size_is_refused_before_the_app_records() {
         &w,
     );
     refused(&o, "size 0x90: a width and height above 0");
+    assert!(!out.exists());
+}
+
+#[test]
+fn a_bad_size_in_the_shot_itself_is_refused_before_the_app_records() {
+    let w = work("bad-shot-size");
+    let out = w.join("out");
+    for (kind, shot, size, line) in [
+        (
+            "clip",
+            "covoddshot",
+            "321x180",
+            "shot covoddshot: size 321x180: even width and height, for 4:2:0 video",
+        ),
+        (
+            "still",
+            "covzeroshot",
+            "0x90",
+            "shot covzeroshot: size 0x90: a width and height above 0",
+        ),
+        (
+            "still",
+            "covhugeshot",
+            "16385",
+            "shot covhugeshot: size 16385: at most 16384 on a side",
+        ),
+    ] {
+        let app = demo_with(&w.join(shot), shot, kind, &format!("size = \"{size}\"\n"));
+        let record = format!("demo-{kind}-{shot}-record");
+        let _ = std::fs::remove_dir_all(tree().join("tmp/prec/run").join(&record));
+        let o = run(
+            &[
+                kind,
+                "demo",
+                shot,
+                "--app-dir",
+                app.to_str().unwrap(),
+                "--out",
+                out.to_str().unwrap(),
+            ],
+            &w,
+        );
+        refused(&o, line);
+        assert!(no_run(&record), "{kind} {shot} recorded");
+    }
+    assert!(!out.exists());
+}
+
+#[test]
+fn prec_record_and_prec_render_refuse_a_bad_size_before_any_work() {
+    let w = work("bad-size-verbs");
+    let out = w.join("out");
+    let app = demo_with(&w, "covrecsize", "clip", "");
+    for (size, line) in [
+        (
+            "321x180",
+            "size 321x180: even width and height, for 4:2:0 video",
+        ),
+        ("0", "size 0: a width and height above 0"),
+        ("16386x180", "size 16386x180: at most 16384 on a side"),
+    ] {
+        let record = "demo-clip-covrecsize-record";
+        let _ = std::fs::remove_dir_all(tree().join("tmp/prec/run").join(record));
+        let o = run(
+            &[
+                "record",
+                "demo",
+                "covrecsize",
+                "--app-dir",
+                app.to_str().unwrap(),
+                "--size",
+                size,
+                "--out",
+                out.to_str().unwrap(),
+            ],
+            &w,
+        );
+        refused(&o, line);
+        assert!(no_run(record), "record {size} recorded");
+    }
+    assert!(!out.exists());
+
+    let cast = w.join("cast/sized.cast");
+    painted_cast(&cast, "sized", "clip", [1, 2, 3], 0.2);
+    let still = w.join("cast/sizedstill.cast");
+    painted_cast(&still, "sizedstill", "still", [1, 2, 3], 0.2);
+    for (cast, size, line) in [
+        (
+            &cast,
+            "321x180",
+            "size 321x180: even width and height, for 4:2:0 video",
+        ),
+        (
+            &cast,
+            "16386x180",
+            "size 16386x180: at most 16384 on a side",
+        ),
+        (&still, "16385", "size 16385: at most 16384 on a side"),
+        (&still, "0x90", "size 0x90: a width and height above 0"),
+    ] {
+        let o = run(
+            &[
+                "render",
+                cast.to_str().unwrap(),
+                "--size",
+                size,
+                "--out",
+                out.to_str().unwrap(),
+            ],
+            &w,
+        );
+        refused(&o, line);
+    }
+    assert!(common::no_chromium(&tree(), "render-clip-sized-replay"));
+    assert!(common::no_chromium(
+        &tree(),
+        "render-still-sizedstill-replay"
+    ));
     assert!(!out.exists());
 }
 
@@ -573,6 +705,10 @@ fn a_rate_clap_cannot_take_gets_the_short_answer() {
             "fast",
             "24, 30, 48, 60, 120, 24000/1001 (23.976 or 23.98), 30000/1001 (29.97), 48000/1001 (47.952) or 60000/1001 (59.94)",
         ),
+        (
+            "29.97.1",
+            "24, 30, 48, 60, 120, 24000/1001 (23.976 or 23.98), 30000/1001 (29.97), 48000/1001 (47.952) or 60000/1001 (59.94)",
+        ),
     ] {
         for verb in [&["clip", "demo", "x"][..], &["render", "a.cast"][..]] {
             let mut args = verb.to_vec();
@@ -580,19 +716,34 @@ fn a_rate_clap_cannot_take_gets_the_short_answer() {
             let o = run(&args, &w);
             assert_eq!(o.status.code(), Some(2), "{args:?}");
             assert!(o.stdout.is_empty());
-            let e = said(&o);
-            assert!(
-                e.starts_with(&format!(
-                    "error: invalid value '{fps}' for '--fps <FPS>': {why}\n"
-                )),
-                "{args:?}: {e}"
+            assert_eq!(
+                said(&o),
+                format!(
+                    "error: invalid value '{fps}' for '--fps <FPS>': {why}\n\nFor more information, try '--help'.\n"
+                ),
+                "{args:?}"
             );
-            assert!(
-                e.ends_with("\n\nFor more information, try '--help'.\n"),
-                "{e}"
-            );
-            assert!(!e.contains("prec:"), "{e}");
         }
+    }
+    for (verb, usage) in [
+        (
+            &["clip", "demo", "x"][..],
+            "prec clip [OPTIONS] <PRODUCT> <SHOT>",
+        ),
+        (&["render", "a.cast"][..], "prec render [OPTIONS] <CAST>"),
+    ] {
+        let mut args = verb.to_vec();
+        args.extend(["--fps", "-1"]);
+        let o = run(&args, &w);
+        assert_eq!(o.status.code(), Some(2), "{args:?}");
+        assert!(o.stdout.is_empty());
+        assert_eq!(
+            said(&o),
+            format!(
+                "error: unexpected argument '-1' found\n\n  tip: to pass '-1' as a value, use '-- -1'\n\nUsage: {usage}\n\nFor more information, try '--help'.\n"
+            ),
+            "{args:?}"
+        );
     }
     let o = run(&["render", "a.cast", "--fps"], &w);
     assert_eq!(o.status.code(), Some(2));
