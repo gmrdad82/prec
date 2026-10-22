@@ -307,7 +307,6 @@ enum CacheAction {
         all: bool,
         #[arg(
             long,
-            requires = "json",
             help = "With --json, report what would be removed and remove nothing"
         )]
         dry_run: bool,
@@ -638,8 +637,31 @@ fn watch_signals() -> Result<(), String> {
     Ok(())
 }
 
+fn parse_from<I, T>(args: I) -> Result<Kind, clap::Error>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
+    let command = Cli::try_parse_from(&args)?.command;
+    if matches!(
+        command,
+        Kind::Cache {
+            json: false,
+            action: Some(CacheAction::Prune { dry_run: true, .. })
+        }
+    ) {
+        use clap::CommandFactory;
+        let strict = Cli::command().mut_subcommand("cache", |c| {
+            c.mut_subcommand("prune", |p| p.mut_arg("dry_run", |a| a.requires("json")))
+        });
+        strict.try_get_matches_from(&args)?;
+    }
+    Ok(command)
+}
+
 fn main() {
-    let command = Cli::parse().command;
+    let command = parse_from(std::env::args_os()).unwrap_or_else(|e| e.exit());
     if let Err(e) = config::load() {
         eprintln!("prec: {e}");
         std::process::exit(1);
@@ -664,9 +686,7 @@ mod tests {
     use clap::error::ErrorKind;
 
     fn parsed(args: &[&str]) -> Kind {
-        Cli::try_parse_from(args)
-            .unwrap_or_else(|e| panic!("{args:?}: {e}"))
-            .command
+        parse_from(args).unwrap_or_else(|e| panic!("{args:?}: {e}"))
     }
 
     fn shot(args: &[&str]) -> Shot {
@@ -677,7 +697,7 @@ mod tests {
     }
 
     fn refusal(args: &[&str]) -> clap::Error {
-        Cli::try_parse_from(args).err().unwrap()
+        parse_from(args).err().unwrap()
     }
 
     #[test]
@@ -865,12 +885,9 @@ mod tests {
                 action: None
             }
         ));
-        assert_eq!(
-            refusal(&["prec", "cache", "--json", "prune", "--dry-run"]).kind(),
-            ErrorKind::MissingRequiredArgument
-        );
         for args in [
-            &["prec", "cache", "prune", "--json", "--dry-run"][..],
+            &["prec", "cache", "--json", "prune", "--dry-run"][..],
+            &["prec", "cache", "prune", "--json", "--dry-run"],
             &["prec", "cache", "prune", "--dry-run", "--json"],
         ] {
             let Kind::Cache {
@@ -962,8 +979,12 @@ mod tests {
                 &["prec", "archive", "--retry", "--reindex"][..],
                 ErrorKind::ArgumentConflict,
             ),
+            (
+                &["prec", "cache", "prune", "--dry-run"][..],
+                ErrorKind::MissingRequiredArgument,
+            ),
         ] {
-            let e = Cli::try_parse_from(args).err().unwrap();
+            let e = refusal(args);
             assert_eq!((e.kind(), e.exit_code()), (kind, 2), "{args:?}");
             let said = e.render().to_string();
             assert!(said.starts_with("error: "), "{said}");
@@ -973,5 +994,37 @@ mod tests {
             );
             assert!(!said.contains("Commands:"), "{said}");
         }
+    }
+
+    #[test]
+    fn a_dry_run_without_json_is_refused_as_clap_refuses_a_missing_flag() {
+        for args in [
+            &["prec", "cache", "prune", "--dry-run"][..],
+            &["prec", "cache", "prune", "--all", "--dry-run"],
+            &["prec", "cache", "prune", "--dry-run", "--older-than", "2w"],
+        ] {
+            let e = refusal(args);
+            assert_eq!(
+                (e.kind(), e.exit_code()),
+                (ErrorKind::MissingRequiredArgument, 2),
+                "{args:?}"
+            );
+            let said = e.render().to_string();
+            assert!(
+                said.starts_with("error: the following required arguments were not provided:\n  --json\n\nUsage: prec cache prune "),
+                "{said}"
+            );
+            assert!(
+                said.ends_with("\n\nFor more information, try '--help'.\n"),
+                "{said}"
+            );
+        }
+        let Kind::Cache {
+            json: false,
+            action: Some(CacheAction::Prune { dry_run: false, .. }),
+        } = parsed(&["prec", "cache", "prune", "--all"])
+        else {
+            panic!("a prune without --dry-run needs no --json")
+        };
     }
 }

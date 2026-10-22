@@ -60,3 +60,6 @@ commit/2b17f591c28a:src/app.rs:885 a made-up home path in the app model unit tes
 commit/2b17f591c28a:src/app.rs:894 a made-up home path in the app model unit test of that commit, replaced by /srv/alpha in the next one
 commit/2b17f591c28a:src/app.rs:898 a made-up home path in the app model unit test of that commit, replaced by /srv/alpha in the next one
 commit/2b17f591c28a:src/app.rs:903 a made-up home path in the app model unit test of that commit, replaced by /srv/alpha in the next one
+commit/e05fae7c9d25:src/private.rs:258 a made-up home path or email in the private-data scan's unit test as the branch started, replaced by /srv paths and example.com on main
+commit/e05fae7c9d25:src/private.rs:276 a made-up home path or email in the private-data scan's unit test as the branch started, replaced by /srv paths and example.com on main
+commit/e05fae7c9d25:src/private.rs:352 a made-up home path or email in the private-data scan's unit test as the branch started, replaced by /srv paths and example.com on main
