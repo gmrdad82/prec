@@ -1621,6 +1621,17 @@ mod tests {
     }
 
     #[test]
+    fn a_wait_exit_on_a_live_session_waits_out_its_whole_timeout_before_it_refuses() {
+        let (tx, mut s) = session([40, 10]);
+        let started = Instant::now();
+        let e = s.await_exit(Duration::from_millis(30)).unwrap_err();
+        assert!(started.elapsed() >= Duration::from_millis(30));
+        assert!(e.starts_with("Wait+Exit timed out after 0.0s;"), "{e}");
+        assert!(!s.ended);
+        drop(tx);
+    }
+
+    #[test]
     fn a_wait_exit_waits_for_the_reader_to_close_and_keeps_all_it_sent() {
         let (tx, mut s) = session([40, 10]);
         let reader = std::thread::spawn(move || {
