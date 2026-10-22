@@ -235,4 +235,87 @@ mod tests {
         assert_eq!(Fps::new(48000, 1001).gop(), 96);
         assert_eq!(Fps::new(120, 1).label(), "120");
     }
+
+    #[test]
+    fn a_decimal_near_each_ntsc_rate_is_refused_naming_the_exact_rate() {
+        for (s, near) in [
+            ("23.9", "24000/1001"),
+            ("29.9", "30000/1001"),
+            ("29.96", "30000/1001"),
+            ("47.9", "48000/1001"),
+            ("59.9", "60000/1001"),
+            ("59.95", "60000/1001"),
+            ("119.95", "120"),
+            ("24.05", "24"),
+        ] {
+            assert_eq!(
+                Fps::parse(s).unwrap_err(),
+                format!("not an exact rate; use {near}"),
+                "{s}"
+            );
+        }
+        for s in ["25.0", "100.5", "1.5", "-29.97", "29.97.1", ".", "23.976x"] {
+            assert_eq!(Fps::parse(s).unwrap_err(), ALL, "{s}");
+        }
+    }
+
+    #[test]
+    fn a_ratio_is_reduced_before_it_is_matched_and_spaces_are_trimmed() {
+        assert_eq!(Fps::parse("48/2"), Ok(Fps::new(24, 1)));
+        assert_eq!(Fps::parse("48000/2002"), Ok(FILM));
+        assert_eq!(Fps::parse(" 30 "), Ok(Fps::new(30, 1)));
+        assert_eq!(Fps::parse("24000 / 1001"), Ok(FILM));
+        for s in [
+            "0/1",
+            "30/",
+            "/1001",
+            "a/b",
+            "-24",
+            "",
+            "30/1/1",
+            "4294967296",
+        ] {
+            assert_eq!(Fps::parse(s).unwrap_err(), ALL, "{s:?}");
+        }
+        assert_eq!(Fps::reduced(0, 1), None);
+        assert_eq!(Fps::reduced(1, 0), None);
+        assert_eq!(Fps::reduced(120, 4), Some(Fps::new(30, 1)));
+    }
+
+    #[test]
+    fn every_known_rate_prints_parses_back_and_keeps_two_second_keyframes() {
+        for f in RATES {
+            assert_eq!(Fps::parse(&f.to_string()), Ok(f), "{f}");
+            assert_eq!(Fps::parse(&f.label()), Ok(f), "{}", f.label());
+            let two = (2.0 * f.rate()).round() as u32;
+            assert_eq!(f.gop(), two, "{f}");
+            assert_eq!(f.frames(f.seconds(1234)).round() as usize, 1234, "{f}");
+            let json = serde_json::to_value(f).unwrap();
+            assert_eq!(serde_json::from_value::<Fps>(json).unwrap(), f, "{f}");
+        }
+        assert_eq!(Fps::new(60000, 1001).label(), "59.94");
+        assert_eq!(Fps::new(30000, 1001).label(), "29.97");
+        assert_eq!(Fps::new(60000, 1001).gop(), 120);
+        assert_eq!(Fps::new(120, 1).gop(), 240);
+        assert_eq!(Fps::new(30, 1).seconds(45), 1.5);
+        assert_eq!(Fps::new(60, 1).frames(0.5), 30.0);
+    }
+
+    #[test]
+    fn a_rate_from_json_names_the_bad_value() {
+        let e = serde_json::from_value::<Fps>(serde_json::json!(25))
+            .unwrap_err()
+            .to_string();
+        assert!(e.starts_with("fps 25: "), "{e}");
+        let e = serde_json::from_value::<Fps>(serde_json::json!(29.9))
+            .unwrap_err()
+            .to_string();
+        assert_eq!(e, "fps 29.9: not an exact rate; use 30000/1001");
+        assert_eq!(
+            serde_json::from_value::<Fps>(serde_json::json!(29.97)).unwrap(),
+            Fps::new(30000, 1001)
+        );
+        assert!(serde_json::from_value::<Fps>(serde_json::json!(true)).is_err());
+        assert!(serde_json::from_value::<Fps>(serde_json::json!(null)).is_err());
+    }
 }
