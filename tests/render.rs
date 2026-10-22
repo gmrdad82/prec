@@ -376,6 +376,69 @@ fn a_bad_size_is_refused_before_the_app_records() {
 }
 
 #[test]
+fn a_wrong_kind_a_still_with_a_rate_a_bad_frame_or_grid_and_an_unset_pass_env_are_refused() {
+    let w = work("prepare");
+    let app = demo_with(&w, "covprep", "still", "fps = 30\n");
+    common::add_shot(
+        &app,
+        "covplain",
+        "Type \"demo show\"\nEnter\nSleep 300ms\n",
+        "",
+    );
+    let out = w.join("out");
+    let shoot = |app: &Path, args: &[&str]| {
+        let mut all = args.to_vec();
+        all.extend([
+            "--app-dir",
+            app.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ]);
+        command(&all, &w)
+            .env_remove("ALPHA_UNSET")
+            .output()
+            .unwrap()
+    };
+    for (args, line) in [
+        (
+            &["clip", "demo", "covprep"][..],
+            "covprep is a still shot; run `prec still …`",
+        ),
+        (
+            &["still", "demo", "covplain"][..],
+            "covplain is a clip shot; run `prec clip …`",
+        ),
+        (
+            &["still", "demo", "covprep"][..],
+            "shot covprep: fps is for clips",
+        ),
+        (
+            &["clip", "demo", "covplain", "--frame", "round"][..],
+            "--frame window or bare",
+        ),
+        (
+            &["clip", "demo", "covplain", "--set", "grid=8"][..],
+            "--set grid=<cols>x<rows>",
+        ),
+        (
+            &["clip", "demo", "covplain", "--set", "grid=8xq"][..],
+            "--set grid=<cols>x<rows>",
+        ),
+    ] {
+        refused(&shoot(&app, args), line);
+    }
+    let needy = demo_with(&w.join("env"), "covenv", "clip", "");
+    let toml = needy.join("render/terminal.toml");
+    let text = std::fs::read_to_string(&toml).unwrap();
+    std::fs::write(&toml, format!("pass_env = [\"ALPHA_UNSET\"]\n{text}")).unwrap();
+    refused(
+        &shoot(&needy, &["clip", "demo", "covenv"]),
+        "pass_env ALPHA_UNSET is not set",
+    );
+    assert!(!out.exists());
+}
+
+#[test]
 fn a_bad_size_in_the_shot_itself_is_refused_before_the_app_records() {
     let w = work("bad-shot-size");
     let out = w.join("out");
