@@ -125,18 +125,26 @@ fn a_clip_resizes_its_pty_step_by_step_and_the_window_follows_on_one_canvas() {
         .filter(|e| e[1] == "r")
         .map(|e| (e[0].as_f64().unwrap(), e[2].as_str().unwrap().to_string()))
         .collect();
-    let mut want: Vec<String> = (1..=20)
-        .map(|i| {
-            let f = i as f64 / 20.0;
-            format!("{}x{}", 40 - i, 10 + (-4.0 * f).round() as i32)
-        })
-        .collect();
-    want.push("40x10".into());
+    let want = [
+        "39x10", "38x10", "37x9", "36x9", "35x9", "34x9", "33x9", "32x8", "31x8", "30x8", "29x8",
+        "28x8", "27x7", "26x7", "25x7", "24x7", "23x7", "22x6", "21x6", "20x6", "40x10",
+    ];
     assert_eq!(
-        resizes.iter().map(|(_, s)| s.clone()).collect::<Vec<_>>(),
+        resizes.iter().map(|(_, s)| s.as_str()).collect::<Vec<_>>(),
         want
     );
     assert!(resizes.windows(2).all(|w| w[0].0 <= w[1].0), "{resizes:?}");
+    let gaps: Vec<f64> = resizes[..20].windows(2).map(|w| w[1].0 - w[0].0).collect();
+    let median = |mut v: Vec<f64>| {
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        v[v.len() / 2]
+    };
+    let ends = median([&gaps[..2], &gaps[gaps.len() - 2..]].concat());
+    let middle = median(gaps[gaps.len() / 2 - 1..gaps.len() / 2 + 2].to_vec());
+    assert!(
+        ends >= 1.5 * middle,
+        "not eased: ends {ends}, middle {middle}, {gaps:?}"
+    );
     let printed: String = evs
         .iter()
         .filter(|e| e[1] == "o")

@@ -54,9 +54,19 @@ pub fn grid_of(data: &str) -> Option<[u32; 2]> {
             .all(|b| b.is_ascii_digit())
             .then(|| s.parse::<u32>().ok())
             .flatten()
-            .filter(|n| (1..=u16::MAX as u32).contains(n))
+            .filter(|n| tape::SIDES.contains(n))
     };
     Some([side(c)?, side(r)?])
+}
+
+pub fn set_grid(parser: &mut vt100::Parser, grid: [u32; 2]) {
+    let rows = grid[1] as u16;
+    let (row, _) = parser.screen().cursor_position();
+    if row >= rows {
+        let n = row + 1 - rows;
+        parser.process(format!("\x1b[{n}S\x1b[{n}A").as_bytes());
+    }
+    parser.screen_mut().set_size(rows, grid[0] as u16);
 }
 
 fn grid_text(grid: [u32; 2]) -> String {
@@ -127,9 +137,7 @@ impl Screen {
     }
 
     fn resize(&mut self, grid: [u32; 2]) {
-        self.parser
-            .screen_mut()
-            .set_size(grid[1] as u16, grid[0] as u16);
+        set_grid(&mut self.parser, grid);
     }
 
     fn app_cursor(&self) -> bool {
@@ -614,7 +622,7 @@ fn squeeze(events: &mut Vec<Event>, grid: [u32; 2], end: f64) {
             Kind::Input => mark(e.t, gap, hold, &mut since),
             Kind::Resize => {
                 if let Some(g) = grid_of(&e.data) {
-                    parser.screen_mut().set_size(g[1] as u16, g[0] as u16);
+                    set_grid(&mut parser, g);
                     key = idle_key(parser.screen(), ignore.as_ref());
                 }
                 mark(e.t, gap, hold, &mut since);
@@ -759,9 +767,10 @@ pub fn read(path: &Path) -> Result<Cast, String> {
         let data = v[2].as_str().unwrap_or_default().to_string();
         if kind == Kind::Resize && grid_of(&data).is_none() {
             return Err(at(&format!(
-                "a resize to {} is not COLSxROWS, each from 1 to {}",
+                "a resize to {} is not COLSxROWS, each from {} to {}",
                 v[2],
-                u16::MAX
+                tape::SIDES.start(),
+                tape::SIDES.end()
             )));
         }
         events.push(Event { t, kind, data });
@@ -1466,7 +1475,9 @@ mod tests {
             ("noside", "\"80\"", "\"80\""),
             ("zero", "\"0x24\"", "\"0x24\""),
             ("zerorows", "\"80x0\"", "\"80x0\""),
-            ("wide", "\"65536x24\"", "\"65536x24\""),
+            ("wide", "\"1001x24\"", "\"1001x24\""),
+            ("tall", "\"80x65535\"", "\"80x65535\""),
+            ("one", "\"1x24\"", "\"1x24\""),
             ("sign", "\"+80x24\"", "\"+80x24\""),
             ("upper", "\"80X24\"", "\"80X24\""),
             ("spaced", "\"80 x 24\"", "\"80 x 24\""),
@@ -1481,7 +1492,7 @@ mod tests {
             assert_eq!(
                 got.unwrap_err(),
                 format!(
-                    "{}: line 3: a resize to {shown} is not COLSxROWS, each from 1 to 65535",
+                    "{}: line 3: a resize to {shown} is not COLSxROWS, each from 2 to 1000",
                     p.display()
                 ),
                 "{name}"
@@ -1489,9 +1500,9 @@ mod tests {
         }
         let (_, got) = read_text(
             "edges",
-            &format!("{head}[0.5, \"r\", \"65535x1\"]\n[0.6, \"r\", \"1x65535\"]\n"),
+            &format!("{head}[0.5, \"r\", \"1000x2\"]\n[0.6, \"r\", \"2x1000\"]\n"),
         );
-        assert_eq!(got.unwrap().max_grid(), [65535, 65535]);
+        assert_eq!(got.unwrap().max_grid(), [1000, 1000]);
         assert_eq!(grid_of("96x16"), Some([96, 16]));
         assert_eq!(grid_of("x16"), None);
         assert_eq!(grid_text([38, 16]), "38x16");
@@ -1518,10 +1529,10 @@ mod tests {
         let (tx, mut s) = session([40, 10]);
         tx.send((Duration::ZERO, b"before".to_vec())).unwrap();
         s.travel([40, 10], None).unwrap();
-        s.travel([40, 10], Some(Duration::from_millis(50))).unwrap();
+        s.travel([40, 10], Some(Duration::from_millis(2))).unwrap();
         assert_eq!(s.events.len(), 1);
         assert_eq!(s.events[0].data, "before");
-        s.travel([36, 8], Some(Duration::from_millis(8))).unwrap();
+        s.travel([36, 8], Some(Duration::from_millis(2))).unwrap();
         let sizes: Vec<&str> = s
             .events
             .iter()
@@ -1575,5 +1586,50 @@ mod tests {
                 ("resume".to_string(), 5500)
             ]
         );
+    }
+
+    fn rows(p: &vt100::Parser) -> Vec<String> {
+        p.screen().rows(0, p.screen().size().1).collect()
+    }
+
+    #[test]
+    fn shrinking_rows_scrolls_the_top_off_like_xterm_js_when_the_cursor_is_low() {
+        let mut p = vt100::Parser::new(10, 12, 0);
+        p.process(b"r0\r\nr1\r\nr2\r\nr3\r\nr4\r\nr5\r\nr6\r\nr7\r\n$ prompt");
+        assert_eq!(p.screen().cursor_position(), (8, 8));
+        set_grid(&mut p, [12, 6]);
+        assert_eq!(p.screen().size(), (6, 12));
+        assert_eq!(rows(&p), ["r3", "r4", "r5", "r6", "r7", "$ prompt"]);
+        assert_eq!(p.screen().cursor_position(), (5, 8));
+        p.process(b"!");
+        assert_eq!(rows(&p)[5], "$ prompt!");
+    }
+
+    #[test]
+    fn shrinking_rows_drops_the_lines_below_the_cursor_first() {
+        let mut p = vt100::Parser::new(6, 8, 0);
+        p.process(b"a\r\nb\r\nc\x1b[6;1Hz\x1b[3;2H");
+        set_grid(&mut p, [8, 3]);
+        assert_eq!(rows(&p), ["a", "b", "c"]);
+        assert_eq!(p.screen().cursor_position(), (2, 1));
+        let mut q = vt100::Parser::new(6, 8, 0);
+        q.process(b"a\r\nb\r\nc\r\nd\x1b[6;1Hz\x1b[4;2H");
+        set_grid(&mut q, [8, 3]);
+        assert_eq!(rows(&q), ["b", "c", "d"]);
+        assert_eq!(q.screen().cursor_position(), (2, 1));
+        set_grid(&mut q, [5, 5]);
+        assert_eq!(q.screen().size(), (5, 5));
+        assert_eq!(rows(&q), ["b", "c", "d", "", ""]);
+    }
+
+    #[test]
+    fn a_wait_after_a_row_shrink_reads_the_screen_the_clip_shows() {
+        let (_tx, mut s) = session([20, 10]);
+        s.screen
+            .feed("top\r\n\r\n\r\n\r\n\r\n\r\n\r\nlow line\r\n$ ");
+        s.travel([20, 4], None).unwrap();
+        let re = |p: &str| regex::Regex::new(p).unwrap();
+        assert!(s.screen.matches(&re("(?m)^low line$"), true));
+        assert!(!s.screen.matches(&re("top"), true));
     }
 }

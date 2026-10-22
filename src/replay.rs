@@ -112,20 +112,21 @@ const cover = (rects) => {
     box.appendChild(d);
   }
 };
-window.resize = async (cols, rows, rects) => {
-  term.resize(cols, rows);
+window.play = async (items, rects) => {
+  let grid = false;
+  for (const it of items) {
+    if (Array.isArray(it)) { term.resize(it[0], it[1]); grid = true; continue; }
+    const bin = atob(it);
+    const a = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
+    await new Promise(res => term.write(a, res));
+  }
   if (rects) cover(rects);
-  term.refresh(0, term.rows - 1);
+  if (grid) term.refresh(0, term.rows - 1);
   await frame2();
   const r = term.element.querySelector('.xterm-screen').getBoundingClientRect();
   return { w: r.width, h: r.height, cols: term.cols, rows: term.rows };
 };
-window.feed = (b64, rects) => new Promise(res => {
-  const bin = atob(b64);
-  const a = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
-  term.write(a, () => { if (rects) cover(rects); frame2().then(res); });
-});
 </script></body></html>
 "#;
 
@@ -264,7 +265,7 @@ impl<'a> Feeder<'a> {
                 Piece::Grid(g) => {
                     self.grid = *g;
                     if !self.masks.is_empty() {
-                        self.screen.screen_mut().set_size(g[1] as u16, g[0] as u16);
+                        record::set_grid(&mut self.screen, *g);
                     }
                 }
                 Piece::Bytes(b) if !self.masks.is_empty() => self.screen.process(b),
@@ -286,30 +287,38 @@ impl<'a> Feeder<'a> {
         let Some((found, rects)) = self.due(t)? else {
             return Ok(false);
         };
-        let last = found.len() - 1;
-        for (i, p) in found.iter().enumerate() {
-            let r = if i == last { rects.as_str() } else { "null" };
-            match p {
-                Piece::Bytes(bytes) => {
-                    b.eval(&format!("window.feed({:?}, {r})", b64(bytes)))?;
-                }
-                Piece::Grid(g) => self.resize(b, *g, r)?,
-            }
-        }
+        self.play(b, &found, &rects)?;
         Ok(true)
     }
 
-    fn resize(&mut self, b: &mut Browser, g: [u32; 2], rects: &str) -> Result<(), String> {
-        let m = b.eval(&format!("window.resize({}, {}, {rects})", g[0], g[1]))?;
-        if m["cols"].as_u64() != Some(g[0] as u64) || m["rows"].as_u64() != Some(g[1] as u64) {
-            return Err(format!("xterm.js would not resize to {}x{}", g[0], g[1]));
+    fn play(&mut self, b: &mut Browser, found: &[Piece], rects: &str) -> Result<(), String> {
+        let m = b.eval(&format!("window.play({}, {rects})", batch(found)))?;
+        let want = found.iter().rev().find_map(|p| match p {
+            Piece::Grid(g) => Some(*g),
+            Piece::Bytes(_) => None,
+        });
+        if let Some(g) = want {
+            if m["cols"].as_u64() != Some(g[0] as u64) || m["rows"].as_u64() != Some(g[1] as u64) {
+                return Err(format!("xterm.js would not resize to {}x{}", g[0], g[1]));
+            }
+            self.canvas = [
+                m["w"].as_f64().unwrap_or(0.0).round() as u32,
+                m["h"].as_f64().unwrap_or(0.0).round() as u32,
+            ];
         }
-        self.canvas = [
-            m["w"].as_f64().unwrap_or(0.0).round() as u32,
-            m["h"].as_f64().unwrap_or(0.0).round() as u32,
-        ];
         Ok(())
     }
+}
+
+fn batch(found: &[Piece]) -> String {
+    let items: Vec<Value> = found
+        .iter()
+        .map(|p| match p {
+            Piece::Bytes(bytes) => json!(b64(bytes)),
+            Piece::Grid(g) => json!([g[0], g[1]]),
+        })
+        .collect();
+    Value::Array(items).to_string()
 }
 
 struct Backdrop {
@@ -323,27 +332,36 @@ struct Backdrop {
 }
 
 impl Backdrop {
+    fn key(&self, grid: [u32; 2]) -> [u32; 2] {
+        if self.dev.window { grid } else { [0, 0] }
+    }
+
     fn file(&mut self, grid: [u32; 2], canvas: [u32; 2]) -> Result<String, String> {
-        if let Some(name) = self.drawn.get(&grid) {
+        let key = self.key(grid);
+        if let Some(name) = self.drawn.get(&key) {
             return Ok(name.clone());
         }
         let (win, _) = self.dev.anchored(self.largest, canvas);
         let pm = compose::background(&self.dev, win, self.bg, self.ground)?;
-        let name = format!("background-{}x{}.png", grid[0], grid[1]);
+        let name = if self.dev.window {
+            format!("background-{}x{}.png", grid[0], grid[1])
+        } else {
+            "background.png".to_string()
+        };
         pm.save_png(self.dir.join(&name))
             .map_err(|e| e.to_string())?;
-        self.drawn.insert(grid, name.clone());
+        self.drawn.insert(key, name.clone());
         Ok(name)
     }
 
     fn show(&mut self, b: &mut Browser, grid: [u32; 2], canvas: [u32; 2]) -> Result<bool, String> {
-        if self.shown == Some(grid) {
+        if self.shown == Some(self.key(grid)) {
             return Ok(false);
         }
         let name = self.file(grid, canvas)?;
         let (_, at) = self.dev.anchored(self.largest, canvas);
         b.eval(&format!("window.place({}, {}, {name:?})", at[0], at[1]))?;
-        self.shown = Some(grid);
+        self.shown = Some(self.key(grid));
         Ok(true)
     }
 }
@@ -487,7 +505,7 @@ pub fn render(
     let mut feeder = Feeder::new(&cast.events, &look.masks, start);
     feeder.canvas = largest;
     if start != grid {
-        feeder.resize(&mut b, start, "null")?;
+        feeder.play(&mut b, &[Piece::Grid(start)], "null")?;
     }
     let canvas = feeder.canvas;
     let first = match take {
@@ -595,7 +613,7 @@ mod tests {
         for p in found {
             match p {
                 Piece::Bytes(b) => screen.process(b),
-                Piece::Grid(g) => screen.screen_mut().set_size(g[1] as u16, g[0] as u16),
+                Piece::Grid(g) => record::set_grid(screen, *g),
             }
         }
     }
@@ -827,5 +845,90 @@ mod tests {
         assert_eq!(rects(&mut f, 0.3), Vec::<[u32; 4]>::new());
         assert_eq!(rects(&mut f, 0.4), vec![[4, 0, 4, 2]]);
         assert_eq!(f.screen.screen().size(), (2, 8));
+    }
+
+    #[test]
+    fn a_batch_is_one_page_call_with_its_pieces_in_order() {
+        let found = vec![
+            Piece::Bytes(b"ab".to_vec()),
+            Piece::Grid([6, 2]),
+            Piece::Bytes(b"c".to_vec()),
+        ];
+        assert_eq!(
+            batch(&found),
+            format!("[\"{}\",[6,2],\"{}\"]", b64(b"ab"), b64(b"c"))
+        );
+        assert_eq!(batch(&[]), "[]");
+    }
+
+    #[test]
+    fn a_match_mask_follows_the_line_a_row_shrink_keeps_in_view() {
+        let masks = crate::mask::Masks::new(
+            &[crate::mask::Mask {
+                pattern: Some("secret".into()),
+                rect: None,
+            }],
+            [12, 10],
+        )
+        .unwrap();
+        let events = vec![
+            ev(
+                0.1,
+                Kind::Output,
+                "a\r\nb\r\nc\r\nd\r\ne\r\nf\r\ng\r\nsecret\r\n$ ",
+            ),
+            ev(0.2, Kind::Resize, "12x4"),
+        ];
+        let mut f = feeder(&events, &masks, [12, 10]);
+        let rects = |f: &mut Feeder, t: f64| -> Vec<[u32; 4]> {
+            serde_json::from_str(&f.due(t).unwrap().unwrap().1).unwrap()
+        };
+        assert_eq!(rects(&mut f, 0.1), vec![[0, 7, 6, 1]]);
+        assert_eq!(rects(&mut f, 0.2), vec![[0, 2, 6, 1]]);
+    }
+
+    fn backdrop(window: bool, name: &str) -> Backdrop {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tmp/unit-replay/{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        Backdrop {
+            dev: Layout::new(64, 36, window),
+            largest: [40, 20],
+            bg: [10, 20, 30],
+            ground: [200, 200, 200],
+            dir,
+            drawn: HashMap::new(),
+            shown: None,
+        }
+    }
+
+    #[test]
+    fn a_window_background_is_drawn_once_per_grid_and_reused_on_a_revisit() {
+        let mut d = backdrop(true, "window");
+        let a = d.file([8, 2], [40, 20]).unwrap();
+        assert_eq!(a, "background-8x2.png");
+        assert!(d.dir.join(&a).is_file());
+        std::fs::remove_file(d.dir.join(&a)).unwrap();
+        let b = d.file([4, 2], [20, 20]).unwrap();
+        assert_eq!(b, "background-4x2.png");
+        assert!(d.dir.join(&b).is_file());
+        assert_eq!(d.file([8, 2], [40, 20]).unwrap(), a);
+        assert!(!d.dir.join(&a).exists());
+        assert_eq!(d.drawn.len(), 2);
+        let _ = std::fs::remove_dir_all(&d.dir);
+    }
+
+    #[test]
+    fn a_bare_background_is_drawn_once_for_every_grid() {
+        let mut d = backdrop(false, "bare");
+        let a = d.file([8, 2], [40, 20]).unwrap();
+        assert_eq!(a, "background.png");
+        std::fs::remove_file(d.dir.join(&a)).unwrap();
+        assert_eq!(d.file([4, 2], [20, 20]).unwrap(), a);
+        assert_eq!(d.file([3, 5], [15, 50]).unwrap(), a);
+        assert!(!d.dir.join(&a).exists());
+        assert_eq!(d.drawn.len(), 1);
+        assert_eq!(d.key([4, 2]), d.key([8, 2]));
+        let _ = std::fs::remove_dir_all(&d.dir);
     }
 }
