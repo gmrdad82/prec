@@ -350,6 +350,29 @@ fn a_bad_size_is_refused_before_the_app_records() {
     );
     refused(&o, "size 0x90: a width and height above 0");
     assert!(!out.exists());
+    let jobs = w.join("jobs");
+    for (kind, shot, app) in [("still", "covbad", &app), ("clip", "covbadclip", &clip_app)] {
+        let o = command(
+            &[
+                kind,
+                "demo",
+                shot,
+                "--app-dir",
+                app.to_str().unwrap(),
+                "--size",
+                "16386x180",
+                "--out",
+                out.to_str().unwrap(),
+            ],
+            &w,
+        )
+        .env_remove("PITO_JOBS")
+        .env("PITO_JOBS_DIR", &jobs)
+        .output()
+        .unwrap();
+        refused(&o, "size 16386x180: at most 16384 on a side");
+        assert!(!jobs.exists(), "a refused {kind} size opened a job record");
+    }
 }
 
 #[test]
