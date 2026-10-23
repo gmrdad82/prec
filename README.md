@@ -97,6 +97,8 @@ VHS finishes sooner, because it keeps what it can capture in real time; prec rec
 
 Re-rendering the 30 fps recording's cast, with no app run: 720p 30 fps in 9.2 s (299 frames; the same render again took 9.8 s and wrote the same bytes), 1080p 60 fps in 16.9 s (598 frames), 2160p 30 fps in 27.8 s (299 frames) and 2160p 120 fps in 48.6 s (1,196 frames).
 
+A window that resizes gets a new backdrop for every grid it passes through, and prec writes each one as a fast-compressed 8-bit RGB PNG. Measured on 2026-10-23 at 1280x720 and 30 fps, against prec 1.5.2's default-compressed RGBA PNGs, over a cast that resizes 40x10 → 38x16 → 40x10 → 60x20 → 40x10 (37 backdrops; medians of 10 interleaved runs): each write takes 788 µs instead of 1,608 µs, and the files are 2.2 times smaller (613,266 bytes instead of 1,375,323). The masters are byte-identical, and the whole render stays within run-to-run noise (8.80 s against 8.63 s).
+
 Size and build: the Linux x86_64 binary is 5,935,688 bytes (5.7 MB; 2,508,494 bytes packed as the release's `.tar.gz`), built with fat LTO, one codegen unit and stripped; a cold `cargo build --release --locked` took 70.4 s with 4 build jobs. `src/` is 10,912 lines of Rust with its unit tests. prec has 18 direct dependencies and 95 crates in its Linux build; the xterm.js files, the VHS themes and pito-codecs' H.264 encoder are compiled in, so it runs no encoder of yours and reads nothing from the network. Renders on a Mac are untested.
 
 ## Install
