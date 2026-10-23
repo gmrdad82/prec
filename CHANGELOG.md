@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.5.4 — 2026-10-23
+
+### Changed
+
+- Clips encode with pito-codecs 2.1.0; masters keep their BT.709 limited-range tags.
+
 ## v1.5.3 — 2026-10-23
 
 ### Changed
