@@ -381,11 +381,10 @@ impl Backdrop {
 
 fn save_fast(pm: &tiny_skia::Pixmap, path: &Path) -> Result<(), String> {
     let at = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
-    let rgb: Vec<u8> = pm
-        .data()
-        .chunks_exact(4)
-        .flat_map(|p| [p[0], p[1], p[2]])
-        .collect();
+    let mut rgb = Vec::with_capacity(pm.width() as usize * pm.height() as usize * 3);
+    for p in pm.data().chunks_exact(4) {
+        rgb.extend_from_slice(&p[..3]);
+    }
     let file = std::fs::File::create(path).map_err(|e| at(&e))?;
     let mut enc = png::Encoder::new(std::io::BufWriter::new(file), pm.width(), pm.height());
     enc.set_color(png::ColorType::Rgb);
@@ -955,9 +954,7 @@ mod tests {
     }
 
     fn backdrop(window: bool, name: &str) -> Backdrop {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tmp/unit-replay/{name}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = scratch(name);
         Backdrop {
             dev: Layout::new(64, 36, window),
             largest: [40, 20],
@@ -1013,10 +1010,9 @@ mod tests {
         )
     }
 
-    fn rgb_of(pm: &tiny_skia::Pixmap) -> Vec<u8> {
-        pm.data()
-            .chunks_exact(4)
-            .flat_map(|p| [p[0], p[1], p[2]])
+    fn opaque(rgb: &[u8]) -> Vec<u8> {
+        rgb.chunks_exact(3)
+            .flat_map(|p| [p[0], p[1], p[2], 255])
             .collect()
     }
 
@@ -1033,14 +1029,23 @@ mod tests {
         for window in [true, false] {
             for size in [[64, 36], [321, 180], [1280, 720], [7, 5]] {
                 for ground in grounds {
-                    let dev = Layout::new(size[0], size[1], window);
-                    for largest in [[40, 20], [1, 1], [400, 400]] {
-                        let (win, _) = dev.anchored(largest, size);
-                        let pm = compose::background(&dev, win, [10, 20, 30], ground).unwrap();
-                        assert!(
-                            pm.data().chunks_exact(4).all(|p| p[3] == 255),
-                            "window {window} size {size:?} ground {ground:?} largest {largest:?}"
-                        );
+                    let plain = Layout::new(size[0], size[1], window);
+                    let boxed = Layout::new(size[0], size[1], window).boxed([2, 2, 2, 2]);
+                    for dev in [Some(plain), boxed.ok()].into_iter().flatten() {
+                        for (largest, canvas) in [
+                            ([40, 20], size),
+                            ([1, 1], size),
+                            ([400, 400], size),
+                            ([40, 20], [20, 10]),
+                            ([size[0], size[1]], [size[0] / 2 + 1, size[1] / 3 + 1]),
+                        ] {
+                            let (win, _) = dev.anchored(largest, canvas);
+                            let pm = compose::background(&dev, win, [10, 20, 30], ground).unwrap();
+                            assert!(
+                                pm.data().chunks_exact(4).all(|p| p[3] == 255),
+                                "window {window} size {size:?} ground {ground:?} largest {largest:?} canvas {canvas:?}"
+                            );
+                        }
                     }
                 }
             }
@@ -1060,12 +1065,7 @@ mod tests {
             assert_eq!(color, png::ColorType::Rgb);
             assert_eq!(depth, png::BitDepth::Eight);
             assert_eq!(size, [pm.width(), pm.height()]);
-            assert_eq!(bytes, rgb_of(&pm), "window {window}");
-            let mut back = Vec::with_capacity(bytes.len() / 3 * 4);
-            for p in bytes.chunks_exact(3) {
-                back.extend_from_slice(&[p[0], p[1], p[2], 255]);
-            }
-            assert_eq!(back, pm.data(), "window {window}");
+            assert_eq!(opaque(&bytes), pm.data(), "window {window}");
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1086,11 +1086,7 @@ mod tests {
         save_fast(&pm, &path).unwrap();
         let (_, _, size, bytes) = decoded(&path);
         assert_eq!(size, [5, 3]);
-        let back: Vec<u8> = bytes
-            .chunks_exact(3)
-            .flat_map(|p| [p[0], p[1], p[2], 255])
-            .collect();
-        assert_eq!(back, pm.data());
+        assert_eq!(opaque(&bytes), pm.data());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1116,7 +1112,7 @@ mod tests {
             assert_eq!(size, [64, 36]);
             let (win, _) = d.dev.anchored(d.largest, [40, 20]);
             let pm = compose::background(&d.dev, win, d.bg, d.ground).unwrap();
-            assert_eq!(bytes, rgb_of(&pm), "window {window}");
+            assert_eq!(opaque(&bytes), pm.data(), "window {window}");
             let _ = std::fs::remove_dir_all(&d.dir);
         }
     }
