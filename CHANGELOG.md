@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.5.3 — 2026-10-23
+
+### Changed
+
+- A window that resizes during a replay writes each new backdrop twice as fast (788 µs instead of 1,608 µs at 720p), as an 8-bit RGB PNG 2.2 times smaller; the masters are byte-identical.
+- The README's Speed section gives those numbers.
+
 ## v1.5.2 — 2026-10-23
 
 ### Changed
