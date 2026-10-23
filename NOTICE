@@ -9,8 +9,8 @@ these third-party files, compiled in, each under its own MIT licence below:
   vendored as published; assets/xterm/VERSIONS lists their sha256.
 - assets/vhs-themes.json: the built-in theme set of VHS v0.11.0
   (https://github.com/charmbracelet/vhs), extracted verbatim.
-- pito-codecs 2.0.0 (https://github.com/gmrdad82/pito-codecs, tag v2.0.0,
-  commit 95b733a11e8be66866a4539984ea8cf1baeafc8a), compiled in with its
+- pito-codecs 2.1.0 (https://github.com/gmrdad82/pito-codecs, tag v2.1.0,
+  commit 10ac87cb1edb247422c0a0e5da53d3f70514a3a0), compiled in with its
   h264, mp4, filter and png parts to encode clip masters; its MIT licence and
   the notices of the work it adapts are copied verbatim at the end of this file.
 
@@ -124,7 +124,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
------ pito-codecs 2.0.0 LICENSE
+----- pito-codecs 2.1.0 LICENSE
 
 MIT License
 
@@ -148,7 +148,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
------ pito-codecs 2.0.0 NOTICE
+----- pito-codecs 2.1.0 NOTICE
 
 Parts of this package are adapted from FilmCraft
 (https://github.com/storytold/filmcraft, tag v0.6.0, commit 2ff3f5e266838700c292a35aaf762e3d4dcef980),
@@ -487,13 +487,15 @@ For more information, please see
 
 Images in this repository that are not code, where each comes from, and what
 covers it, all under the MIT licence like the code:
-- docs/images/decode.gif: a terminal clip recorded by prec from this
-  repository's own shot (render/terminal.toml and render/terminal/), running
-  src/bin/pcod.rs over a clip render/terminal/clip.sh makes
+- docs/images/decode.gif and strip.gif: terminal clips recorded by prec from
+  this repository's own shots (render/terminal.toml and render/terminal/),
+  running src/bin/pcod.rs over a clip render/terminal/clip.sh makes from the
+  public-domain NASA solstice interview
 - docs/images/chart-*.png: charts drawn by pito-compare (MIT) from the data
   files in docs/charts/, which hold this repository's own measurements on
   public-domain NASA footage ("A Message of Resilience from the International
-  Space Station" and the NASA solstice interview)
+  Space Station" and the NASA solstice interview) and on synthetic test
+  patterns (ffmpeg's testsrc2)
 - docs/images/filmstrip.gif, overlay.gif, animated.gif and animated.webp:
   pictures examples/readme_shots.rs makes with this repository's own decoders,
   overlay blend and GIF and WebP encoders from public-domain NASA footage ("A
@@ -623,6 +625,154 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+The JPEG encoder in src/jpeg/ is adapted from jpeg-encoder 0.7.1
+(https://github.com/vstroebel/jpeg-encoder, commit
+baf40191ae25a32e56a884fa6e001c4fe938d451), licensed (MIT OR Apache-2.0) AND
+IJG; the MIT terms are taken for its own code. From it: the baseline
+interleaved scan, the quality-scaled Annex K quantisation tables and their
+reciprocal quantiser, the Annex K Huffman tables and code construction, the
+64-bit bit writer with byte stuffing, the marker writers, the integer RGB to
+YCbCr conversion and its AVX2 form, the 2x2 box downsampling with libjpeg's
+alternating bias and the edge replication. Changed here: one fixed 4:2:0
+RGBA path written into a Vec, component ids 1 to 3, an RGBA load in the AVX2
+colour conversion, and the 16-bit pass-2 rounding constant of the AVX2 forward
+DCT (the original adds a 32-bit constant, which rounds only half the lanes).
+Its MIT notice:
+
+Copyright (c) 2021 Volker Ströbel
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+The JPEG decoder in src/jpeg/decode.rs and src/jpeg/decode/ is adapted from
+zune-jpeg 0.5.15 (https://github.com/etemesi254/zune-image, crates/zune-jpeg,
+commit 31d81fed7551c8ccea456d9d8e2b1fd8bebb6995), licensed MIT OR Apache-2.0
+OR Zlib; the MIT terms are taken. From it: the Huffman table derivation with
+its 9-bit lookahead and fast AC table, the bit reader's marker and stuffing
+handling, the baseline block decode, the progressive DC and AC first and
+refinement passes, the scalar integer IDCT (its port of stb_image's), the
+fancy horizontal, vertical and 2x2 upsampling and the 14-bit YCbCr to RGB
+conversion. Changed here: the reader works on a byte slice and refuses data
+consumed past the end of the file or a marker, frames decode into whole
+planes that upsample row by row, the IDCT writes bytes, the refinement pass follows libjpeg's
+loop, and EXIF orientation, Adobe RGB and the CMYK and YCCK refusals are new.
+Its MIT notice:
+
+MIT License
+
+Copyright (c) zune-image developers
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+The forward DCT in src/jpeg/dct.rs (jpeg-encoder's port of jfdctint.c, the
+slow-but-accurate integer DCT, through mozjpeg and libjpeg-turbo) and the
+progressive AC refinement loop in src/jpeg/decode/bits.rs (after jdphuff.c)
+are based in part on the work of the Independent JPEG Group. They carry this
+notice:
+
+This software is copyright (C) 1991-2020, Thomas G. Lane, Guido Vollbeding.
+All Rights Reserved except as specified below. libjpeg-turbo Modifications:
+Copyright (C) 2015, 2020, D. R. Commander.
+
+The authors make NO WARRANTY or representation, either express or implied,
+with respect to this software, its quality, accuracy, merchantability, or
+fitness for a particular purpose.  This software is provided "AS IS", and you,
+its user, assume the entire risk as to its quality and accuracy.
+
+Permission is hereby granted to use, copy, modify, and distribute this
+software (or portions thereof) for any purpose, without fee, subject to these
+conditions:
+(1) If any part of the source code for this software is distributed, then this
+README file must be included, with this copyright and no-warranty notice
+unaltered; and any additions, deletions, or changes to the original files
+must be clearly indicated in accompanying documentation.
+(2) If only executable code is distributed, then the accompanying
+documentation must state that "this software is based in part on the work of
+the Independent JPEG Group".
+(3) Permission for use of this software is granted only if the user accepts
+full responsibility for any undesirable consequences; the authors accept
+NO LIABILITY for damages of any kind.
+
+These conditions apply to any software derived from or based on the IJG code,
+not just to the unmodified library.  If you use our work, you ought to
+acknowledge us.
+
+Permission is NOT granted for the use of any IJG author's name or company name
+in advertising or publicity relating to this software or products derived from
+it.  This software may be referred to only as "the Independent JPEG Group's
+software".
+
+We specifically permit and encourage the use of this software as the basis of
+commercial products, provided that all warranty or liability claims are
+assumed by the product vendor.
+
+The changes to the IJG code here: translated to Rust, comments removed, the
+block held in a 32-byte aligned array of 16-bit samples.
+
+The AVX2 forward DCT in src/jpeg/avx2.rs is jpeg-encoder's port of
+libjpeg-turbo's jfdctint-avx2.asm, under libjpeg-turbo's SIMD licence (zlib):
+
+Copyright 2009 Pierre Ossman for Cendio AB
+Copyright (C) 2009, 2016, 2018, 2020, D. R. Commander.
+Based on the x86 SIMD extension for IJG JPEG library
+Copyright (C) 1999-2006, MIYASAKA Masaru.
+
+This software is provided 'as-is', without any express or implied
+warranty.  In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+   claim that you wrote the original software. If you use this software
+   in a product, an acknowledgment in the product documentation would be
+   appreciated but is not required.
+2. Altered source versions must be plainly marked as such, and must not be
+   misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.
+
+The alterations: translated to Rust intrinsics, comments removed, the pass-2
+rounding constant held in 16-bit lanes as the assembly has it.
 
 The AV1 decode structures in src/gpu/vaapi/av1.rs are transcribed from libva's
 va_dec_av1.h (libva 2.23, https://github.com/intel/libva), Copyright (c) 2019
@@ -821,6 +971,121 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
 ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+The Vorbis bit reader, Huffman codebook decode and header parsing in
+src/vorbis/ are adapted from lewton (https://github.com/RustAudio/lewton,
+commit bb2955b717094b40260902cf2f8dd9c5ea62a84a, 29 commits after 0.10.2),
+dual-licensed MIT OR Apache-2.0; the MIT terms are taken here. From lewton:
+the module layout (bitpacking, huffman_tree, header, header_cached), the
+codebook tree with its 8-bit lookup table, the identification, comment and
+setup header readers with their types and checks, the VQ lookup tables, the
+float32 unpacking, and the window, twiddle, bit-reverse and bark-map tables
+derived from the headers, with their unit test vectors; and the audio packet
+decode (floor 0 and floor 1 curves, residues 0, 1 and 2, inverse coupling, the
+fast inverse MDCT translated from stb_vorbis, windowing and overlap-add) with
+its neighbour and render-point test values. Changed in this package: the bit
+reader reads through a 128-bit window instead of per-width
+macros, residue books read all eight cascade stages (lewton reads seven), the
+floor 0 book list refuses an index equal to the codebook count, the lookup
+table fills every slot of a short code, empty codebooks and out-of-range
+indices return errors instead of panicking, the comment header checks lengths
+before allocating, a setup header may ask for at most 2^20 codebook entries
+and 2^22 VQ lookup values in all (more is refused before allocating), the
+header types drop the floor 0 rate and bark map size and the mapping submap
+count once checked (the decode never reads them), errors are the package's
+own, the identification header reads one framing bit as libvorbis does, the
+first audio packet returns the part of its block past the centre that no
+overlap needs (lewton drops it), the audio decode returns errors where lewton
+panics (missing neighbours, mismatched windows, codebooks
+without a value mapping), floor 1 values are clamped to their range as they
+are predicted, floor 0 curves always advance, and the output is interleaved
+in the channel order WAV uses. lewton carries this notice:
+
+MIT License
+
+Copyright (c) 2016 est31 and contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+lewton's inverse MDCT, ported in src/vorbis/imdct.rs, is a close translation
+of stb_vorbis (https://github.com/nothings/stb, stb_vorbis.c), dual-licensed
+public domain or MIT; the MIT terms are taken here:
+
+Copyright (c) 2017 Sean Barrett
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+The Ogg Vorbis granule rules in src/vorbis/ogg.rs (the first granule page
+sets how many leading samples are dropped, the last one where the stream ends)
+follow libvorbis's vorbisfile.c (same tag and commit as below).
+
+The codebook size checks in src/vorbis/header.rs (dimensions and entries
+together within 24 bits, and codeword lengths and lookup values that must fit
+in what is left of the packet, checked before allocating), the floor 0 checks
+(order, rate and bark map size of at least 1, books with a VQ lookup) and the
+residue classbook checks (at least one dimension, classifications to the power
+of its dimension within its entries) follow libvorbis's
+vorbis_staticbook_unpack, floor0_unpack and res0_unpack
+(https://github.com/xiph/vorbis, tag v1.3.7, commit 0657aee69dec8508a0011f47f3b69d7538e9d262), which carries this notice:
+
+Copyright (c) 2002-2020 Xiph.org Foundation
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+- Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+- Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+- Neither the name of the Xiph.org Foundation nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION
+OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 The FLAC decoder in src/flac/ is adapted from two sources.
 
@@ -1257,3 +1522,31 @@ responsibility, not on behalf of any other Contributor, and only if You agree
 to indemnify, defend, and hold each Contributor harmless for any liability
 incurred by, or claims asserted against, such Contributor by reason of your
 accepting any such warranty or additional liability.
+
+The A-law and mu-law expansion in src/media/front/sound.rs is ported from
+Sun Microsystems' g711.c (the CCITT G.711 reference used by many audio tools),
+which carries this notice:
+
+    This source code is a product of Sun Microsystems, Inc. and is provided
+    for unrestricted use. Users may copy or modify this source code without
+    charge.
+
+    SUN SOURCE CODE IS PROVIDED AS IS WITH NO WARRANTIES OF ANY KIND INCLUDING
+    THE WARRANTIES OF DESIGN, MERCHANTIBILITY AND FITNESS FOR A PARTICULAR
+    PURPOSE, OR ARISING FROM A COURSE OF DEALING, USAGE OR TRADE PRACTICE.
+
+    Sun source code is provided with no support and without any obligation on
+    the part of Sun Microsystems, Inc. to assist in its use, correction,
+    modification or enhancement.
+
+    SUN MICROSYSTEMS, INC. SHALL HAVE NO LIABILITY WITH RESPECT TO THE
+    INFRINGEMENT OF COPYRIGHTS, TRADE SECRETS OR ANY PATENTS BY THIS SOFTWARE
+    OR ANY PART THEREOF.
+
+    In no event will Sun Microsystems, Inc. be liable for any lost revenue or
+    profits or other special, indirect and consequential damages, even if Sun
+    has been advised of the possibility of such damages.
+
+    Sun Microsystems, Inc.
+    2550 Garcia Avenue
+    Mountain View, California 94043

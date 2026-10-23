@@ -1,7 +1,7 @@
 mod common;
 
 use common::{paint, tree, video};
-use pito_codecs::h264::{Encoder, EncoderConfig, Preset, Profile};
+use pito_codecs::h264::{Color, Encoder, EncoderConfig, Preset, Profile};
 use pito_codecs::media::{Bitstream, Frame, PixelFormat, Rate, TimeBase};
 use pito_codecs::mp4::{AvcConfig, SampleEntry, TrackConfig, VpcConfig, Writer};
 use serde_json::Value;
@@ -736,6 +736,7 @@ fn encoded(path: &Path, frames: &[Frame], size: [u32; 2]) {
         b_frames: 0,
         threads: 1,
         bitstream: Bitstream::LengthPrefixed,
+        color: Color::BT709,
     })
     .unwrap();
     let avc = AvcConfig::parse(&enc.avcc()).unwrap();

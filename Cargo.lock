@@ -569,8 +569,8 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pito-codecs"
-version = "2.0.0"
-source = "git+https://github.com/gmrdad82/pito-codecs?tag=v2.0.0#95b733a11e8be66866a4539984ea8cf1baeafc8a"
+version = "2.1.0"
+source = "git+https://github.com/gmrdad82/pito-codecs?tag=v2.1.0#10ac87cb1edb247422c0a0e5da53d3f70514a3a0"
 dependencies = [
  "rayon",
 ]

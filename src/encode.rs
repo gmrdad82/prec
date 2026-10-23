@@ -1,6 +1,6 @@
 use crate::fps::Fps;
 use pito_codecs::filter::{ColorSpec, Order, Packed, packed_to_yuv};
-use pito_codecs::h264::{Encoder, EncoderConfig, Preset, Profile};
+use pito_codecs::h264::{Color, Encoder, EncoderConfig, Preset, Profile};
 use pito_codecs::media::{Bitstream, Frame, Packet, PixelFormat, Rate, Rgba, TimeBase};
 use pito_codecs::mp4::{AvcConfig, Reader, SampleEntry, TrackConfig, TrackKind, Writer};
 use serde_json::{Value, json};
@@ -11,7 +11,7 @@ use std::sync::{Condvar, Mutex};
 
 pub const COLOR_709: &str = "BT.709 primaries, transfer and matrix, limited range (SDR)";
 pub const LANCZOS: &str = "Lanczos3 in linear light";
-pub const CODECS: &str = "2.0.0";
+pub const CODECS: &str = "2.1.0";
 const THREADS: usize = 16;
 const CRF: u8 = 14;
 const B_FRAMES: u8 = 0;
@@ -176,6 +176,7 @@ pub fn master(
             b_frames: B_FRAMES,
             threads: THREADS,
             bitstream: Bitstream::LengthPrefixed,
+            color: Color::BT709,
         })
         .map_err(|e| named(&e))?;
         let avc = AvcConfig::parse(&enc.avcc()).map_err(|e| named(&e))?;
