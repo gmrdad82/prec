@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.5.2 — 2026-10-23
+
+### Changed
+
+- Clips encode with pito-codecs 2.0.0 (was 1.16.3), in the same format as before: H.264 High, CRF 14, BT.709.
+
 ## v1.5.1 — 2026-10-23
 
 ### Added
