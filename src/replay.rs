@@ -362,8 +362,7 @@ impl Backdrop {
         } else {
             "background.png".to_string()
         };
-        pm.save_png(self.dir.join(&name))
-            .map_err(|e| e.to_string())?;
+        save_fast(&pm, &self.dir.join(&name))?;
         self.drawn.insert(key, name.clone());
         Ok(name)
     }
@@ -378,6 +377,22 @@ impl Backdrop {
         self.shown = Some(self.key(grid));
         Ok(true)
     }
+}
+
+fn save_fast(pm: &tiny_skia::Pixmap, path: &Path) -> Result<(), String> {
+    let at = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
+    let mut rgb = Vec::with_capacity(pm.width() as usize * pm.height() as usize * 3);
+    for p in pm.data().chunks_exact(4) {
+        rgb.extend_from_slice(&p[..3]);
+    }
+    let file = std::fs::File::create(path).map_err(|e| at(&e))?;
+    let mut enc = png::Encoder::new(std::io::BufWriter::new(file), pm.width(), pm.height());
+    enc.set_color(png::ColorType::Rgb);
+    enc.set_depth(png::BitDepth::Eight);
+    enc.set_compression(png::Compression::Fast);
+    let mut w = enc.write_header().map_err(|e| at(&e))?;
+    w.write_image_data(&rgb).map_err(|e| at(&e))?;
+    w.finish().map_err(|e| at(&e))
 }
 
 fn corners(png: &[u8], rect: [u32; 4]) -> Result<[u8; 3], String> {
@@ -939,9 +954,7 @@ mod tests {
     }
 
     fn backdrop(window: bool, name: &str) -> Backdrop {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tmp/unit-replay/{name}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = scratch(name);
         Backdrop {
             dev: Layout::new(64, 36, window),
             largest: [40, 20],
@@ -981,6 +994,137 @@ mod tests {
         assert_eq!(d.drawn.len(), 1);
         assert_eq!(d.key([4, 2]), d.key([8, 2]));
         let _ = std::fs::remove_dir_all(&d.dir);
+    }
+
+    fn decoded(path: &Path) -> (png::ColorType, png::BitDepth, [u32; 2], Vec<u8>) {
+        let file = std::io::BufReader::new(std::fs::File::open(path).unwrap());
+        let mut r = png::Decoder::new(file).read_info().unwrap();
+        let mut buf = vec![0; r.output_buffer_size().unwrap()];
+        let info = r.next_frame(&mut buf).unwrap();
+        buf.truncate(info.buffer_size());
+        (
+            info.color_type,
+            info.bit_depth,
+            [info.width, info.height],
+            buf,
+        )
+    }
+
+    fn opaque(rgb: &[u8]) -> Vec<u8> {
+        rgb.chunks_exact(3)
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect()
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tmp/unit-replay/{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn every_backdrop_is_opaque_so_dropping_alpha_loses_nothing() {
+        let grounds = [[0, 0, 0], [200, 200, 200], [255, 255, 255], [12, 200, 90]];
+        for window in [true, false] {
+            for size in [[64, 36], [321, 180], [1280, 720], [7, 5]] {
+                for ground in grounds {
+                    let plain = Layout::new(size[0], size[1], window);
+                    let boxed = Layout::new(size[0], size[1], window).boxed([2, 2, 2, 2]);
+                    for dev in [Some(plain), boxed.ok()].into_iter().flatten() {
+                        for (largest, canvas) in [
+                            ([40, 20], size),
+                            ([1, 1], size),
+                            ([400, 400], size),
+                            ([40, 20], [20, 10]),
+                            ([size[0], size[1]], [size[0] / 2 + 1, size[1] / 3 + 1]),
+                        ] {
+                            let (win, _) = dev.anchored(largest, canvas);
+                            let pm = compose::background(&dev, win, [10, 20, 30], ground).unwrap();
+                            assert!(
+                                pm.data().chunks_exact(4).all(|p| p[3] == 255),
+                                "window {window} size {size:?} ground {ground:?} largest {largest:?} canvas {canvas:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_fast_backdrop_decodes_as_the_pixmaps_own_rgb() {
+        let dir = scratch("fast-rgb");
+        for window in [true, false] {
+            let dev = Layout::new(96, 54, window);
+            let (win, _) = dev.anchored([40, 20], [96, 54]);
+            let pm = compose::background(&dev, win, [10, 20, 30], [200, 180, 160]).unwrap();
+            let path = dir.join(format!("bg-{window}.png"));
+            save_fast(&pm, &path).unwrap();
+            let (color, depth, size, bytes) = decoded(&path);
+            assert_eq!(color, png::ColorType::Rgb);
+            assert_eq!(depth, png::BitDepth::Eight);
+            assert_eq!(size, [pm.width(), pm.height()]);
+            assert_eq!(opaque(&bytes), pm.data(), "window {window}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_opaque_pixmap_round_trips_through_a_fast_png() {
+        let dir = scratch("fast-round");
+        let mut pm = tiny_skia::Pixmap::new(5, 3).unwrap();
+        for (i, p) in pm.data_mut().chunks_exact_mut(4).enumerate() {
+            p.copy_from_slice(&[
+                (i * 17) as u8,
+                (i * 31 + 7) as u8,
+                (255 - i * 13) as u8,
+                255,
+            ]);
+        }
+        let path = dir.join("round.png");
+        save_fast(&pm, &path).unwrap();
+        let (_, _, size, bytes) = decoded(&path);
+        assert_eq!(size, [5, 3]);
+        assert_eq!(opaque(&bytes), pm.data());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_fast_png_into_a_missing_folder_fails_and_names_its_path() {
+        let dir = scratch("fast-missing");
+        let path = dir.join("gone").join("bg.png");
+        let pm = tiny_skia::Pixmap::new(4, 4).unwrap();
+        let err = save_fast(&pm, &path).unwrap_err();
+        assert!(err.contains(&path.display().to_string()), "{err}");
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_backdrop_file_is_an_rgb_png_of_the_whole_frame() {
+        for window in [true, false] {
+            let mut d = backdrop(window, &format!("rgb-file-{window}"));
+            let name = d.file([8, 2], [40, 20]).unwrap();
+            let (color, depth, size, bytes) = decoded(&d.dir.join(&name));
+            assert_eq!(color, png::ColorType::Rgb);
+            assert_eq!(depth, png::BitDepth::Eight);
+            assert_eq!(size, [64, 36]);
+            let (win, _) = d.dev.anchored(d.largest, [40, 20]);
+            let pm = compose::background(&d.dev, win, d.bg, d.ground).unwrap();
+            assert_eq!(opaque(&bytes), pm.data(), "window {window}");
+            let _ = std::fs::remove_dir_all(&d.dir);
+        }
+    }
+
+    #[test]
+    fn a_backdrop_into_a_missing_folder_fails_and_remembers_nothing() {
+        let mut d = backdrop(true, "file-missing");
+        d.dir = d.dir.join("gone");
+        let err = d.file([8, 2], [40, 20]).unwrap_err();
+        assert!(err.contains(&d.dir.display().to_string()), "{err}");
+        assert!(d.drawn.is_empty());
+        let _ = std::fs::remove_dir_all(d.dir.parent().unwrap());
     }
 
     #[test]
