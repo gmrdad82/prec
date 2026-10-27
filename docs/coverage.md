@@ -97,7 +97,7 @@ Whole suite (457 tests, unit and integration): **96.3% of lines** (16,283 of 16,
 
 ## Critical paths covered
 
-- `src/jobs/fit.rs` (100% of code lines after wave 15, 86% after wave 12): it fits each job record into the 4,096 bytes pci reads, dropping the stage list and then cutting the longest text fields; a wrong cut gives pci an oversized or unreadable record, or loses the fields it shows. The few regions the report still marks are unreachable: serializing a record can't fail (the `unwrap_or_default` and `map_or(0, …)` fallbacks), and every record fits well inside the 24 rounds the cut allows.
+- `src/jobs/fit.rs` (100% of code lines after wave 15, 86% after wave 12): it fits each job record into the 4,096 bytes dispatch reads, dropping the stage list and then cutting the longest text fields; a wrong cut gives dispatch an oversized or unreadable record, or loses the fields it shows. The few regions the report still marks are unreachable: serializing a record can't fail (the `unwrap_or_default` and `map_or(0, …)` fallbacks), and every record fits well inside the 24 rounds the cut allows.
 
 ## Critical paths not yet covered
 
