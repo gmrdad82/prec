@@ -1,0 +1,20 @@
+name = "prec"
+
+[gate]
+fast = "export CARGO_NET_GIT_FETCH_WITH_CLI=true; shellcheck bin/gate bin/docs-bundle bin/marks && cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings"
+full = "dispatch test-track ."
+
+[commands]
+release = ""
+deploy = ""
+
+[[test_track.jobs]]
+name = "unit"
+command = "export CARGO_NET_GIT_FETCH_WITH_CLI=true; bin/gate --fast"
+host = "os:linux"
+
+[[test_track.jobs]]
+name = "render"
+command = "export CARGO_NET_GIT_FETCH_WITH_CLI=true; cargo nextest run --workspace --test '*' --no-tests=pass"
+host = "os:linux"
+alone = true
