@@ -10,11 +10,10 @@ deploy = ""
 
 [[test_track.jobs]]
 name = "unit"
-command = "export CARGO_NET_GIT_FETCH_WITH_CLI=true; bin/gate --fast"
-host = "os:linux"
+command = "export CARGO_NET_GIT_FETCH_WITH_CLI=true; cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings && cargo nextest run --locked --workspace --bins --no-tests=pass --partition count:${DISPATCH_SHARD:-1}/${DISPATCH_SHARDS:-1}"
 
 [[test_track.jobs]]
 name = "render"
-command = "export CARGO_NET_GIT_FETCH_WITH_CLI=true; cargo nextest run --workspace --test '*' --no-tests=pass"
-host = "os:linux"
+command = "export CARGO_NET_GIT_FETCH_WITH_CLI=true; cargo nextest run --workspace --test '*' --no-tests=pass --partition count:${DISPATCH_SHARD:-1}/${DISPATCH_SHARDS:-1}"
+needs = ["os:linux"]
 alone = true
