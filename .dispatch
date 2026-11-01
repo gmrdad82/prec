@@ -11,10 +11,8 @@ deploy = ""
 [[test_track.jobs]]
 name = "unit"
 command = "export CARGO_NET_GIT_FETCH_WITH_CLI=true; bin/gate --fast"
-needs = ["os:linux"]
 
 [[test_track.jobs]]
 name = "render"
 command = "export CARGO_NET_GIT_FETCH_WITH_CLI=true; cargo nextest run --workspace --test '*' --no-tests=pass"
-needs = ["os:linux"]
 alone = true
