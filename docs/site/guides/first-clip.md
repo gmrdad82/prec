@@ -31,7 +31,6 @@ prec clip demo typing --app-dir examples/demo --size 720p --fps 30
 recording demo typing in a 60x16 pty…
 recorded 3.80s shown, 284 events → tmp/prec/run/demo-clip-typing-cast-338683/demo-clip-typing.cast
 replaying demo typing: 114 frames at 1280x720@30…
-archive: skipped (unconfigured)
 tmp/renders/demo/clip/demo-clip-typing-1280x720-30fps.json
 ```
 
@@ -59,7 +58,7 @@ The stem is `<product>-<kind>-<shot>-<W>x<H>-<fps>fps`, with `23.976`, `29.97`, 
 ## Read the manifest
 
 ```sh
-jq '{version, seconds, frames, archive}' tmp/renders/demo/clip/demo-clip-typing-1280x720-30fps.json
+jq '{version, seconds, frames}' tmp/renders/demo/clip/demo-clip-typing-1280x720-30fps.json
 ```
 
 ```json
@@ -80,11 +79,6 @@ jq '{version, seconds, frames, archive}' tmp/renders/demo/clip/demo-clip-typing-
     "reused": 68,
     "seconds": 3.4,
     "shown_seconds": 3.801346
-  },
-  "archive": {
-    "leaf": "prec/demo/typing/2026-10-14_210431_752c79cb16ab-dirty_manual",
-    "reason": "unconfigured",
-    "state": "skipped"
   }
 }
 ```
@@ -92,7 +86,7 @@ jq '{version, seconds, frames, archive}' tmp/renders/demo/clip/demo-clip-typing-
 - `version` names the app's revision: its tag, else the first 12 hex digits of its commit, with `-dirty` when the working tree has changes.
 - `frames.rendered` is every frame of the shown time; `captured` were screenshots and `reused` repeated the previous frame because their moment brought no new bytes. `dropped` and `late` are always 0.
 - The typing shot ends with a 0.4 s crossfade into its first frame, so the master holds 102 frames, 3.4 s.
-- `archive` says why this render wasn't archived: no archive root is configured ([Archive renders](archive.md)).
+- Everything the render wrote stays under `--out` (default `tmp/renders/`); prec copies it nowhere else.
 
 [Formats](../reference/formats.md) specifies every key.
 

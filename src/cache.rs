@@ -1,4 +1,3 @@
-use crate::archive;
 use crate::paths::{self, Lock};
 use serde_json::{Value, json};
 use std::fs::{self, File, OpenOptions};
@@ -589,7 +588,6 @@ pub fn report_in(root: &Path, set_by: Option<&str>, tool_version: &str, now: u64
         now / 1000,
         true,
     );
-    let (queue_entries, queue_bytes) = archive::queue_stats(root);
     let listed: Vec<Value> = entries
         .iter()
         .map(|e| {
@@ -613,7 +611,6 @@ pub fn report_in(root: &Path, set_by: Option<&str>, tool_version: &str, now: u64
         "bytes": size(root),
         "at": now,
         "entries": listed,
-        "archive_queue": {"entries": queue_entries, "bytes": queue_bytes},
         "prune": {
             "after_days": PRUNE_DAYS,
             "stale_bytes": stale.removed.iter().map(|g| g.size).sum::<u64>(),
@@ -837,14 +834,25 @@ mod tests {
         let r = scratch_root("report");
         let now = 10_000_000;
         let held = populate(&r, now);
-        let q = r.join("archive-queue");
-        fs::create_dir_all(q.join("one")).unwrap();
-        fs::create_dir_all(q.join("two")).unwrap();
-        fs::write(q.join("one/file"), vec![0u8; 300]).unwrap();
-        fs::write(q.join("two/file"), vec![0u8; 200]).unwrap();
         assert!(held.exists());
         let lock = shared(&r, "bin", "app-aaaaaaaaaaaa@old-held");
         let v = report_in(&r, Some(ENV), "9.9.9", now * 1000);
+        let mut top: Vec<_> = v.as_object().unwrap().keys().cloned().collect();
+        top.sort();
+        assert_eq!(
+            top,
+            [
+                "at",
+                "bytes",
+                "entries",
+                "prune",
+                "root",
+                "root_set_by",
+                "tool",
+                "tool_version",
+                "v"
+            ]
+        );
         assert_eq!(v["v"], 1);
         assert_eq!(v["tool"], "prec");
         assert_eq!(v["tool_version"], "9.9.9");
@@ -852,8 +860,6 @@ mod tests {
         assert_eq!(v["root_set_by"], ENV);
         assert_eq!(v["at"], now * 1000);
         assert_eq!(v["bytes"], size(&r));
-        assert_eq!(v["archive_queue"]["entries"], 2);
-        assert_eq!(v["archive_queue"]["bytes"], 500);
         assert_eq!(v["prune"]["after_days"], 30);
         assert_eq!(v["prune"]["stale_bytes"].as_u64().unwrap(), stale_size(&r));
         let entries = v["entries"].as_array().unwrap();
@@ -905,8 +911,6 @@ mod tests {
         let v = report_in(&r, None, "0.0.0", 1);
         assert!(v["root_set_by"].is_null());
         assert_eq!(v["entries"].as_array().unwrap().len(), 0);
-        assert_eq!(v["archive_queue"]["entries"], 0);
-        assert_eq!(v["archive_queue"]["bytes"], 0);
         assert_eq!(v["prune"]["stale_bytes"], 0);
         let _ = fs::remove_dir_all(&r);
     }

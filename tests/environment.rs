@@ -166,7 +166,6 @@ fn chromium_gets_only_the_built_environment() {
         let _ = std::fs::remove_dir_all(dir.join("tmp"));
         let mut cmd = common::prec(
             &dir,
-            &dir.join("archive"),
             &[
                 "render",
                 cast.to_str().unwrap(),
@@ -288,11 +287,10 @@ fn a_neutral_home_hides_the_callers_paths_and_a_passed_value_is_never_written() 
         "Type@5ms \"pwd; echo $HOME; hostname; id -un\"\nEnter\nWait+Screen /(?m)^prec-neutral-host\\n.+\\n\\$/\nType@5ms 'test -n \"$PREC_TEST_SECRET\" && echo passed'\nEnter\nWait+Screen /(?m)^passed$/\n",
         "",
     );
-    let archive = dir.join("archive");
     let shot = |verb: &str, extra: &[&str]| {
         let mut args = vec![verb, "demo", "neutral", "--app-dir", app.to_str().unwrap()];
         args.extend_from_slice(extra);
-        let mut c = common::prec(&dir, &archive, &args);
+        let mut c = common::prec(&dir, &args);
         c.env("PREC_TEST_SECRET", &secret);
         c.output().unwrap()
     };

@@ -3,7 +3,7 @@ mod common;
 use std::path::Path;
 
 fn refused(cwd: &Path, args: &[&str]) -> String {
-    let o = common::run(cwd, &cwd.join("archive"), args);
+    let o = common::run(cwd, args);
     assert!(!o.status.success(), "prec {} succeeded", args.join(" "));
     String::from_utf8_lossy(&o.stderr).to_string()
 }
@@ -13,7 +13,7 @@ fn an_app_renders_from_its_own_tree_and_nowhere_else() {
     let caller = common::caller("source", "own");
     common::demo_app(&caller, "");
     std::fs::rename(caller.join("app/render"), caller.join("render")).unwrap();
-    let o = common::run(&caller, &caller.join("archive"), &["shots", "demo"]);
+    let o = common::run(&caller, &["shots", "demo"]);
     common::expect_ok(&o, "prec shots demo from the app's own tree");
     let listed = String::from_utf8_lossy(&o.stdout);
     assert!(listed.contains("typing"), "{listed}");

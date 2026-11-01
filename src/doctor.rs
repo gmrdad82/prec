@@ -96,26 +96,6 @@ pub fn doctor() -> bool {
         "encoder",
         format!("pito-codecs {}, H.264 built in", crate::encode::CODECS),
     );
-    match crate::archive::root() {
-        Some(archive) => line(
-            archive.is_dir(),
-            false,
-            "archive root",
-            format!(
-                "{} ({})",
-                archive.display(),
-                if archive.is_dir() {
-                    "reachable"
-                } else {
-                    "unavailable; renders queue"
-                }
-            ),
-        ),
-        None => println!(
-            "ok   {:<28} none configured; renders are never archived",
-            "archive root"
-        ),
-    }
     match crate::font::metrics(DEFAULT_FONT) {
         Ok(m) => line(
             true,

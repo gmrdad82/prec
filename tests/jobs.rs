@@ -47,7 +47,6 @@ fn case(name: &str) -> (PathBuf, PathBuf) {
 fn record(dir: &Path, app: &Path) -> Command {
     let mut c = common::prec(
         dir,
-        &dir.join("archive"),
         &[
             "record",
             "demo",

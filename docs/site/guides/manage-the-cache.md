@@ -14,7 +14,6 @@ Everything reusable lives in one cache, shared by every repository: `${XDG_CACHE
 | `target/<repo>/` | the repo's shared cargo target dir, so a new commit rebuilds incrementally | repo |
 | `bin/<repo>/<commit>-<build>/` | the built binaries (`{bin}`) | repo, commit and the build command's hash |
 | `locks/` | one lock per entry, so a prune never removes an entry being built or used | |
-| `archive-queue/` | renders waiting for an archive that was offline | |
 
 A `<repo>` key is the repository's name and a hash of its origin URL, so every checkout and worktree of one repository shares entries.
 

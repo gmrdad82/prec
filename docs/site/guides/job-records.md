@@ -9,7 +9,7 @@ Every `clip`, `still`, `record` and `render` publishes a live job record, which 
 
 - The record lives in RAM only, in `$XDG_RUNTIME_DIR/pito-jobs/`, or `PITO_JOBS_DIR`; on macOS without `XDG_RUNTIME_DIR`, in `$TMPDIR/pito-jobs/`.
 - It is one JSON file per render, `<pid>-<started ms>.json`, rewritten atomically, at most once a second for progress, and at most 4 KiB.
-- Its stages are `build`, `record`, `replay`, `master` (a clip) or `derive` (a still), and `archive`, each with its progress.
+- Its stages are `build`, `record`, `replay`, and `master` (a clip) or `derive` (a still), each with its progress.
 - `PITO_JOB_ID` names its parent job, `PITO_INVOKER` its invoker and `GPU_QUEUE_PID` its GPU queue.
 - With neither `PITO_JOBS_DIR` nor `XDG_RUNTIME_DIR` (nor `TMPDIR` on macOS) there is no record, `PITO_JOBS=off` turns it off, and a record that can't be written never fails the render.
 
