@@ -10,7 +10,6 @@ prec works with no configuration. An optional `config.toml` lives at `${XDG_CONF
 ```toml
 theme = "TokyoNight"
 chromium = "/opt/chromium/chrome"
-archive = "~/Renders"
 
 [confine]
 slice = "build.slice"
@@ -21,7 +20,6 @@ cpus = "4-15"
 |---|---|---|
 | `theme` | `Catppuccin Mocha` | the theme for an app whose `terminal.toml` has no `[theme]` |
 | `chromium` | found on the `PATH` | the Chromium or Chrome binary (`PREC_CHROMIUM` overrides it) |
-| `archive` | none | an archive root; without one nothing is archived (`PITO_ARCHIVE` overrides it); see [Archive renders](archive.md) |
 | `[confine]` | absent | on Linux with systemd, run Chromium in a memory-capped `systemd-run --user` scope at nice 10, and prec's own encode at nice 10 |
 | `[confine] slice` | `build.slice` | the systemd slice for those scopes |
 | `[confine] cpus` | unpinned | pin Chromium (with `taskset -c`) and the encode to this CPU list |
@@ -45,8 +43,7 @@ cpus = "8-15"
 | `PREC_CONFIG` | the config file to read |
 | `PREC_CHROMIUM` | the Chromium or Chrome binary |
 | `PREC_CACHE` | moves the [machine cache](manage-the-cache.md) |
-| `PITO_ARCHIVE` | the archive root |
-| `PREC_DIRECT=1` | runs everything unconfined and never archives, for tests |
+| `PREC_DIRECT=1` | runs everything unconfined, for tests |
 | `PITO_JOBS=off` | turns off the live [job record](job-records.md) |
 | `PITO_INVOKER` | the `caller` a manifest records, cleaned to a slug; default `manual` |
 | `NO_COLOR` | plain error output from the command line |

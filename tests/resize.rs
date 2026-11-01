@@ -22,7 +22,7 @@ fn case(name: &str, shot: &str, kind: &str, tape: &str) -> (PathBuf, PathBuf) {
 }
 
 fn prec(dir: &Path, args: &[&str]) -> Output {
-    let mut c = common::prec(dir, &dir.join("archive"), args);
+    let mut c = common::prec(dir, args);
     c.env("XDG_CACHE_HOME", dir.join("cache"));
     c.output().unwrap()
 }
@@ -39,7 +39,6 @@ fn shoot(dir: &Path, app: &Path, kind: &str, shot: &str) -> Output {
         &size,
         "--set",
         "ground=#ffffff",
-        "--no-archive",
         "--out",
         "tmp/out",
     ];
@@ -355,7 +354,6 @@ fn a_column_shrink_never_wraps_a_masked_secret_into_view() {
         secret_cast(&cast, shot, mask);
         let mut c = common::prec(
             &dir,
-            &dir.join("archive"),
             &[
                 "render",
                 cast.to_str().unwrap(),
@@ -363,7 +361,6 @@ fn a_column_shrink_never_wraps_a_masked_secret_into_view() {
                 &size,
                 "--fps",
                 "30",
-                "--no-archive",
                 "--out",
                 "tmp/out",
             ],

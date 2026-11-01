@@ -106,7 +106,6 @@ Figures are each file's code lines covered by the whole suite.
 - `src/paths.rs` (95.4%): stopping a run's children when one ignores SIGTERM and has to be killed, and the CPU pinning and lowered priority a `[confine]` config applies in the child before it runs (that code runs after the fork, where no profile is written).
 - `src/cache.rs` (96.6% after wave 15): `prec cache prune` without `--json` (the kept-in-use line and the freed total), sizes shown in GB, the cache root from `HOME` when `XDG_CACHE_HOME` is unset, and entries skipped while moving the cache.
 - `src/render.rs` (94.7%): a still's `--web` copies, a master whose frames, size or rate don't match what prec encoded, finished files moved to an `--out` on another filesystem, and clearing an old run folder another live run still holds.
-- `src/archive.rs` (95.0%): judging whether a render with no `pinned` field is pinned (a tag, a rev that is the commit), a queued copy whose size doesn't match its manifest, and a catalog write that is short or interrupted.
 - `src/cdp.rs` (92.7% after wave 15): Chromium found without `XDG_DATA_HOME`, a Chromium that starts without a DevTools pipe, and a page that never finishes loading.
 - `src/config.rs` (91.9%) and `src/home.rs` (98.1%): doctor's line for a config with no HOME, and the neutral home's refusal on a machine without user namespaces or with an `unshare` error other than a refusal.
 - `src/main.rs` (97.1%): `prec clip` and `prec still` with `--themes` (the tests cover `prec render --themes`).

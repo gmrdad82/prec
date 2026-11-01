@@ -108,10 +108,9 @@ EOF
 } > "$docs/reference/cli.md"
 
 {
-  front "Formats" "The manifest, the cast, the archive catalog line and the cache reports prec writes for others to read." 2
+  front "Formats" "The manifest, the cast and the cache reports prec writes for others to read." 2
   tail -n +3 docs/formats.md |
     sed -e 's#^This file specifies#This page specifies#' \
-      -e's#README'"'"'s Archive section#[Archive renders](../guides/archive.md)#' \
       -e 's#README'"'"'s Job records section#[Job records](../guides/job-records.md)#' |
     estate_links
 } > "$docs/reference/formats.md"

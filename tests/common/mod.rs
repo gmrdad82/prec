@@ -64,9 +64,8 @@ pub fn no_chromium(tree: &Path, name: &str) -> bool {
         .all(|r| !r.join("chromium").exists())
 }
 
-pub fn confine(c: &mut Command, cwd: &Path, archive: &Path) {
+pub fn confine(c: &mut Command, cwd: &Path) {
     c.current_dir(cwd)
-        .env("PITO_ARCHIVE", archive)
         .env("PITO_JOBS", "off")
         .env("PREC_CONFIG", "/dev/null")
         .env("PREC_DIRECT", "1");
@@ -78,15 +77,15 @@ pub fn confined(c: &mut Command, dir: &Path) {
     c.env_remove("PREC_DIRECT").env("PREC_CONFIG", config);
 }
 
-pub fn prec(cwd: &Path, archive: &Path, args: &[&str]) -> Command {
+pub fn prec(cwd: &Path, args: &[&str]) -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_prec"));
     c.args(args);
-    confine(&mut c, cwd, archive);
+    confine(&mut c, cwd);
     c
 }
 
-pub fn run(cwd: &Path, archive: &Path, args: &[&str]) -> Output {
-    prec(cwd, archive, args).output().unwrap()
+pub fn run(cwd: &Path, args: &[&str]) -> Output {
+    prec(cwd, args).output().unwrap()
 }
 
 pub fn expect_ok(o: &Output, what: &str) {

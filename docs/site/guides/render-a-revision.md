@@ -5,7 +5,7 @@ sidebar:
   order: 8
 ---
 
-By default prec renders the working tree as it is. `--rev` renders any tag or commit of the repository instead, and that is the render to keep: its manifest names a pinned revision, and only such a render is [archived](archive.md).
+By default prec renders the working tree as it is. `--rev` renders any tag or commit of the repository instead, and that is the render to keep: its manifest names a pinned revision.
 
 ## A tag or commit
 
@@ -28,7 +28,7 @@ cargo build --release
 prec clip myapp tour --bin target/release
 ```
 
-A `--bin` render is never [archived](archive.md).
+A `--bin` render is never pinned: its manifest's `app.pinned` is `false`.
 
 ## Fixtures
 

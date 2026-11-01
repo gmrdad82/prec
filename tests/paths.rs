@@ -23,7 +23,7 @@ const OWN_ENV: [&str; 11] = [
 ];
 
 fn prec(dir: &Path, cwd: &Path, args: &[&str]) -> Command {
-    let mut c = common::prec(cwd, &dir.join("archive"), args);
+    let mut c = common::prec(cwd, args);
     c.env("XDG_CACHE_HOME", dir.join("cache"))
         .env("PREC_CHROMIUM", dir.join("no-chromium"))
         .env("PREC_PATHS_PASSED", PASSED)
@@ -552,7 +552,6 @@ fn a_record_writes_only_in_the_callers_tmp_and_the_cache_and_names_its_folders()
     }
     assert_eq!(files(&dir, &skip), before);
     assert_eq!(std::fs::read_dir(&home).unwrap().count(), 0);
-    assert!(!dir.join("archive").exists());
     let run = dir.join("tmp/prec/run");
     for (shot, kind, pid) in [("palette", "still", pids[0]), ("again", "clip", pids[1])] {
         let work = run.join(format!("demo-{kind}-{shot}-record"));
@@ -573,7 +572,6 @@ fn doctor(dir: &Path, env: &[(&str, &Path)]) -> Output {
     c.arg("doctor")
         .current_dir(dir)
         .env_remove("PREC_CONFIG")
-        .env_remove("PITO_ARCHIVE")
         .env("PITO_JOBS", "off")
         .env("PREC_DIRECT", "1")
         .env("XDG_CONFIG_HOME", dir.join("config"))
@@ -600,7 +598,7 @@ fn config(dir: &Path, text: &str) -> PathBuf {
 }
 
 #[test]
-fn without_a_config_file_the_defaults_apply_and_nothing_is_archived() {
+fn without_a_config_file_the_defaults_apply() {
     let dir = common::caller(GROUP, "config-absent");
     let o = doctor(&dir, &[]);
     assert_eq!(
@@ -615,10 +613,6 @@ fn without_a_config_file_the_defaults_apply_and_nothing_is_archived() {
         "{}",
         out(&o)
     );
-    assert_eq!(
-        detail(&o, "archive root").as_deref(),
-        Some("none configured; renders are never archived")
-    );
     for tool in ["systemd-run", "prlimit", "taskset"] {
         assert_eq!(detail(&o, tool), None, "{tool} is checked unconfined");
         assert!(!out(&o).contains(tool), "{tool}: {}", out(&o));
@@ -629,49 +623,31 @@ fn without_a_config_file_the_defaults_apply_and_nothing_is_archived() {
         detail(&o, "config").as_deref(),
         Some(path.display().to_string().as_str())
     );
-    assert_eq!(
-        detail(&o, "archive root").as_deref(),
-        Some("none configured; renders are never archived")
-    );
 }
 
 #[test]
-fn the_configs_archive_is_used_unless_pito_archive_names_another() {
-    let dir = common::caller(GROUP, "config-archive");
-    let from_config = dir.join("from-config");
-    config(&dir, &format!("archive = \"{}\"\n", from_config.display()));
+fn the_retired_archive_key_is_accepted_and_noted_once() {
+    let dir = common::caller(GROUP, "config-retired");
+    let named = dir.join("named");
+    let path = config(&dir, &format!("archive = \"{}\"\n", named.display()));
     let o = doctor(&dir, &[]);
+    assert_eq!(detail(&o, "config"), Some(path.display().to_string()));
+    let notice = "prec: config key archive is retired; renders stay in --out";
     assert_eq!(
-        detail(&o, "archive root"),
-        Some(format!(
-            "{} (unavailable; renders queue)",
-            from_config.display()
-        )),
+        err(&o).lines().filter(|l| *l == notice).count(),
+        1,
         "{}",
-        out(&o)
+        err(&o)
     );
-    std::fs::create_dir_all(&from_config).unwrap();
+    assert!(!out(&o).contains("archive"), "{}", out(&o));
+    assert!(!named.exists());
+    config(&dir, "");
     let o = doctor(&dir, &[]);
-    assert_eq!(
-        detail(&o, "archive root"),
-        Some(format!("{} (reachable)", from_config.display()))
-    );
-    let from_env = dir.join("from-env");
-    std::fs::create_dir_all(&from_env).unwrap();
-    let o = doctor(&dir, &[("PITO_ARCHIVE", &from_env)]);
-    assert_eq!(
-        detail(&o, "archive root"),
-        Some(format!("{} (reachable)", from_env.display()))
-    );
-    let o = doctor(&dir, &[("PITO_ARCHIVE", Path::new(""))]);
-    assert_eq!(
-        detail(&o, "archive root"),
-        Some(format!("{} (reachable)", from_config.display()))
-    );
+    assert!(!err(&o).contains("archive"), "{}", err(&o));
 }
 
 #[test]
-fn a_tilde_and_a_relative_xdg_config_home_resolve_from_home() {
+fn a_relative_xdg_config_home_resolves_from_home() {
     let dir = common::caller(GROUP, "config-home");
     let home = dir.join("home");
     let path = home.join(".config/prec/config.toml");
@@ -682,16 +658,9 @@ fn a_tilde_and_a_relative_xdg_config_home_resolve_from_home() {
         Some(format!("{} (absent; the defaults apply)", path.display()))
     );
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(&path, "archive = \"~/arch\"\n").unwrap();
+    std::fs::write(&path, "theme = \"nord\"\n").unwrap();
     let o = doctor(&dir, &[("HOME", &home), ("XDG_CONFIG_HOME", relative)]);
     assert_eq!(detail(&o, "config"), Some(path.display().to_string()));
-    assert_eq!(
-        detail(&o, "archive root"),
-        Some(format!(
-            "{} (unavailable; renders queue)",
-            home.join("arch").display()
-        ))
-    );
 }
 
 #[test]
@@ -1121,9 +1090,7 @@ fn this_machines_hostname_on_screen_is_named_in_a_warning() {
 #[test]
 fn an_empty_prec_config_means_the_default_file() {
     let dir = common::caller(GROUP, "config-empty-env");
-    let from_config = dir.join("from-config");
-    std::fs::create_dir_all(&from_config).unwrap();
-    let path = config(&dir, &format!("archive = \"{}\"\n", from_config.display()));
+    let path = config(&dir, "theme = \"nord\"\n");
     let o = doctor(&dir, &[("PREC_CONFIG", Path::new(""))]);
     assert_eq!(
         detail(&o, "config"),
@@ -1131,17 +1098,13 @@ fn an_empty_prec_config_means_the_default_file() {
         "{}",
         out(&o)
     );
-    assert_eq!(
-        detail(&o, "archive root"),
-        Some(format!("{} (reachable)", from_config.display()))
-    );
 }
 
 #[test]
 fn a_config_file_prec_cannot_read_is_refused_by_name() {
     use std::os::unix::fs::PermissionsExt;
     let dir = common::caller(GROUP, "config-unreadable");
-    let path = config(&dir, "archive = \"/srv\"\n");
+    let path = config(&dir, "theme = \"nord\"\n");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
     if std::fs::read(&path).is_ok() {
         eprintln!("skipped: a file with mode 000 is still readable here, as root");

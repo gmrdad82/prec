@@ -13,7 +13,7 @@ fn case(name: &str, hooks: &str) -> (PathBuf, PathBuf) {
 }
 
 fn prec(dir: &Path, args: &[&str]) -> Command {
-    let mut c = common::prec(dir, &dir.join("archive"), args);
+    let mut c = common::prec(dir, args);
     c.env("XDG_CACHE_HOME", dir.join("cache"));
     c
 }

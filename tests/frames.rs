@@ -16,12 +16,12 @@ fn work(name: &str) -> PathBuf {
     common::scratch("frames", name)
 }
 
-fn run(args: &[&str], work: &Path) -> Output {
-    common::run(&tree(), &work.join("archive"), args)
+fn run(args: &[&str]) -> Output {
+    common::run(&tree(), args)
 }
 
-fn start(args: &[&str], work: &Path) -> Child {
-    common::prec(&tree(), &work.join("archive"), args)
+fn start(args: &[&str]) -> Child {
+    common::prec(&tree(), args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -34,8 +34,8 @@ fn finish(child: Child) -> PathBuf {
     common::last_path(&o)
 }
 
-fn prec(args: &[&str], work: &Path) -> PathBuf {
-    finish(start(args, work))
+fn prec(args: &[&str]) -> PathBuf {
+    finish(start(args))
 }
 
 fn colour(k: usize) -> [u8; 3] {
@@ -143,7 +143,7 @@ type Job<'a> = (&'a Path, PathBuf, u32, &'a [&'a str]);
 
 type Rendered = (Value, PathBuf, Vec<[u8; 3]>);
 
-fn renders(jobs: &[Job], work: &Path) -> Vec<Rendered> {
+fn renders(jobs: &[Job]) -> Vec<Rendered> {
     let size = format!("{}x{}", SIZE[0], SIZE[1]);
     let children: Vec<Child> = jobs
         .iter()
@@ -160,14 +160,14 @@ fn renders(jobs: &[Job], work: &Path) -> Vec<Rendered> {
                 out.to_str().unwrap(),
             ];
             args.extend(*extra);
-            start(&args, work)
+            start(&args)
         })
         .collect();
     children.into_iter().map(|c| checked(&finish(c))).collect()
 }
 
-fn render(cast: &Path, out: &Path, fps: u32, extra: &[&str], work: &Path) -> Rendered {
-    renders(&[(cast, out.to_path_buf(), fps, extra)], work).remove(0)
+fn render(cast: &Path, out: &Path, fps: u32, extra: &[&str]) -> Rendered {
+    renders(&[(cast, out.to_path_buf(), fps, extra)]).remove(0)
 }
 
 fn checked(path: &Path) -> Rendered {
@@ -228,7 +228,7 @@ fn a_master_shows_frame_k_in_slot_k_at_every_rate() {
         .zip(&casts)
         .map(|(fps, cast)| (cast.as_path(), w.join(format!("out-{fps}")), *fps, &[][..]))
         .collect();
-    for ((_, _, codes), fps) in renders(&jobs, &w).iter().zip(rates) {
+    for ((_, _, codes), fps) in renders(&jobs).iter().zip(rates) {
         shows(codes, &(0..N).collect::<Vec<_>>(), &format!("{fps} fps"));
     }
 }
@@ -239,40 +239,37 @@ fn a_palindrome_and_a_crossfade_keep_their_order() {
     let fps = 60;
     let cast = w.join("cast/closures.cast");
     write_cast(&cast, "closures", "clip", fps);
-    let mut done = renders(
-        &[
-            (
-                &cast,
-                w.join("palindrome"),
-                fps,
-                &["--set", "closure=palindrome"],
-            ),
-            (
-                &cast,
-                w.join("crossfade"),
-                fps,
-                &["--set", "closure.crossfade=0.05"],
-            ),
-            (
-                &cast,
-                w.join("palindrome-poster"),
-                fps,
-                &["--set", "closure=palindrome", "--poster", "before-closure"],
-            ),
-            (
-                &cast,
-                w.join("crossfade-poster"),
-                fps,
-                &[
-                    "--set",
-                    "closure.crossfade=0.05",
-                    "--poster",
-                    "before-closure",
-                ],
-            ),
-        ],
-        &w,
-    )
+    let mut done = renders(&[
+        (
+            &cast,
+            w.join("palindrome"),
+            fps,
+            &["--set", "closure=palindrome"],
+        ),
+        (
+            &cast,
+            w.join("crossfade"),
+            fps,
+            &["--set", "closure.crossfade=0.05"],
+        ),
+        (
+            &cast,
+            w.join("palindrome-poster"),
+            fps,
+            &["--set", "closure=palindrome", "--poster", "before-closure"],
+        ),
+        (
+            &cast,
+            w.join("crossfade-poster"),
+            fps,
+            &[
+                "--set",
+                "closure.crossfade=0.05",
+                "--poster",
+                "before-closure",
+            ],
+        ),
+    ])
     .into_iter();
     let (_, _, codes) = done.next().unwrap();
     let want: Vec<usize> = (0..N).chain((1..N - 1).rev()).collect();
@@ -353,7 +350,7 @@ fn a_cast_rendered_through_a_link_to_its_own_folder_keeps_its_bytes() {
     let cast = w.join("cast/link.cast");
     write_cast(&cast, "link", "clip", 30);
     let out = w.join("out");
-    let (_, dir, _) = render(&cast, &out, 30, &[], &w);
+    let (_, dir, _) = render(&cast, &out, 30, &[]);
     let own = dir.join("frames-clip-link-320x180-30fps.cast");
     let before = std::fs::read(&own).unwrap();
     assert!(!before.is_empty());
@@ -364,7 +361,6 @@ fn a_cast_rendered_through_a_link_to_its_own_folder_keeps_its_bytes() {
         &out,
         30,
         &[],
-        &w,
     );
     assert_eq!(std::fs::read(&own).unwrap(), before);
     assert_eq!(
@@ -379,19 +375,16 @@ fn a_web_copy_too_wide_and_a_crossfade_with_no_room_fail_before_chromium() {
     let w = work("early");
     let still = w.join("cast/early-web.cast");
     write_cast(&still, "early-web", "still", 30);
-    let out = run(
-        &[
-            "render",
-            still.to_str().unwrap(),
-            "--size",
-            "320x180",
-            "--web",
-            "200",
-            "--out",
-            w.join("out").to_str().unwrap(),
-        ],
-        &w,
-    );
+    let out = run(&[
+        "render",
+        still.to_str().unwrap(),
+        "--size",
+        "320x180",
+        "--web",
+        "200",
+        "--out",
+        w.join("out").to_str().unwrap(),
+    ]);
     assert!(!out.status.success());
     assert!(
         String::from_utf8_lossy(&out.stderr).contains("--web 200"),
@@ -405,21 +398,18 @@ fn a_web_copy_too_wide_and_a_crossfade_with_no_room_fail_before_chromium() {
 
     let clip = w.join("cast/early-fade.cast");
     write_cast(&clip, "early-fade", "clip", 60);
-    let out = run(
-        &[
-            "render",
-            clip.to_str().unwrap(),
-            "--size",
-            "320x180",
-            "--fps",
-            "60",
-            "--set",
-            "closure.crossfade=0.5",
-            "--out",
-            w.join("out").to_str().unwrap(),
-        ],
-        &w,
-    );
+    let out = run(&[
+        "render",
+        clip.to_str().unwrap(),
+        "--size",
+        "320x180",
+        "--fps",
+        "60",
+        "--set",
+        "closure.crossfade=0.5",
+        "--out",
+        w.join("out").to_str().unwrap(),
+    ]);
     assert!(!out.status.success());
     assert!(
         String::from_utf8_lossy(&out.stderr).contains("crossfade"),
@@ -437,19 +427,16 @@ fn a_cast_with_an_unsafe_shot_is_refused() {
     let w = work("unsafe");
     let cast = w.join("cast/unsafe.cast");
     write_cast(&cast, "../escape", "clip", 30);
-    let out = run(
-        &[
-            "render",
-            cast.to_str().unwrap(),
-            "--size",
-            "320x180",
-            "--fps",
-            "30",
-            "--out",
-            w.join("out").to_str().unwrap(),
-        ],
-        &w,
-    );
+    let out = run(&[
+        "render",
+        cast.to_str().unwrap(),
+        "--size",
+        "320x180",
+        "--fps",
+        "30",
+        "--out",
+        w.join("out").to_str().unwrap(),
+    ]);
     assert!(!out.status.success());
     assert!(
         String::from_utf8_lossy(&out.stderr).contains("shot"),
@@ -466,28 +453,22 @@ fn a_recipe_size_and_fps_render_with_no_flags_and_flags_still_win() {
     stamp(&cast, "size", Value::String("480x270".into()));
     stamp(&cast, "fps", Value::from(30));
     let out = w.join("out");
-    let plain = start(
-        &[
-            "render",
-            cast.to_str().unwrap(),
-            "--out",
-            out.to_str().unwrap(),
-        ],
-        &w,
-    );
-    let flagged = start(
-        &[
-            "render",
-            cast.to_str().unwrap(),
-            "--size",
-            "640x360",
-            "--fps",
-            "60",
-            "--out",
-            out.to_str().unwrap(),
-        ],
-        &w,
-    );
+    let plain = start(&[
+        "render",
+        cast.to_str().unwrap(),
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    let flagged = start(&[
+        "render",
+        cast.to_str().unwrap(),
+        "--size",
+        "640x360",
+        "--fps",
+        "60",
+        "--out",
+        out.to_str().unwrap(),
+    ]);
     for (child, want, size) in [
         (plain, "frames-clip-sized-480x270-30fps.json", [480, 270]),
         (flagged, "frames-clip-sized-640x360-60fps.json", [640, 360]),
@@ -510,16 +491,13 @@ fn a_poster_is_the_named_frame_and_the_flag_wins() {
     let stamped = w.join("cast/moment-stamped.cast");
     write_cast(&stamped, "moment", "clip", fps);
     stamp(&stamped, "poster", Value::String("before-closure".into()));
-    let mut done = renders(
-        &[
-            (&cast, w.join("default"), fps, &[]),
-            (&cast, w.join("at"), fps, &["--poster", "0.5"]),
-            (&cast, w.join("late"), fps, &["--poster", "100"]),
-            (&stamped, w.join("shot"), fps, &[]),
-            (&stamped, w.join("flag"), fps, &["--poster", "0.5"]),
-        ],
-        &w,
-    )
+    let mut done = renders(&[
+        (&cast, w.join("default"), fps, &[]),
+        (&cast, w.join("at"), fps, &["--poster", "0.5"]),
+        (&cast, w.join("late"), fps, &["--poster", "100"]),
+        (&stamped, w.join("shot"), fps, &[]),
+        (&stamped, w.join("flag"), fps, &["--poster", "0.5"]),
+    ])
     .into_iter();
     let (m, dir, _) = done.next().unwrap();
     assert_eq!(
@@ -576,35 +554,29 @@ fn a_recipe_poster_is_recorded_and_the_flag_wins() {
         "size = \"320x180\"\nfps = 30\nposter = \"before-closure\"\n",
     );
     let out = w.join("out");
-    let m = prec(
-        &[
-            "clip",
-            "demo",
-            "posted",
-            "--app-dir",
-            app.to_str().unwrap(),
-            "--poster",
-            "first",
-            "--out",
-            out.to_str().unwrap(),
-        ],
-        &w,
-    );
+    let m = prec(&[
+        "clip",
+        "demo",
+        "posted",
+        "--app-dir",
+        app.to_str().unwrap(),
+        "--poster",
+        "first",
+        "--out",
+        out.to_str().unwrap(),
+    ]);
     let first = manifest(&m);
     assert_eq!(first["params"]["poster"], "first");
     assert_eq!(entry(&first, "poster")["frame"].as_u64(), Some(0));
     let dir = m.parent().unwrap();
     let cast = dir.join("demo-clip-posted-320x180-30fps.cast");
     assert_eq!(cast_poster(&cast), "before-closure");
-    let again = prec(
-        &[
-            "render",
-            cast.to_str().unwrap(),
-            "--out",
-            w.join("again").to_str().unwrap(),
-        ],
-        &w,
-    );
+    let again = prec(&[
+        "render",
+        cast.to_str().unwrap(),
+        "--out",
+        w.join("again").to_str().unwrap(),
+    ]);
     let followed = manifest(&again);
     let frames = followed["frames"]["master"].as_u64().unwrap();
     assert!(frames > 1, "the clip has more than one frame");
@@ -626,10 +598,7 @@ fn a_poster_on_a_still_and_an_unknown_poster_are_refused() {
         "\n[shots.posed]\nkind = \"still\"\ntape = \"render/terminal/posed.tape\"\nposter = \"first\"\n",
     );
     std::fs::write(&toml, text).unwrap();
-    let out = run(
-        &["shots", "demo", "--app-dir", still_app.to_str().unwrap()],
-        &w,
-    );
+    let out = run(&["shots", "demo", "--app-dir", still_app.to_str().unwrap()]);
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("poster is for clips"), "{err}");
@@ -641,31 +610,25 @@ fn a_poster_on_a_still_and_an_unknown_poster_are_refused() {
         "\n[shots.badposter]\nkind = \"clip\"\ntape = \"render/terminal/badposter.tape\"\nposter = \"middle\"\n",
     );
     std::fs::write(&toml, text).unwrap();
-    let out = run(
-        &["shots", "demo", "--app-dir", bad_app.to_str().unwrap()],
-        &w,
-    );
+    let out = run(&["shots", "demo", "--app-dir", bad_app.to_str().unwrap()]);
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("poster") && err.contains("middle"), "{err}");
 
     let cast = w.join("cast/badflag.cast");
     write_cast(&cast, "badflag", "clip", 30);
-    let out = run(
-        &[
-            "render",
-            cast.to_str().unwrap(),
-            "--size",
-            "320x180",
-            "--fps",
-            "30",
-            "--poster",
-            "nope",
-            "--out",
-            w.join("out").to_str().unwrap(),
-        ],
-        &w,
-    );
+    let out = run(&[
+        "render",
+        cast.to_str().unwrap(),
+        "--size",
+        "320x180",
+        "--fps",
+        "30",
+        "--poster",
+        "nope",
+        "--out",
+        w.join("out").to_str().unwrap(),
+    ]);
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("--poster"), "{err}");
@@ -673,38 +636,32 @@ fn a_poster_on_a_still_and_an_unknown_poster_are_refused() {
 
     let still = w.join("cast/posed.cast");
     write_cast(&still, "posed", "still", 30);
-    let out = run(
-        &[
-            "render",
-            still.to_str().unwrap(),
-            "--size",
-            "320x180",
-            "--poster",
-            "first",
-            "--out",
-            w.join("out").to_str().unwrap(),
-        ],
-        &w,
-    );
+    let out = run(&[
+        "render",
+        still.to_str().unwrap(),
+        "--size",
+        "320x180",
+        "--poster",
+        "first",
+        "--out",
+        w.join("out").to_str().unwrap(),
+    ]);
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("--poster is for clip and render"), "{err}");
 
     let app = common::demo_app(&w.join("record"), "");
-    let out = run(
-        &[
-            "record",
-            "demo",
-            "typing",
-            "--app-dir",
-            app.to_str().unwrap(),
-            "--poster",
-            "first",
-            "--out",
-            w.join("out").to_str().unwrap(),
-        ],
-        &w,
-    );
+    let out = run(&[
+        "record",
+        "demo",
+        "typing",
+        "--app-dir",
+        app.to_str().unwrap(),
+        "--poster",
+        "first",
+        "--out",
+        w.join("out").to_str().unwrap(),
+    ]);
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("--poster is for clip and render"), "{err}");

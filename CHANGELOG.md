@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.6.0 — 2026-11-01
+
+### Removed
+
+- The render archive: prec copies nothing outside `--out` (default `tmp/renders`). The `prec archive` command (`--retry`, `--reindex`), the archive copy and its catalog line, the cache's `archive-queue/`, `PITO_ARCHIVE`, the manifest's `archive` field, the job record's `archive` stage, the cache report's `archive_queue` and doctor's archive line are gone. An `archive-queue/` folder left in the cache is not read or removed.
+
+### Changed
+
+- `--no-archive` is accepted and ignored, so older callers keep working.
+- The config key `archive` is accepted and ignored, with one line on stderr: `prec: config key archive is retired; renders stay in --out`. Every other unknown key is still refused.
+
 ## v1.5.4 — 2026-10-23
 
 ### Changed

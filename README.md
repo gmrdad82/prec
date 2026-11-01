@@ -151,7 +151,7 @@ prec clip  myapp tour --rev v1.4.0 --themes "Catppuccin Latte,Catppuccin Mocha"
 prec render tmp/renders/myapp/clip/myapp-clip-tour-1920x1080-60fps.cast --size 720p --fps 30
 ```
 
-Outputs land in `tmp/renders/<app>/{still,clip}/`, one `<stem>.json` manifest per render with its `<stem>.cast` beside it. A clip writes `<stem>.master.mp4` and `<stem>.poster.png`; a still writes `<stem>.master.png`, the 8-bit PNG and any derived sizes and web copies. [docs/formats.md](docs/formats.md) specifies the manifest, the cast and the cache reports. This repository's own sample app, `examples/demo`, is a working example:
+Outputs land in `tmp/renders/<app>/{still,clip}/` (or under `--out`) and nowhere else, one `<stem>.json` manifest per render with its `<stem>.cast` beside it. A clip writes `<stem>.master.mp4` and `<stem>.poster.png`; a still writes `<stem>.master.png`, the 8-bit PNG and any derived sizes and web copies. [docs/formats.md](docs/formats.md) specifies the manifest, the cast and the cache reports. This repository's own sample app, `examples/demo`, is a working example:
 
 ```sh
 prec clip demo typing --app-dir examples/demo --size 720p --fps 30
@@ -210,10 +210,9 @@ The placeholders are `{tmp}` (the repository's `tmp/`), `{scratch}` (this run's 
 | `record <app> <shot>` | records only, into an asciicast v2 cast |
 | `render <cast>` | replays a cast at a chosen size, fps and theme |
 | `themes [--all]` | the curated pairs, your installed Omarchy themes, and with `--all` every built-in scheme |
-| `doctor` | checks Chromium, the fonts, git, the config, the cache and the archive, and names the built-in encoder |
+| `doctor` | checks Chromium, the fonts, git, the config and the cache, and names the built-in encoder |
 | `cache [--json]` | the machine cache: where it is, its size, and every entry with its size and last use |
 | `cache prune [--older-than 30d] [--all] [--json] [--dry-run]` | removes entries unused for 30 days (or `--older-than`), or all of them; entries in use stay |
-| `archive --retry`, `archive --reindex` | retries queued archive copies, or rebuilds the archive's catalog (see Archive) |
 
 Flags for `clip`, `still` and `record`:
 
@@ -236,10 +235,9 @@ Flags for `clip`, `still` and `record`:
 | `--out`, `--seed` | the output folder (default `tmp/renders`) and the seed |
 | `--keep-frames` | keep the raw frames under `tmp/prec/run/` until the next run of that shot |
 | `--no-encode` | write a clip's frames only, with no master |
-| `--no-archive` | never archive this render |
 | `--allow-private` | skip the scan for private data in the picture, for a render that stays private; the manifest records `"private_allowed": true` |
 
-`render <cast>` takes the delivery flags (`--size`, `--derive`, `--fps`, `--poster`, `--web`, `--theme`, `--themes`, `--font`, `--frame`, `--set closure…|ground=…`, `--out`, `--keep-frames`, `--no-encode`, `--no-archive`, `--allow-private`); the grid and the session come from the cast.
+`render <cast>` takes the delivery flags (`--size`, `--derive`, `--fps`, `--poster`, `--web`, `--theme`, `--themes`, `--font`, `--frame`, `--set closure…|ground=…`, `--out`, `--keep-frames`, `--no-encode`, `--allow-private`); the grid and the session come from the cast.
 
 Input prec can't parse gets clap's short answer on stderr with exit 2; `--help` prints the full help. Refusals after parsing are one line, `prec: …`, with exit 1.
 
@@ -264,7 +262,6 @@ prec works with no configuration. An optional `config.toml` lives at `${XDG_CONF
 ```toml
 theme = "TokyoNight"
 chromium = "/opt/chromium/chrome"
-archive = "~/Renders"
 
 [confine]
 slice = "build.slice"
@@ -275,13 +272,12 @@ cpus = "4-15"
 |---|---|---|
 | `theme` | `Catppuccin Mocha` | the theme for an app whose `terminal.toml` has no `[theme]` |
 | `chromium` | found on the `PATH` | the Chromium or Chrome binary (`PREC_CHROMIUM` overrides it) |
-| `archive` | none | an archive root; without one nothing is archived (`PITO_ARCHIVE` overrides it) |
 | `[confine]` | absent | on Linux with systemd, run Chromium in a memory-capped `systemd-run --user` scope at nice 10, and prec's own encode at nice 10 |
 | `[confine] slice` | `build.slice` | the systemd slice for those scopes |
 | `[confine] cpus` | unpinned | pin Chromium (with `taskset -c`) and the encode to this CPU list |
 | `[confine] cpus_from`, `cpus_key` | | or read the CPU list from a shell env file's key (`cpus_key`, default `BUILD_CPUS`) |
 
-Other environment variables: `PREC_CACHE` moves the machine cache, `PREC_DIRECT=1` runs everything unconfined and never archives (for tests), and `PITO_JOBS=off` turns off the live job record (below).
+Other environment variables: `PREC_CACHE` moves the machine cache, `PREC_DIRECT=1` runs everything unconfined (for tests), and `PITO_JOBS=off` turns off the live job record (below).
 
 ## The machine cache
 
@@ -294,7 +290,6 @@ Everything reusable lives in one cache, shared by every repository: `${XDG_CACHE
 | `target/<repo>/` | the repo's shared cargo target dir, so a new commit rebuilds incrementally | repo |
 | `bin/<repo>/<commit>-<build>/` | the built binaries (`{bin}`) | repo, commit and the build command's hash |
 | `locks/` | one lock per entry, so a prune never removes an entry being built or used | |
-| `archive-queue/` | renders waiting for an archive that was offline | |
 
 A `<repo>` key is the repository's name and a hash of its origin URL, so every checkout and worktree of one repository shares entries. A dirty working tree builds incrementally in the shared target dir and is never stored as a commit. prec downloads nothing.
 
@@ -305,13 +300,9 @@ A `<repo>` key is the repository's name and a hash of its origin URL, so every c
 - **Encode.** A clip is one silent H.264 High master at the render's size and fps, encoded inside prec by pito-codecs 2.1.0 with no ffmpeg: its `quality` preset, CRF 14, no B-frames, 8-bit 4:2:0, a keyframe every two seconds, BT.709 limited range tagged in the stream. Chromium's 8-bit frames go to YUV with the BT.709 limited-range matrix and left-sited chroma; a crossfade is blended from the two frames before that. The encoder's 16 threads are fixed, because its output follows its thread count; that keeps a master byte-identical on any machine. prec reads the MP4 back and checks its frame count and size before the manifest claims them.
 - **Atomic.** A render builds its files in its scratch folder, then moves them into the output folder and writes the manifest last, so a failed or cancelled re-render never leaves new files beside an old manifest.
 
-## Archive
-
-An archive is optional and off unless `archive` (or `PITO_ARCHIVE`) names a root. Then a render of a pinned, committed revision (`--rev <tag or commit>`) is copied to `<root>/Masters/prec/<app>/<shot>/<YYYY-MM-DD>_<HHMMSS>_<version>_<caller>/`, with every file it wrote and its `manifest.json`, and one line is appended to `<root>/Masters/catalog.jsonl`, the catalog it shares with [pfx](https://github.com/gmrdad82/pfx)'s renders. A working-tree render, a `--bin` build, a dirty revision, `--no-encode`, `--no-archive` and the `demo` sample are never archived, and the manifest records why. A leaf is built as `<leaf>.partial/`, each file hashed as it is copied and checked against the manifest, then renamed into place. When the root is offline, the render still succeeds, waits in the cache's `archive-queue/`, and goes with the next render or `prec archive --retry`. `prec archive --reindex` rebuilds the catalog from the line each leaf's `manifest.json` stored when it was archived; it reads no other file in the leaf.
-
 ## Job records
 
-Every `clip`, `still`, `record` and `render` publishes a live job record, in RAM only, in `$XDG_RUNTIME_DIR/pito-jobs/` (or `PITO_JOBS_DIR`; on macOS without `XDG_RUNTIME_DIR`, `$TMPDIR/pito-jobs/`), with its stages (`build`, `record`, `replay`, `master` or `derive`, `archive`) and progress, for a dashboard to show. prec writes the record itself, in the job-record format of pito-jobs v1.0.3: one JSON file per render, `<pid>-<started ms>.json`, rewritten atomically, at most once a second for progress, and at most 4 KiB. It reads `PITO_JOB_ID` as its parent job, `PITO_INVOKER` as its invoker and `GPU_QUEUE_PID` as its GPU queue. With neither `PITO_JOBS_DIR` nor `XDG_RUNTIME_DIR` (nor `TMPDIR` on macOS) there is none, `PITO_JOBS=off` turns it off, and a record that can't be written never fails the render.
+Every `clip`, `still`, `record` and `render` publishes a live job record, in RAM only, in `$XDG_RUNTIME_DIR/pito-jobs/` (or `PITO_JOBS_DIR`; on macOS without `XDG_RUNTIME_DIR`, `$TMPDIR/pito-jobs/`), with its stages (`build`, `record`, `replay`, `master` or `derive`) and progress, for a dashboard to show. prec writes the record itself, in the job-record format of pito-jobs v1.0.3: one JSON file per render, `<pid>-<started ms>.json`, rewritten atomically, at most once a second for progress, and at most 4 KiB. It reads `PITO_JOB_ID` as its parent job, `PITO_INVOKER` as its invoker and `GPU_QUEUE_PID` as its GPU queue. With neither `PITO_JOBS_DIR` nor `XDG_RUNTIME_DIR` (nor `TMPDIR` on macOS) there is none, `PITO_JOBS=off` turns it off, and a record that can't be written never fails the render.
 
 ## Part of PITO MD
 

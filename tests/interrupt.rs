@@ -36,7 +36,7 @@ fn app(dir: &Path, setup: &str, teardown: &str) -> PathBuf {
 }
 
 fn prec(dir: &Path, args: &[&str]) -> Command {
-    common::prec(dir, &dir.join("archive"), args)
+    common::prec(dir, args)
 }
 
 fn with_jobs(c: &mut Command, dir: &Path) {

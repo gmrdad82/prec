@@ -28,14 +28,12 @@ prec render tmp/renders/demo/clip/demo-clip-typing.cast --size 1080p --fps 60 --
 
 ```text
 replaying demo typing: 228 frames at 1920x1080@60…
-archive: skipped (unconfigured)
 tmp/renders/demo/clip/demo-clip-typing-catppuccin-latte-1920x1080-60fps.json
 replaying demo typing: 228 frames at 1920x1080@60…
-archive: skipped (unconfigured)
 tmp/renders/demo/clip/demo-clip-typing-tokyonight-1920x1080-60fps.json
 ```
 
-The grid, the session, the shot's closure and its font come from the cast; `render` takes the delivery flags: `--size`, `--derive`, `--fps`, `--poster`, `--web`, `--theme`, `--themes`, `--font`, `--frame`, `--set closure…` or `--set ground=…`, `--out`, `--keep-frames`, `--no-encode` and `--no-archive`. A cast recorded for a still renders a still, and one recorded for a clip renders a clip.
+The grid, the session, the shot's closure and its font come from the cast; `render` takes the delivery flags: `--size`, `--derive`, `--fps`, `--poster`, `--web`, `--theme`, `--themes`, `--font`, `--frame`, `--set closure…` or `--set ground=…`, `--out`, `--keep-frames` and `--no-encode`. A cast recorded for a still renders a still, and one recorded for a clip renders a clip.
 
 ## A picture with private data
 
