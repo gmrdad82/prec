@@ -1,15 +1,17 @@
 use serde::Deserialize;
+use serde::de::IgnoredAny;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 pub const ENV: &str = "PREC_CONFIG";
 pub const DEFAULT_THEME: &str = "Catppuccin Mocha";
+pub const RETIRED: &str = "prec: config key archive is retired; renders stay in --out";
 
 #[derive(Debug, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    pub archive: Option<PathBuf>,
+    archive: Option<IgnoredAny>,
     pub theme: Option<String>,
     pub chromium: Option<PathBuf>,
     pub confine: Option<Confine>,
@@ -22,6 +24,12 @@ pub struct Confine {
     pub cpus: Option<String>,
     pub cpus_from: Option<PathBuf>,
     pub cpus_key: Option<String>,
+}
+
+impl Config {
+    pub fn notice(&self) -> Option<&'static str> {
+        self.archive.map(|_| RETIRED)
+    }
 }
 
 static LOADED: OnceLock<(Option<PathBuf>, Config)> = OnceLock::new();
@@ -65,7 +73,6 @@ pub fn parse(text: &str) -> Result<Config, String> {
 fn parse_in(text: &str, home: Option<PathBuf>) -> Result<Config, String> {
     let expand = |p: &Path| expand_in(p, home.clone());
     let mut c: Config = toml::from_str(text).map_err(|e| e.message().to_string())?;
-    c.archive = c.archive.as_deref().map(expand);
     c.chromium = c.chromium.as_deref().map(expand);
     if let Some(confine) = c.confine.as_mut() {
         confine.cpus_from = confine.cpus_from.as_deref().map(expand);
@@ -94,6 +101,9 @@ pub fn load() -> Result<(), String> {
     let explicit = std::env::var_os(ENV).is_some_and(|v| !v.is_empty());
     let path = path();
     let config = read(path.as_deref(), explicit)?;
+    if let Some(notice) = config.notice() {
+        eprintln!("{notice}");
+    }
     let _ = LOADED.set((path, config));
     Ok(())
 }
@@ -130,10 +140,10 @@ mod tests {
     #[test]
     fn every_key_parses_and_a_typo_is_refused() {
         let c = parse(
-            "archive = \"/srv/archive\"\ntheme = \"nord\"\nchromium = \"/opt/chrome\"\n[confine]\nslice = \"render.slice\"\ncpus = \"4-7\"\n",
+            "theme = \"nord\"\nchromium = \"/opt/chrome\"\n[confine]\nslice = \"render.slice\"\ncpus = \"4-7\"\n",
         )
         .unwrap();
-        assert_eq!(c.archive.as_deref(), Some(Path::new("/srv/archive")));
+        assert_eq!(c.notice(), None);
         assert_eq!(c.theme.as_deref(), Some("nord"));
         let confine = c.confine.unwrap();
         assert_eq!(confine.slice.as_deref(), Some("render.slice"));
@@ -198,7 +208,7 @@ mod tests {
     fn a_confine_table_parses_alone_or_with_its_cpus_file() {
         let c = parse("[confine]\n").unwrap();
         assert_eq!(c.confine, Some(Confine::default()));
-        assert_eq!(c.archive, None);
+        assert_eq!(c.notice(), None);
         let c = parse("[confine]\ncpus_from = \"/etc/machine.env\"\ncpus_key = \"RENDER_CPUS\"\n")
             .unwrap()
             .confine
@@ -212,9 +222,9 @@ mod tests {
 
     #[test]
     fn a_tilde_in_a_path_key_is_expanded_and_left_alone_elsewhere() {
-        let text = "archive = \"~/arch\"\nchromium = \"~/bin/chrome\"\ntheme = \"~nord\"\n[confine]\ncpus_from = \"~/m.env\"\n";
+        let text =
+            "chromium = \"~/bin/chrome\"\ntheme = \"~nord\"\n[confine]\ncpus_from = \"~/m.env\"\n";
         let c = parse_in(text, Some(PathBuf::from("/srv/alpha"))).unwrap();
-        assert_eq!(c.archive.as_deref(), Some(Path::new("/srv/alpha/arch")));
         assert_eq!(
             c.chromium.as_deref(),
             Some(Path::new("/srv/alpha/bin/chrome"))
@@ -225,18 +235,17 @@ mod tests {
         );
         assert_eq!(c.theme.as_deref(), Some("~nord"));
         let c = parse_in(text, None).unwrap();
-        assert_eq!(c.archive.as_deref(), Some(Path::new("~/arch")));
         assert_eq!(c.chromium.as_deref(), Some(Path::new("~/bin/chrome")));
         assert_eq!(
             c.confine.unwrap().cpus_from.as_deref(),
             Some(Path::new("~/m.env"))
         );
         let c = parse_in(
-            "archive = \"/srv/~/a\"\n",
+            "chromium = \"/srv/~/a\"\n",
             Some(PathBuf::from("/srv/alpha")),
         )
         .unwrap();
-        assert_eq!(c.archive.as_deref(), Some(Path::new("/srv/~/a")));
+        assert_eq!(c.chromium.as_deref(), Some(Path::new("/srv/~/a")));
     }
 
     #[test]
@@ -252,10 +261,37 @@ mod tests {
                 "{text}: {e}"
             );
         }
-        assert!(parse("archive = 3\n").is_err());
+        assert!(parse("theme = 3\n").is_err());
         assert!(parse("confine = \"yes\"\n").is_err());
-        assert!(parse("archive = \"/a\"\narchive = \"/b\"\n").is_err());
+        assert!(parse("theme = \"a\"\ntheme = \"b\"\n").is_err());
         assert!(parse("not toml").is_err());
+    }
+
+    #[test]
+    fn the_retired_archive_key_is_accepted_ignored_and_noted() {
+        for text in [
+            "archive = \"/srv/a\"\n",
+            "archive = \"~/a\"\ntheme = \"nord\"\n",
+            "archive = 3\n",
+            "archive = \"/srv/a\"\n[confine]\ncpus = \"1\"\n",
+        ] {
+            let c = parse(text).unwrap_or_else(|e| panic!("{text}: {e}"));
+            assert_eq!(c.notice(), Some(RETIRED), "{text}");
+        }
+        assert_eq!(
+            RETIRED,
+            "prec: config key archive is retired; renders stay in --out"
+        );
+        let c = parse("archive = \"/a\"\ntheme = \"nord\"\n").unwrap();
+        assert_eq!(c.theme.as_deref(), Some("nord"));
+        assert_eq!(c.chromium, None);
+        assert_eq!(c.confine, None);
+        assert_eq!(parse("").unwrap().notice(), None);
+        assert!(parse("archive = \"/a\"\narchive = \"/b\"\n").is_err());
+        let e = parse("archive = \"/a\"\narchives = \"/b\"\n").unwrap_err();
+        assert!(e.contains("unknown field `archives`"), "{e}");
+        let e = parse("[confine]\narchive = \"/a\"\n").unwrap_err();
+        assert!(e.contains("unknown field `archive`"), "{e}");
     }
 
     #[test]
@@ -263,11 +299,11 @@ mod tests {
         let dir = test_dir("read");
         assert_eq!(read(None, false).unwrap(), Config::default());
         let good = dir.join("good.toml");
-        std::fs::write(&good, "archive = \"/srv/a\"\n").unwrap();
+        std::fs::write(&good, "theme = \"nord\"\n").unwrap();
         for explicit in [false, true] {
             assert_eq!(
-                read(Some(&good), explicit).unwrap().archive.as_deref(),
-                Some(Path::new("/srv/a"))
+                read(Some(&good), explicit).unwrap().theme.as_deref(),
+                Some("nord")
             );
         }
         let empty = dir.join("empty.toml");

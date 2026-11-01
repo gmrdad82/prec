@@ -1,6 +1,5 @@
 mod common;
 
-use std::path::Path;
 use std::process::{Child, Command, Stdio};
 
 fn allowed_cpus() -> (String, String) {
@@ -15,10 +14,10 @@ fn allowed_cpus() -> (String, String) {
     (first, all)
 }
 
-fn start(cpus: &str, args: &[&str], work: &Path) -> Child {
+fn start(cpus: &str, args: &[&str]) -> Child {
     let mut c = Command::new("taskset");
     c.args(["-c", cpus, env!("CARGO_BIN_EXE_prec")]).args(args);
-    common::confine(&mut c, &common::tree(), &work.join("archive"));
+    common::confine(&mut c, &common::tree());
     c.stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -46,7 +45,6 @@ fn a_cast_replays_to_the_same_bytes_on_one_cpu_or_many() {
             "--out",
             "tmp/determinism/work/cast",
         ],
-        &work,
     ));
     let both: Vec<Child> = [("one", &one), ("many", &many)]
         .into_iter()
@@ -63,7 +61,6 @@ fn a_cast_replays_to_the_same_bytes_on_one_cpu_or_many() {
                     "--out",
                     &format!("tmp/determinism/work/{out}"),
                 ],
-                &work,
             )
         })
         .collect();

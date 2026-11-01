@@ -12,7 +12,7 @@ fn work(name: &str) -> PathBuf {
 }
 
 fn command(args: &[&str], w: &Path) -> Command {
-    let mut c = common::prec(&tree(), &w.join("archive"), args);
+    let mut c = common::prec(&tree(), args);
     c.env("XDG_CACHE_HOME", w.join("cache"));
     c
 }
@@ -184,7 +184,6 @@ fn a_still_writes_a_16_bit_master_and_8_bit_deliveries_on_the_theme_background()
     assert_eq!(manifest["params"]["derive"], json!([[160, 90]]));
     assert_eq!(manifest["params"]["fps"], Value::Null);
     assert_eq!(manifest["theme"]["background"], "#1e1e2e");
-    assert_eq!(manifest["archive"]["state"], "skipped");
     every_file_is_what_the_manifest_says(&manifest, &dir);
 
     let master = dir.join(entry(&manifest, "master")["file"].as_str().unwrap());
@@ -569,7 +568,6 @@ fn a_clip_writes_its_master_poster_and_manifest_at_a_film_rate() {
         keys,
         [
             "app",
-            "archive",
             "caller",
             "cast_sha256",
             "colour",
@@ -1052,4 +1050,69 @@ fn a_mask_paints_its_cells_in_the_theme_background_and_nothing_else() {
     );
     refused(&o, "mask rect [6, 0, 4, 1]: outside the 8x4 grid");
     assert!(common::no_chromium(&tree(), "render-still-outside-replay"));
+}
+
+#[test]
+fn a_render_writes_only_to_its_out_whatever_archive_the_environment_or_config_names() {
+    let w = work("retired");
+    let from_env = w.join("env-root");
+    let from_config = w.join("config-root");
+    let cache = w.join("cache-root");
+    for dir in [&from_env, &from_config, &cache] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let config = w.join("config.toml");
+    std::fs::write(
+        &config,
+        format!("archive = \"{}\"\n", from_config.display()),
+    )
+    .unwrap();
+    let cast = w.join("cast/kept.cast");
+    painted_cast(&cast, "kept", "still", [40, 120, 200], 0.2);
+    stamp(
+        &cast,
+        "app",
+        json!({"rev": "v1.0.0", "commit": "0123456789abcdef0123456789abcdef01234567", "tag": "v1.0.0", "pinned": true}),
+    );
+    let out = w.join("out");
+    let o = command(
+        &[
+            "render",
+            cast.to_str().unwrap(),
+            "--size",
+            "160x90",
+            "--out",
+            out.to_str().unwrap(),
+        ],
+        &w,
+    )
+    .env("PITO_ARCHIVE", &from_env)
+    .env("PREC_CONFIG", &config)
+    .env("PREC_CACHE", &cache)
+    .output()
+    .unwrap();
+    common::expect_ok(&o, "prec render");
+    let notice = "prec: config key archive is retired; renders stay in --out";
+    assert_eq!(
+        said(&o).lines().filter(|l| *l == notice).count(),
+        1,
+        "{}",
+        said(&o)
+    );
+    assert_eq!(said(&o).matches("archive").count(), 1, "{}", said(&o));
+    let m = common::last_path(&o);
+    assert!(m.starts_with(&out), "{}", m.display());
+    let manifest = json_of(&m);
+    assert!(manifest.get("archive").is_none(), "{manifest}");
+    assert_eq!(manifest["version"], "v1.0.0");
+    every_file_is_what_the_manifest_says(&manifest, m.parent().unwrap());
+    for dir in [&from_env, &from_config] {
+        assert_eq!(
+            std::fs::read_dir(dir).unwrap().count(),
+            0,
+            "{}",
+            dir.display()
+        );
+    }
+    assert!(!cache.join("archive-queue").exists());
 }

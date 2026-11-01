@@ -914,13 +914,13 @@ fn a_render_publishes_its_whole_life() {
     assert_eq!(rec.out.as_deref(), Some("/srv/renders/demo"));
     assert_eq!(rec.state, "running");
 
-    slot.stages(&["record", "replay", "archive"]);
+    slot.stages(&["record", "replay", "publish"]);
     slot.stage("record", None, "seconds");
     assert_eq!(only(&dir).stage_note, None);
     slot.context(Some("dark".to_string()));
     slot.stage("replay", Some(90), "frames");
     let rec = only(&dir);
-    assert_eq!(rec.stages, ["record", "replay", "archive"]);
+    assert_eq!(rec.stages, ["record", "replay", "publish"]);
     assert_eq!(rec.stage.as_deref(), Some("replay"));
     assert_eq!(rec.stage_note.as_deref(), Some("dark"));
     let progress = rec.progress.unwrap();
@@ -929,14 +929,14 @@ fn a_render_publishes_its_whole_life() {
     at(&ms, 2_000);
     slot.progress(45);
     assert_eq!(only(&dir).progress.unwrap().done, 45);
-    slot.note("archive queued");
+    slot.note("publish queued");
     assert_eq!(
         only(&dir).stage_note.as_deref(),
-        Some("dark archive queued")
+        Some("dark publish queued")
     );
     slot.context(None);
-    slot.note("archive refused");
-    assert_eq!(only(&dir).stage_note.as_deref(), Some("archive refused"));
+    slot.note("publish refused");
+    assert_eq!(only(&dir).stage_note.as_deref(), Some("publish refused"));
 
     at(&ms, 3_000);
     slot.end(&Ok(()));
@@ -1016,7 +1016,7 @@ fn every_call_before_start_is_a_quiet_no_op() {
     slot.stages(&["record"]);
     slot.context(Some("dark".to_string()));
     slot.stage("record", Some(1), "seconds");
-    slot.note("archive queued");
+    slot.note("publish queued");
     slot.progress(3);
     slot.cancelled(130, "SIGINT");
     slot.end(&Err("boom".to_string()));
@@ -1050,7 +1050,7 @@ fn pito_jobs_off_writes_nothing_through_a_whole_render() {
     slot.stage("replay", Some(4), "frames");
     at(&ms, 2_000);
     slot.progress(4);
-    slot.note("archive queued");
+    slot.note("publish queued");
     slot.end(&Ok(()));
     assert_eq!(entries(&dir), 0);
 }
@@ -1104,8 +1104,8 @@ fn the_context_joins_the_extra_note() {
     slot.context(Some("dark".to_string()));
     assert_eq!(slot.with_context(None).as_deref(), Some("dark"));
     assert_eq!(
-        slot.with_context(Some("archive queued")).as_deref(),
-        Some("dark archive queued")
+        slot.with_context(Some("publish queued")).as_deref(),
+        Some("dark publish queued")
     );
     slot.context(None);
     assert_eq!(slot.with_context(None), None);

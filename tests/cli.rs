@@ -20,7 +20,6 @@ fn prec(dir: &Path, args: &[&str]) -> Command {
     c.args(args)
         .current_dir(tree())
         .env("PREC_CONFIG", dir.join("config.toml"))
-        .env("PITO_ARCHIVE", dir.join("archive"))
         .env("XDG_CACHE_HOME", dir.join("cache"))
         .env("PITO_JOBS", "off")
         .env_remove("PREC_CACHE")
@@ -81,7 +80,7 @@ fn unparsed() -> Vec<(Vec<&'static str>, String)> {
         (
             vec![],
             short(
-                "error: 'prec' requires a subcommand but one was not provided\n  [subcommands: shots, clip, still, record, render, archive, themes, doctor, cache, help]",
+                "error: 'prec' requires a subcommand but one was not provided\n  [subcommands: shots, clip, still, record, render, themes, doctor, cache, help]",
                 Some("Usage: prec <COMMAND>"),
             ),
         ),
@@ -109,8 +108,15 @@ fn unparsed() -> Vec<(Vec<&'static str>, String)> {
         (
             vec!["archive"],
             short(
-                "error: the following required arguments were not provided:\n  <--retry|--reindex>",
-                Some("Usage: prec archive <--retry|--reindex>"),
+                "error: unrecognized subcommand 'archive'\n\n  tip: a similar subcommand exists: 'cache'",
+                Some("Usage: prec <COMMAND>"),
+            ),
+        ),
+        (
+            vec!["archive", "--retry"],
+            short(
+                "error: unrecognized subcommand 'archive'\n\n  tip: a similar subcommand exists: 'cache'",
+                Some("Usage: prec <COMMAND>"),
             ),
         ),
     ]
@@ -148,10 +154,6 @@ fn bad_flags_on_a_subcommand_are_refused_before_anything_runs() {
             "error: invalid value 'wide' for '--web <WEB>': ",
         ),
         (
-            &["archive", "--retry", "--reindex"],
-            "error: the argument '--retry' cannot be used with '--reindex'",
-        ),
-        (
             &["cache", "prune", "--dry-run"],
             "error: the following required arguments were not provided:",
         ),
@@ -165,7 +167,6 @@ fn bad_flags_on_a_subcommand_are_refused_before_anything_runs() {
         assert!(o.stdout.is_empty(), "{args:?}");
     }
     assert!(!dir.join("cache").exists());
-    assert!(!dir.join("archive").exists());
 }
 
 #[cfg(unix)]
@@ -190,7 +191,6 @@ fn in_terminal(dir: &Path, args: &[&str], no_color: bool) -> (String, u32) {
     cmd.env("TERM", "xterm-256color");
     cmd.env("PREC_CONFIG", dir.join("config.toml"));
     cmd.env("XDG_CACHE_HOME", dir.join("cache"));
-    cmd.env("PITO_ARCHIVE", dir.join("archive"));
     cmd.env("PITO_JOBS", "off");
     if no_color {
         cmd.env("NO_COLOR", "1");
@@ -258,11 +258,11 @@ fn help_prints_the_whole_help_on_stdout_with_exit_0() {
     let help = out(&long);
     assert!(help.contains("\nUsage: prec <COMMAND>\n"), "{help}");
     for c in [
-        "shots", "clip", "still", "record", "render", "archive", "themes", "doctor", "cache",
-        "help",
+        "shots", "clip", "still", "record", "render", "themes", "doctor", "cache", "help",
     ] {
         assert!(help.contains(&format!("\n  {c} ")), "{c}: {help}");
     }
+    assert!(!help.contains("archive"), "{help}");
     assert!(help.contains("-V, --version"), "{help}");
     for args in [&["-h"][..], &["help"]] {
         let o = run(&mut prec(&dir, args));
@@ -323,7 +323,6 @@ fn a_refusal_after_a_good_parse_is_one_line_with_exit_1() {
         refused(&["render", cast.to_str().unwrap()])
             .starts_with(&format!("prec: {}: ", cast.display()))
     );
-    assert!(!dir.join("archive").exists());
 }
 
 #[test]
@@ -363,7 +362,6 @@ fn a_bin_folder_without_the_apps_binary_is_refused_before_anything_records() {
         format!("prec: --bin {}: no such folder", gone.display())
     );
     assert!(!out_dir.join("demo").exists());
-    assert!(!dir.join("archive").exists());
 }
 
 #[test]
@@ -423,7 +421,6 @@ fn shots_lists_every_shot_of_an_app_in_name_order() {
             && l.ends_with(" Truecolor gradient, box drawing and the CJK 三")),
         "{listed}"
     );
-    assert!(!dir.join("archive").exists());
 }
 
 fn alpha(dir: &Path, name: &str, text: Option<&str>) -> PathBuf {
@@ -695,13 +692,6 @@ fn doctor_marks_every_missing_tool_and_exits_1() {
         assert_eq!(mark(&lines, what).0, "ok", "{what}");
     }
     assert_eq!(
-        mark(&lines, "archive root"),
-        (
-            "ok".into(),
-            "none configured; renders are never archived".into()
-        )
-    );
-    assert_eq!(
         mark(&lines, "cache"),
         (
             "ok".into(),
@@ -876,11 +866,10 @@ fn stocked(dir: &Path) -> PathBuf {
 
 #[cfg(unix)]
 #[test]
-fn doctor_passes_when_everything_is_there_and_an_offline_archive_only_queues() {
+fn doctor_passes_when_everything_is_there() {
     let dir = setup("doctor-stocked");
     let bin = stocked(&dir);
-    std::fs::create_dir_all(dir.join("archive")).unwrap();
-    let o = run(doctor(&dir, &bin).env("PITO_ARCHIVE", dir.join("archive")));
+    let o = run(&mut doctor(&dir, &bin));
     assert_eq!(o.status.code(), Some(0), "{}{}", out(&o), err(&o));
     assert!(o.stderr.is_empty(), "{}", err(&o));
     let lines = report(&out(&o));
@@ -900,24 +889,10 @@ fn doctor_passes_when_everything_is_there_and_an_offline_archive_only_queues() {
             ),
         ),
         ("CJK fallback", "Alpha CJK".into()),
-        (
-            "archive root",
-            format!("{} (reachable)", dir.join("archive").display()),
-        ),
     ] {
         assert_eq!(mark(&lines, what), ("ok".into(), said), "{what}");
     }
-    let offline = dir.join("offline");
-    let o = run(doctor(&dir, &bin).env("PITO_ARCHIVE", &offline));
-    assert_eq!(o.status.code(), Some(0), "{}", out(&o));
-    assert_eq!(
-        mark(&report(&out(&o)), "archive root"),
-        (
-            "opt".into(),
-            format!("{} (unavailable; renders queue)", offline.display())
-        )
-    );
-    assert!(!offline.exists());
+    assert!(!out(&o).contains("archive"), "{}", out(&o));
 }
 
 #[cfg(unix)]

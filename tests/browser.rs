@@ -61,7 +61,6 @@ fn render(dir: &Path, changes: usize, direct: bool, size: &str, fps: &str) -> Co
     let cast = cast(dir, changes);
     let mut c = common::prec(
         dir,
-        &dir.join("archive"),
         &[
             "render",
             cast.to_str().unwrap(),

@@ -1,5 +1,4 @@
 mod app;
-mod archive;
 mod cache;
 mod cdp;
 mod compose;
@@ -44,10 +43,7 @@ struct Source {
         help = "The app's folder in this repository, holding render/terminal.toml; default the repository's top"
     )]
     app_dir: Option<PathBuf>,
-    #[arg(
-        long,
-        help = "A tag or commit of this repository to build, render and archive"
-    )]
+    #[arg(long, help = "A tag or commit of this repository to build and render")]
     rev: Option<String>,
 }
 
@@ -125,7 +121,7 @@ struct Shot {
     web: Vec<u32>,
     #[arg(long, value_delimiter = ',', help = "Clip formats belong to pcod")]
     profile: Vec<String>,
-    #[arg(long, help = "Skip archive copying")]
+    #[arg(long, hide = true)]
     no_archive: bool,
     #[arg(
         long,
@@ -236,7 +232,7 @@ struct Replay {
     web: Vec<u32>,
     #[arg(long, value_delimiter = ',', help = "Clip formats belong to pcod")]
     profile: Vec<String>,
-    #[arg(long, help = "Skip archive copying")]
+    #[arg(long, hide = true)]
     no_archive: bool,
     #[arg(
         long,
@@ -267,16 +263,6 @@ enum Kind {
         about = "Render a recorded cast at any size, fps and theme, without re-running the app"
     )]
     Render(Replay),
-    #[command(
-        about = "Retry queued archive copies or rebuild the archive catalog",
-        group = clap::ArgGroup::new("mode").required(true)
-    )]
-    Archive {
-        #[arg(long, group = "mode")]
-        retry: bool,
-        #[arg(long, group = "mode")]
-        reindex: bool,
-    },
     #[command(about = "List the themes")]
     Themes {
         #[arg(long, help = "List every built-in scheme too")]
@@ -335,7 +321,6 @@ fn opts(s: &Shot, theme: &str, made: &str) -> render::Opts {
         no_encode: s.no_encode,
         web: s.web.clone(),
         profile: s.profile.clone(),
-        no_archive: s.no_archive,
         allow_private: s.allow_private,
     }
 }
@@ -358,7 +343,6 @@ fn replay_opts(r: &Replay, theme: &str, made: &str) -> render::Opts {
         no_encode: r.no_encode,
         web: r.web.clone(),
         profile: r.profile.clone(),
-        no_archive: r.no_archive,
         allow_private: r.allow_private,
         ..Default::default()
     }
@@ -401,21 +385,9 @@ fn begin(verb: &str, kind: &str, s: &Shot) -> Result<(), String> {
 
 fn shoot(kind: &str, s: &Shot, made: &str) -> Result<(), String> {
     s.camera.refuse()?;
-    let first = opts(s, &s.theme, made);
-    render::validate(kind, &first)?;
+    render::validate(kind, &opts(s, &s.theme, made))?;
     begin(kind, kind, s)?;
-    let build = s.bin.is_none();
-    let guess = serde_json::json!({
-        "rev": s.source.rev.as_deref().unwrap_or("local"),
-        "pinned": s.source.rev.is_some() && build,
-    });
-    jobs::stages(&render::stages(
-        kind,
-        build,
-        true,
-        true,
-        render::archives(kind, &s.product, &first, &guess),
-    ));
+    jobs::stages(&render::stages(kind, s.bin.is_none(), true, true));
     let themes = if s.themes.is_empty() {
         vec![s.theme.clone()]
     } else {
@@ -434,14 +406,6 @@ fn shoot(kind: &str, s: &Shot, made: &str) -> Result<(), String> {
             false,
         )?
     };
-    let app = record::read(&cast)?.meta["app"].clone();
-    jobs::stages(&render::stages(
-        kind,
-        build,
-        true,
-        true,
-        render::archives(kind, &s.product, &first, &app),
-    ));
     for t in themes {
         let m = render::render_cast(&cast, &opts(s, &t, made))?;
         println!("{}", paths::printed(&m));
@@ -454,7 +418,7 @@ fn resolve(product: &str, source: &Source) -> Result<app::Resolved, String> {
 }
 
 fn run(command: Kind) -> Result<(), String> {
-    let made = archive::made();
+    let made = render::made();
     match command {
         Kind::Shots { product, source } => {
             let r = resolve(&product, &source)?;
@@ -494,7 +458,7 @@ fn run(command: Kind) -> Result<(), String> {
                 .ok_or_else(|| format!("{} has no shot {}", s.product, s.shot))?;
             render::validate(&kind, &opts(&s, &s.theme, &made))?;
             begin("record", &kind, &s)?;
-            jobs::stages(&render::stages(&kind, s.bin.is_none(), true, false, false));
+            jobs::stages(&render::stages(&kind, s.bin.is_none(), true, false));
             let _held = render::hold(
                 &s.product,
                 &s.shot,
@@ -521,18 +485,7 @@ fn run(command: Kind) -> Result<(), String> {
                 "CPU".to_string(),
                 &out,
             );
-            jobs::stages(&render::stages(
-                kind,
-                false,
-                false,
-                true,
-                render::archives(
-                    kind,
-                    product,
-                    &replay_opts(&r, &r.theme, &made),
-                    &meta["app"],
-                ),
-            ));
+            jobs::stages(&render::stages(kind, false, false, true));
             let themes = if r.themes.is_empty() {
                 vec![r.theme.clone()]
             } else {
@@ -541,14 +494,6 @@ fn run(command: Kind) -> Result<(), String> {
             for t in themes {
                 let m = render::render_cast(&r.cast, &replay_opts(&r, &t, &made))?;
                 println!("{}", paths::printed(&m));
-            }
-            Ok(())
-        }
-        Kind::Archive { retry, reindex } => {
-            if retry {
-                archive::retry();
-            } else if reindex {
-                println!("archive: reindexed {} lines", archive::reindex()?);
             }
             Ok(())
         }
@@ -666,13 +611,9 @@ fn main() {
         eprintln!("prec: {e}");
         std::process::exit(1);
     }
-    let renders = matches!(&command, Kind::Clip(_) | Kind::Still(_) | Kind::Render(_));
     let result = watch_signals().and_then(|()| run(command));
     paths::settle();
     jobs::end(&result);
-    if renders {
-        archive::retry_at_start();
-    }
     if let Err(e) = result {
         eprintln!("prec: {e}");
         std::process::exit(1);
@@ -710,7 +651,7 @@ mod tests {
         assert!(s.themes.is_empty() && s.derive.is_empty() && s.web.is_empty());
         assert!(s.fps.is_none() && s.size.is_none() && s.bin.is_none());
         assert!(s.source.app_dir.is_none() && s.source.rev.is_none());
-        assert!(!s.no_archive && !s.allow_private && !s.keep_frames && !s.no_encode);
+        assert!(!s.allow_private && !s.keep_frames && !s.no_encode);
         assert!(s.camera.refuse().is_ok());
         let s = shot(&[
             "prec",
@@ -737,7 +678,6 @@ mod tests {
             "v1.0.0",
             "--seed",
             "9",
-            "--no-archive",
         ]);
         assert_eq!(s.fps, Some(fps::Fps::new(30000, 1001)));
         assert_eq!(s.themes, ["Catppuccin Latte", "Catppuccin Mocha"]);
@@ -748,7 +688,6 @@ mod tests {
         assert_eq!(s.source.app_dir, Some(PathBuf::from("examples/demo")));
         assert_eq!(s.source.rev.as_deref(), Some("v1.0.0"));
         assert_eq!(s.seed, 9);
-        assert!(s.no_archive);
     }
 
     #[test]
@@ -792,7 +731,40 @@ mod tests {
                 !help.contains("--turn") && !help.contains("--key"),
                 "{help}"
             );
+            assert!(!help.contains("archive"), "{help}");
         }
+    }
+
+    #[test]
+    fn the_retired_no_archive_flag_is_accepted_and_hidden_everywhere() {
+        for args in [
+            &["prec", "clip", "alpha", "intro", "--no-archive"][..],
+            &["prec", "still", "alpha", "intro", "--no-archive"],
+            &["prec", "record", "alpha", "intro", "--no-archive"],
+        ] {
+            let s = shot(args);
+            assert!(s.no_archive, "{args:?}");
+            assert_eq!(
+                format!("{:?}", opts(&s, "app", "made")),
+                format!("{:?}", opts(&shot(&args[..4]), "app", "made")),
+                "{args:?}"
+            );
+        }
+        let Kind::Render(r) = parsed(&["prec", "render", "a.cast", "--no-archive"]) else {
+            panic!("render")
+        };
+        assert!(r.no_archive);
+        let Kind::Render(plain) = parsed(&["prec", "render", "a.cast"]) else {
+            panic!("render")
+        };
+        assert_eq!(
+            format!("{:?}", replay_opts(&r, "app", "made")),
+            format!("{:?}", replay_opts(&plain, "app", "made"))
+        );
+        let mut cli = Cli::command();
+        cli.build();
+        let help = cli.render_help().to_string();
+        assert!(!help.contains("archive"), "{help}");
     }
 
     #[test]
@@ -831,8 +803,7 @@ mod tests {
         assert_eq!(o.profile, ["web"]);
         assert!(o.youtube && o.keep_frames && o.no_encode && o.allow_private);
         assert_eq!(o.seed, 7);
-        let Kind::Render(r) = parsed(&["prec", "render", "a.cast", "--seed", "3", "--no-archive"])
-        else {
+        let Kind::Render(r) = parsed(&["prec", "render", "a.cast", "--seed", "3"]) else {
             panic!("render")
         };
         assert_eq!(r.cast, PathBuf::from("a.cast"));
@@ -843,7 +814,6 @@ mod tests {
         assert_eq!(o.fixtures, None);
         assert_eq!(o.theme, "Dracula");
         assert_eq!(o.seed, 3);
-        assert!(o.no_archive);
     }
 
     #[test]
@@ -855,20 +825,6 @@ mod tests {
         };
         assert_eq!(product, "alpha");
         assert_eq!(source.app_dir, Some(PathBuf::from("app")));
-        assert!(matches!(
-            parsed(&["prec", "archive", "--retry"]),
-            Kind::Archive {
-                retry: true,
-                reindex: false
-            }
-        ));
-        assert!(matches!(
-            parsed(&["prec", "archive", "--reindex"]),
-            Kind::Archive {
-                retry: false,
-                reindex: true
-            }
-        ));
         assert!(matches!(
             parsed(&["prec", "themes"]),
             Kind::Themes { all: false }
@@ -974,10 +930,14 @@ mod tests {
             (&["prec"][..], ErrorKind::MissingSubcommand),
             (&["prec", "tui"][..], ErrorKind::InvalidSubcommand),
             (&["prec", "--x"][..], ErrorKind::UnknownArgument),
-            (&["prec", "archive"][..], ErrorKind::MissingRequiredArgument),
+            (&["prec", "archive"][..], ErrorKind::InvalidSubcommand),
             (
-                &["prec", "archive", "--retry", "--reindex"][..],
-                ErrorKind::ArgumentConflict,
+                &["prec", "archive", "--retry"][..],
+                ErrorKind::InvalidSubcommand,
+            ),
+            (
+                &["prec", "archive", "--reindex"][..],
+                ErrorKind::InvalidSubcommand,
             ),
             (
                 &["prec", "cache", "prune", "--dry-run"][..],

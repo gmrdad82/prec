@@ -1,5 +1,4 @@
 use crate::app::{self, DEFAULT_FONT, Resolved, Terminal};
-use crate::archive;
 use crate::compose;
 use crate::encode;
 use crate::font;
@@ -12,6 +11,7 @@ use crate::record::{self, Cast, Timeline};
 use crate::replay::{self, Look, Take};
 use crate::tape;
 use crate::theme::{self, Choice};
+use chrono::{Local, SecondsFormat};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::cell::OnceCell;
@@ -48,17 +48,10 @@ pub struct Opts {
     pub no_encode: bool,
     pub web: Vec<u32>,
     pub profile: Vec<String>,
-    pub no_archive: bool,
     pub allow_private: bool,
 }
 
-pub fn stages(
-    kind: &str,
-    build: bool,
-    record: bool,
-    render: bool,
-    archives: bool,
-) -> Vec<&'static str> {
+pub fn stages(kind: &str, build: bool, record: bool, render: bool) -> Vec<&'static str> {
     let mut out = Vec::new();
     if record {
         if build {
@@ -69,24 +62,43 @@ pub fn stages(
     if render {
         out.push("replay");
         out.push(if kind == "still" { "derive" } else { "master" });
-        if archives {
-            out.push("archive");
-        }
     }
     out
 }
 
-pub fn archives(kind: &str, product: &str, opts: &Opts, app: &Value) -> bool {
-    archive::skip_reason(
-        &archive::Run {
-            no_archive: opts.no_archive,
-            no_encode: opts.no_encode,
-            product,
-            has_master: kind == "still" || !opts.no_encode,
-        },
-        app,
-    )
-    .is_none()
+pub fn made() -> String {
+    Local::now().to_rfc3339_opts(SecondsFormat::Secs, false)
+}
+
+pub fn caller(raw: Option<&str>) -> String {
+    let mut out = String::new();
+    for c in raw.unwrap_or("").to_ascii_lowercase().chars() {
+        if c.is_ascii_lowercase() || c.is_ascii_digit() {
+            out.push(c);
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let result = out.trim_end_matches('-');
+    if result.is_empty() {
+        "manual".into()
+    } else {
+        result.into()
+    }
+}
+
+pub fn version(rev: &str, commit: Option<&str>, named_tag: Option<&str>) -> String {
+    if rev == "local" && commit.is_none() {
+        return "local".into();
+    }
+    let dirty = rev.ends_with("+dirty");
+    let named = rev.trim_end_matches("+dirty");
+    let base = if let Some(name) = named_tag {
+        name.to_string()
+    } else {
+        commit.unwrap_or(named).chars().take(12).collect()
+    };
+    format!("{base}{}", if dirty { "-dirty" } else { "" })
 }
 
 pub fn validate(kind: &str, opts: &Opts) -> Result<(), String> {
@@ -1244,7 +1256,7 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
         "cast: asciicast v2, the recorded session every size, fps and theme renders from",
         json!({"role": "cast"}),
     )?);
-    let version = archive::version(
+    let version = version(
         meta["app"]["rev"].as_str().unwrap_or("local"),
         meta["app"]["commit"].as_str(),
         meta["app"]["tag"].as_str(),
@@ -1257,7 +1269,7 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
     };
     let mut manifest = json!({
         "made": opts.made,
-        "caller": archive::caller(std::env::var("PITO_INVOKER").ok().as_deref()),
+        "caller": caller(std::env::var("PITO_INVOKER").ok().as_deref()),
         "tool": {"name": TOOL, "version": env!("CARGO_PKG_VERSION")},
         "product": product,
         "kind": kind,
@@ -1315,17 +1327,6 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
         manifest["max_grid"] = json!({"cols": g[0], "rows": g[1], "canvas": [c[0], c[1]]});
     }
     let manifest_path = dir.join(format!("{manifest_stem}.json"));
-    let skip = archive::skip_reason(
-        &archive::Run {
-            no_archive: opts.no_archive,
-            no_encode: opts.no_encode,
-            product: &product,
-            has_master: manifest["files"]
-                .as_array()
-                .is_some_and(|files| files.iter().any(|f| f["role"] == "master")),
-        },
-        &manifest["app"],
-    );
     paths::settle();
     let fps = (kind == "clip").then_some(pl.fps);
     let mut stems: Vec<String> = pl.sizes.iter().map(|s| stem_of(*s, fps)).collect();
@@ -1336,7 +1337,7 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
         .map(|s| paths::hold(s, &format!("publishing {s}")))
         .collect::<Result<Vec<_>, _>>()?;
     deliver(&stage, &dir, &manifest["files"], &manifest_path)?;
-    archive::finish(&manifest_path, &mut manifest, skip)?;
+    write_manifest(&manifest_path, &manifest)?;
     let _ = std::fs::remove_dir(&stage);
     if !opts.keep_frames && !opts.no_encode {
         let _ = std::fs::remove_dir_all(work.join("frames"));
@@ -1370,6 +1371,13 @@ fn deliver(stage: &Path, dir: &Path, files: &Value, manifest: &Path) -> Result<(
         move_into(&stage.join(name), &dir.join(name))?;
     }
     Ok(())
+}
+
+fn write_manifest(path: &Path, manifest: &Value) -> Result<(), String> {
+    let text = serde_json::to_string_pretty(manifest).map_err(|e| e.to_string())? + "\n";
+    encode::atomic_file(path, |w| {
+        w.write_all(text.as_bytes()).map_err(|e| e.to_string())
+    })
 }
 
 fn move_into(from: &Path, to: &Path) -> Result<(), String> {
@@ -1457,18 +1465,16 @@ mod tests {
     #[test]
     fn a_job_declares_the_stages_its_run_goes_through() {
         assert_eq!(
-            stages("clip", true, true, true, true),
-            ["build", "record", "replay", "master", "archive"]
+            stages("clip", true, true, true),
+            ["build", "record", "replay", "master"]
         );
         assert_eq!(
-            stages("still", false, true, true, false),
+            stages("still", false, true, true),
             ["record", "replay", "derive"]
         );
-        assert_eq!(stages("clip", true, true, false, true), ["build", "record"]);
-        assert_eq!(
-            stages("clip", false, false, true, true),
-            ["replay", "master", "archive"]
-        );
+        assert_eq!(stages("clip", true, true, false), ["build", "record"]);
+        assert_eq!(stages("clip", false, false, true), ["replay", "master"]);
+        assert_eq!(stages("still", false, false, true), ["replay", "derive"]);
     }
 
     #[test]
@@ -1970,15 +1976,58 @@ mod tests {
                 ("T".to_string(), "x".to_string())
             ]
         );
-        assert!(!archives(
-            "clip",
-            "alpha",
-            &Opts {
-                no_archive: true,
-                ..opts()
-            },
-            &json!({"rev": "v1"})
-        ));
+    }
+
+    #[test]
+    fn a_caller_is_cleaned_and_a_version_names_its_commit_tag_or_local() {
+        assert_eq!(caller(Some("--SiTe__Docs!!")), "site-docs");
+        assert_eq!(caller(Some("Alpha Beta 2")), "alpha-beta-2");
+        assert_eq!(caller(Some("___")), "manual");
+        assert_eq!(caller(None), "manual");
+        assert_eq!(version("local", None, None), "local");
+        assert_eq!(
+            version("main", Some("0123456789abcdef"), None),
+            "0123456789ab"
+        );
+        assert_eq!(
+            version("main+dirty", Some("0123456789abcdef"), None),
+            "0123456789ab-dirty"
+        );
+        assert_eq!(
+            version("v1.2.3", Some("0123456789abcdef"), Some("v1.2.3")),
+            "v1.2.3"
+        );
+        assert_eq!(version("abc1234", None, None), "abc1234");
+        assert_eq!(
+            version("local+dirty", Some("fedcba9876543210"), None),
+            "fedcba987654-dirty"
+        );
+    }
+
+    #[test]
+    fn made_is_local_time_to_the_second_with_its_offset() {
+        let m = made();
+        let t = chrono::DateTime::parse_from_rfc3339(&m).unwrap();
+        assert_eq!(t.to_rfc3339_opts(SecondsFormat::Secs, false), m);
+        assert!(!m.contains('.'), "{m}");
+    }
+
+    #[test]
+    fn a_manifest_is_written_whole_or_not_at_all() {
+        let w = work("manifest");
+        let path = w.join("shot.json");
+        let manifest = json!({"made": "2026-10-02T09:14:07+02:00", "files": []});
+        write_manifest(&path, &manifest).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.ends_with("}\n"), "{text}");
+        assert_eq!(serde_json::from_str::<Value>(&text).unwrap(), manifest);
+        assert!(write_manifest(&w.join("gone/shot.json"), &manifest).is_err());
+        assert!(!w.join("gone").exists());
+        let blocked = w.join("blocked.json");
+        std::fs::create_dir_all(&blocked).unwrap();
+        assert!(write_manifest(&blocked, &manifest).is_err());
+        assert!(blocked.is_dir());
+        assert_eq!(listed(&w), ["blocked.json", "shot.json"]);
     }
 
     fn work(name: &str) -> PathBuf {

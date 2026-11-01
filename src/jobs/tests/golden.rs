@@ -28,79 +28,79 @@ const FULL: &[(&str, &str)] = &[
     ),
     (
         "stages",
-        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":null,"stages":["build","record","replay","master","archive"],"stage_note":null,"progress":null,"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000000000,"ended":null,"exit":null,"error":null}"##,
+        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":null,"stages":["build","record","replay","master","publish"],"stage_note":null,"progress":null,"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000000000,"ended":null,"exit":null,"error":null}"##,
     ),
     (
         "stage-build",
-        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"build","stages":["build","record","replay","master","archive"],"stage_note":null,"progress":{"done":0,"total":null,"unit":"steps"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000000250,"ended":null,"exit":null,"error":null}"##,
+        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"build","stages":["build","record","replay","master","publish"],"stage_note":null,"progress":{"done":0,"total":null,"unit":"steps"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000000250,"ended":null,"exit":null,"error":null}"##,
     ),
     (
         "note-build",
-        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"build","stages":["build","record","replay","master","archive"],"stage_note":"demo@abc1234","progress":{"done":0,"total":null,"unit":"steps"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000000250,"ended":null,"exit":null,"error":null}"##,
+        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"build","stages":["build","record","replay","master","publish"],"stage_note":"demo@abc1234","progress":{"done":0,"total":null,"unit":"steps"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000000250,"ended":null,"exit":null,"error":null}"##,
     ),
     (
         "stage-record",
-        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"record","stages":["build","record","replay","master","archive"],"stage_note":null,"progress":{"done":0,"total":null,"unit":"seconds"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000004000,"ended":null,"exit":null,"error":null}"##,
+        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"record","stages":["build","record","replay","master","publish"],"stage_note":null,"progress":{"done":0,"total":null,"unit":"seconds"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000004000,"ended":null,"exit":null,"error":null}"##,
     ),
     (
         "progress-record-1",
-        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"record","stages":["build","record","replay","master","archive"],"stage_note":null,"progress":{"done":1,"total":null,"unit":"seconds"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000005000,"ended":null,"exit":null,"error":null}"##,
+        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"record","stages":["build","record","replay","master","publish"],"stage_note":null,"progress":{"done":1,"total":null,"unit":"seconds"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000005000,"ended":null,"exit":null,"error":null}"##,
     ),
     (
         "progress-record-throttled",
-        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"record","stages":["build","record","replay","master","archive"],"stage_note":null,"progress":{"done":1,"total":null,"unit":"seconds"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000005000,"ended":null,"exit":null,"error":null}"##,
+        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"record","stages":["build","record","replay","master","publish"],"stage_note":null,"progress":{"done":1,"total":null,"unit":"seconds"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000005000,"ended":null,"exit":null,"error":null}"##,
     ),
     (
         "stage-replay",
-        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"replay","stages":["build","record","replay","master","archive"],"stage_note":null,"progress":{"done":0,"total":90,"unit":"frames"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000006000,"ended":null,"exit":null,"error":null}"##,
+        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"replay","stages":["build","record","replay","master","publish"],"stage_note":null,"progress":{"done":0,"total":90,"unit":"frames"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000006000,"ended":null,"exit":null,"error":null}"##,
     ),
     (
         "note-replay",
-        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"replay","stages":["build","record","replay","master","archive"],"stage_note":"dark","progress":{"done":0,"total":90,"unit":"frames"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000006000,"ended":null,"exit":null,"error":null}"##,
+        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"replay","stages":["build","record","replay","master","publish"],"stage_note":"dark","progress":{"done":0,"total":90,"unit":"frames"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000006000,"ended":null,"exit":null,"error":null}"##,
     ),
     (
         "progress-replay-0",
-        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"replay","stages":["build","record","replay","master","archive"],"stage_note":"dark","progress":{"done":0,"total":90,"unit":"frames"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000006000,"ended":null,"exit":null,"error":null}"##,
+        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"replay","stages":["build","record","replay","master","publish"],"stage_note":"dark","progress":{"done":0,"total":90,"unit":"frames"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000006000,"ended":null,"exit":null,"error":null}"##,
     ),
     (
         "progress-replay-30",
-        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"replay","stages":["build","record","replay","master","archive"],"stage_note":"dark","progress":{"done":30,"total":90,"unit":"frames"},"rate":30.0,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000007000,"ended":null,"exit":null,"error":null}"##,
+        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"replay","stages":["build","record","replay","master","publish"],"stage_note":"dark","progress":{"done":30,"total":90,"unit":"frames"},"rate":30.0,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000007000,"ended":null,"exit":null,"error":null}"##,
     ),
     (
         "progress-replay-70",
-        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"replay","stages":["build","record","replay","master","archive"],"stage_note":"dark","progress":{"done":70,"total":90,"unit":"frames"},"rate":20.0,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000009500,"ended":null,"exit":null,"error":null}"##,
+        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"replay","stages":["build","record","replay","master","publish"],"stage_note":"dark","progress":{"done":70,"total":90,"unit":"frames"},"rate":20.0,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000009500,"ended":null,"exit":null,"error":null}"##,
     ),
     (
         "progress-replay-80",
-        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"replay","stages":["build","record","replay","master","archive"],"stage_note":"dark","progress":{"done":80,"total":90,"unit":"frames"},"rate":17.39130434782609,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000010600,"ended":null,"exit":null,"error":null}"##,
+        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"replay","stages":["build","record","replay","master","publish"],"stage_note":"dark","progress":{"done":80,"total":90,"unit":"frames"},"rate":17.39130434782609,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000010600,"ended":null,"exit":null,"error":null}"##,
     ),
     (
         "note-extra",
-        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"replay","stages":["build","record","replay","master","archive"],"stage_note":"dark archive skipped: no archive","progress":{"done":80,"total":90,"unit":"frames"},"rate":17.39130434782609,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000010600,"ended":null,"exit":null,"error":null}"##,
+        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"replay","stages":["build","record","replay","master","publish"],"stage_note":"dark publish skipped: no target","progress":{"done":80,"total":90,"unit":"frames"},"rate":17.39130434782609,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000010600,"ended":null,"exit":null,"error":null}"##,
     ),
     (
-        "stage-archive",
-        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"archive","stages":["build","record","replay","master","archive"],"stage_note":null,"progress":{"done":0,"total":1,"unit":"outputs"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000010600,"ended":null,"exit":null,"error":null}"##,
+        "stage-publish",
+        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"publish","stages":["build","record","replay","master","publish"],"stage_note":null,"progress":{"done":0,"total":1,"unit":"outputs"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000010600,"ended":null,"exit":null,"error":null}"##,
     ),
     (
-        "note-archive",
-        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"archive","stages":["build","record","replay","master","archive"],"stage_note":"dark","progress":{"done":0,"total":1,"unit":"outputs"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000010600,"ended":null,"exit":null,"error":null}"##,
+        "note-publish",
+        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"publish","stages":["build","record","replay","master","publish"],"stage_note":"dark","progress":{"done":0,"total":1,"unit":"outputs"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000010600,"ended":null,"exit":null,"error":null}"##,
     ),
     (
-        "progress-archive",
-        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"archive","stages":["build","record","replay","master","archive"],"stage_note":"dark","progress":{"done":1,"total":1,"unit":"outputs"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000011000,"ended":null,"exit":null,"error":null}"##,
+        "progress-publish",
+        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"running","stage":"publish","stages":["build","record","replay","master","publish"],"stage_note":"dark","progress":{"done":1,"total":1,"unit":"outputs"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000011000,"ended":null,"exit":null,"error":null}"##,
     ),
     (
         "finish",
-        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"done","stage":"archive","stages":["build","record","replay","master","archive"],"stage_note":"dark","progress":{"done":1,"total":1,"unit":"outputs"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000011200,"ended":1791000011200,"exit":0,"error":null}"##,
+        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"done","stage":"publish","stages":["build","record","replay","master","publish"],"stage_note":"dark","progress":{"done":1,"total":1,"unit":"outputs"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000011200,"ended":1791000011200,"exit":0,"error":null}"##,
     ),
     (
         "after-finish",
-        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"done","stage":"archive","stages":["build","record","replay","master","archive"],"stage_note":"dark","progress":{"done":1,"total":1,"unit":"outputs"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000011200,"ended":1791000011200,"exit":0,"error":null}"##,
+        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"done","stage":"publish","stages":["build","record","replay","master","publish"],"stage_note":"dark","progress":{"done":1,"total":1,"unit":"outputs"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000011200,"ended":1791000011200,"exit":0,"error":null}"##,
     ),
     (
         "after-drop",
-        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"done","stage":"archive","stages":["build","record","replay","master","archive"],"stage_note":"dark","progress":{"done":1,"total":1,"unit":"outputs"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000011200,"ended":1791000011200,"exit":0,"error":null}"##,
+        r##"{"v":1,"id":"@HOST@:@PID@:1791000000000","host":"@HOST@","pid":@PID@,"pid_start":@PSTART@,"tool":"prec","app":"demo","label":"intro","detail":"demo intro 1280x720 30 fps","invoker":"agent","parent":"desk:9:100","state":"done","stage":"publish","stages":["build","record","replay","master","publish"],"stage_note":"dark","progress":{"done":1,"total":1,"unit":"outputs"},"rate":null,"pgpu":{"pid":4242,"as":"prec"},"device":"cpu: 4 threads","out":"/srv/renders/demo","started":1791000000000,"updated":1791000011200,"ended":1791000011200,"exit":0,"error":null}"##,
     ),
 ];
 
@@ -192,7 +192,7 @@ fn a_job_writes_the_bytes_pito_jobs_wrote() {
     same(&dir, "device");
     let job = job.out("/srv/renders/demo");
     same(&dir, "out");
-    job.stages(&["build", "record", "replay", "master", "archive"]);
+    job.stages(&["build", "record", "replay", "master", "publish"]);
     same(&dir, "stages");
     at(&ms, 250);
     job.stage("build", None, "steps");
@@ -224,15 +224,15 @@ fn a_job_writes_the_bytes_pito_jobs_wrote() {
     at(&ms, 10_600);
     job.progress(80);
     same(&dir, "progress-replay-80");
-    job.stage_note("dark archive skipped: no archive");
+    job.stage_note("dark publish skipped: no target");
     same(&dir, "note-extra");
-    job.stage("archive", Some(1), "outputs");
-    same(&dir, "stage-archive");
+    job.stage("publish", Some(1), "outputs");
+    same(&dir, "stage-publish");
     job.stage_note("dark");
-    same(&dir, "note-archive");
+    same(&dir, "note-publish");
     at(&ms, 11_000);
     job.progress(1);
-    same(&dir, "progress-archive");
+    same(&dir, "progress-publish");
     at(&ms, 11_200);
     job.finish(0);
     same(&dir, "finish");
@@ -263,7 +263,7 @@ fn a_render_through_prec_s_calls_writes_the_same_bytes() {
         )
     });
     same(&dir, "out");
-    slot.stages(&["build", "record", "replay", "master", "archive"]);
+    slot.stages(&["build", "record", "replay", "master", "publish"]);
     same(&dir, "stages");
     at(&ms, 250);
     slot.stage("build", None, "steps");
@@ -294,13 +294,13 @@ fn a_render_through_prec_s_calls_writes_the_same_bytes() {
     at(&ms, 10_600);
     slot.progress(80);
     same(&dir, "progress-replay-80");
-    slot.note("archive skipped: no archive");
+    slot.note("publish skipped: no target");
     same(&dir, "note-extra");
-    slot.stage("archive", Some(1), "outputs");
-    same(&dir, "note-archive");
+    slot.stage("publish", Some(1), "outputs");
+    same(&dir, "note-publish");
     at(&ms, 11_000);
     slot.progress(1);
-    same(&dir, "progress-archive");
+    same(&dir, "progress-publish");
     at(&ms, 11_200);
     slot.end(&Ok(()));
     same(&dir, "finish");

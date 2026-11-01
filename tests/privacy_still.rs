@@ -70,11 +70,9 @@ fn a_passed_value_reaches_the_still_app_and_no_file_the_render_wrote() {
     let mut text = std::fs::read_to_string(&toml).unwrap();
     text.push_str("\n[shots.quiet]\nkind = \"still\"\ntape = \"render/terminal/quiet.tape\"\n");
     std::fs::write(&toml, text).unwrap();
-    let archive = dir.join("archive");
     let jobs = dir.join("jobs");
     let o = common::prec(
         &dir,
-        &archive,
         &[
             "still",
             "demo",

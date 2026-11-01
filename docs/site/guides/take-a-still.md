@@ -15,7 +15,6 @@ prec still demo palette --app-dir examples/demo --size 1080p --derive 720p --web
 recording demo palette in a 60x16 pty…
 recorded 1.30s shown, 237 events → tmp/prec/run/demo-still-palette-cast-234771/demo-still-palette.cast
 replaying demo palette to 2.35s at 1920x1080…
-archive: skipped (unconfigured)
 tmp/renders/demo/still/demo-still-palette-1920x1080.json
 ```
 
