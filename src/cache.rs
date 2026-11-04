@@ -1,18 +1,19 @@
 use crate::paths::{self, Lock};
-use serde_json::{Value, json};
 use std::fs::{self, File, OpenOptions};
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const ENV: &str = "PREC_CACHE";
-pub const PRUNE_DAYS: u64 = 30;
+const PRUNE_DAYS: u64 = 30;
 const USED: &str = ".used";
 const OK: &str = ".ok";
 const NAME_CAP: usize = 64;
+const STAMP: &str = ".pruned";
+const DAY: u64 = 86400;
 const SECTIONS: [&str; 5] = ["git", "src", "work", "target", "bin"];
+const NESTED: [&str; 2] = ["src", "bin"];
 
 static HELD: Mutex<Vec<File>> = Mutex::new(Vec::new());
 
@@ -56,16 +57,6 @@ pub fn repo_key(identity: &str) -> String {
     format!("{name}-{}", &paths::hash_bytes(n.as_bytes())[..12])
 }
 
-pub fn build_key(commit: &str, command: &str, bin_dir: &str) -> String {
-    let keyed = if command.contains('\n') || bin_dir.contains('\n') {
-        format!("\0{}\n{command}\n{bin_dir}", command.len())
-    } else {
-        format!("{command}\n{bin_dir}")
-    };
-    let h = paths::hash_bytes(keyed.as_bytes());
-    format!("{}-{}", &commit[..commit.len().min(12)], &h[..12])
-}
-
 pub fn dir(parts: &[&str]) -> Result<PathBuf, String> {
     let mut d = root();
     for p in parts {
@@ -82,11 +73,7 @@ fn lock_path(root: &Path, section: &str, name: &str) -> PathBuf {
 }
 
 fn entry_path(root: &Path, section: &str, name: &str) -> PathBuf {
-    let mut p = root.join(section);
-    for part in name.split('@') {
-        p.push(part);
-    }
-    p
+    root.join(section).join(name)
 }
 
 fn named(entry: &Path) -> Option<(PathBuf, String, String)> {
@@ -94,13 +81,9 @@ fn named(entry: &Path) -> Option<(PathBuf, String, String)> {
     let parent = entry.parent()?;
     let up = parent.file_name()?.to_string_lossy().to_string();
     let grand = parent.parent()?;
-    let top = grand.file_name()?.to_string_lossy().to_string();
-    if ["git", "work", "target"].contains(&up.as_str()) {
-        return Some((grand.to_path_buf(), up, leaf));
-    }
-    (top == "src" || top == "bin")
-        .then(|| Some((grand.parent()?.to_path_buf(), top, format!("{up}@{leaf}"))))
-        .flatten()
+    ["git", "work", "target"]
+        .contains(&up.as_str())
+        .then(|| (grand.to_path_buf(), up, leaf))
 }
 
 pub struct Exclusive {
@@ -138,14 +121,6 @@ pub fn hold(entry: &Path) -> Result<bool, String> {
     Ok(true)
 }
 
-pub fn entry(
-    section: &str,
-    name: &str,
-    build: impl FnMut(&Path) -> Result<(), String>,
-) -> Result<PathBuf, String> {
-    entry_in(&root(), section, name, build)
-}
-
 fn entry_in(
     root: &Path,
     section: &str,
@@ -173,11 +148,7 @@ fn entry_in(
 }
 
 pub fn touch(entry: &Path) {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let _ = fs::write(entry.join(USED), now.to_string());
+    let _ = fs::write(entry.join(USED), now_secs().to_string());
 }
 
 pub fn last_used(entry: &Path) -> u64 {
@@ -254,21 +225,6 @@ impl Growth {
             );
         }
     }
-}
-
-pub fn source(gitdir: &Path, key: &str, commit: &str) -> Result<PathBuf, String> {
-    source_in(&root(), gitdir, key, commit)
-}
-
-fn source_in(root: &Path, gitdir: &Path, key: &str, commit: &str) -> Result<PathBuf, String> {
-    entry_in(root, "src", &format!("{key}@{commit}"), |path| {
-        paths::fresh(path)?;
-        let index = path.with_extension("index");
-        let _ = fs::remove_file(&index);
-        let checked_out = checkout(gitdir, &index, path, commit);
-        let _ = fs::remove_file(&index);
-        checked_out
-    })
 }
 
 fn checkout(gitdir: &Path, index: &Path, tree: &Path, commit: &str) -> Result<(), String> {
@@ -376,12 +332,10 @@ pub fn keep(from: &Path, to: &Path) -> Result<u64, String> {
     Ok(copied)
 }
 
-#[derive(Clone)]
 pub struct Entry {
     pub section: String,
     pub name: String,
     pub path: PathBuf,
-    pub size: u64,
     pub used: u64,
 }
 
@@ -397,7 +351,7 @@ pub fn entries_in(root: &Path) -> Vec<Entry> {
                 continue;
             }
             let rname = repo.file_name().to_string_lossy().to_string();
-            if section == "src" || section == "bin" {
+            if NESTED.contains(&section) {
                 let Ok(inner) = fs::read_dir(&rp) else {
                     continue;
                 };
@@ -407,7 +361,6 @@ pub fn entries_in(root: &Path) -> Vec<Entry> {
                         out.push(Entry {
                             section: section.into(),
                             name: format!("{rname}@{}", c.file_name().to_string_lossy()),
-                            size: size(&cp),
                             used: last_used(&cp),
                             path: cp,
                         });
@@ -417,109 +370,69 @@ pub fn entries_in(root: &Path) -> Vec<Entry> {
                 out.push(Entry {
                     section: section.into(),
                     name: rname,
-                    size: size(&rp),
                     used: last_used(&rp),
                     path: rp,
                 });
             }
         }
     }
-    out.sort_by(|a, b| {
-        (a.section.as_str(), a.name.as_str()).cmp(&(b.section.as_str(), b.name.as_str()))
-    });
     out
 }
 
-fn claim(root: &Path, entry: &Entry, create: bool) -> Option<Option<File>> {
+fn claim(root: &Path, entry: &Entry) -> Option<File> {
     let path = lock_path(root, &entry.section, &entry.name);
-    if create && let Some(parent) = path.parent() {
+    if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).ok()?;
     }
-    let f = match OpenOptions::new()
+    let f = OpenOptions::new()
         .read(true)
-        .write(create)
-        .create(create)
+        .write(true)
+        .create(true)
         .truncate(false)
         .open(&path)
-    {
-        Ok(f) => f,
-        Err(e) if e.kind() == ErrorKind::NotFound => return Some(None),
-        Err(_) => return None,
-    };
+        .ok()?;
     f.try_lock().ok()?;
-    Some(Some(f))
+    Some(f)
 }
 
-pub struct Gone {
-    pub section: String,
-    pub name: String,
-    pub size: u64,
+fn writable(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let Ok(meta) = fs::symlink_metadata(path) else {
+        return;
+    };
+    if !meta.is_dir() {
+        return;
+    }
+    let mode = meta.permissions().mode();
+    if mode & 0o700 != 0o700 {
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode | 0o700));
+    }
+    if let Ok(rd) = fs::read_dir(path) {
+        for e in rd.filter_map(|e| e.ok()) {
+            writable(&e.path());
+        }
+    }
 }
 
-pub struct Pruned {
-    pub removed: Vec<Gone>,
-    pub kept_in_use: Vec<String>,
-}
-
-pub fn prune_in(root: &Path, older_than: Duration, all: bool, now: u64, dry_run: bool) -> Pruned {
-    prune_entries(root, entries_in(root), older_than, all, now, dry_run)
-}
-
-fn prune_entries(
-    root: &Path,
-    entries: Vec<Entry>,
-    older_than: Duration,
-    all: bool,
-    now: u64,
-    dry_run: bool,
-) -> Pruned {
+pub fn prune_in(root: &Path, now: u64) -> Vec<String> {
+    let cutoff = now.saturating_sub(PRUNE_DAYS * DAY);
     let mut removed = Vec::new();
-    let mut kept_in_use = Vec::new();
-    let cutoff = now.saturating_sub(older_than.as_secs());
-    for e in entries {
-        if !all && e.used >= cutoff {
+    for e in entries_in(root) {
+        if e.used >= cutoff {
             continue;
         }
-        let Some(claimed) = claim(root, &e, !dry_run) else {
-            kept_in_use.push(format!("{}/{}", e.section, e.name));
+        let Some(claimed) = claim(root, &e) else {
             continue;
         };
-        if !dry_run {
-            let _ = fs::remove_file(e.path.join(OK));
-            let gone = fs::remove_dir_all(&e.path).is_ok();
-            drop(claimed);
-            if !gone {
-                continue;
-            }
+        let _ = fs::remove_file(e.path.join(OK));
+        writable(&e.path);
+        let gone = fs::remove_dir_all(&e.path).is_ok();
+        drop(claimed);
+        if gone {
+            removed.push(format!("{}/{}", e.section, e.name));
         }
-        removed.push(Gone {
-            section: e.section,
-            name: e.name,
-            size: e.size,
-        });
     }
-    Pruned {
-        removed,
-        kept_in_use,
-    }
-}
-
-pub fn parse_age(s: &str) -> Result<Duration, String> {
-    let s = s.trim();
-    let (num, unit) = s.split_at(s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len()));
-    let n: u64 = num
-        .parse()
-        .map_err(|_| format!("--older-than {s}: e.g. 30d, 12h or 90m"))?;
-    let unit = match unit {
-        "" | "d" => 86400,
-        "h" => 3600,
-        "m" => 60,
-        "w" => 7 * 86400,
-        _ => return Err(format!("--older-than {s}: e.g. 30d, 12h or 90m")),
-    };
-    n.checked_mul(unit)
-        .map(Duration::from_secs)
-        .ok_or_else(|| format!("--older-than {s}: e.g. 30d, 12h or 90m"))
+    removed
 }
 
 fn now_secs() -> u64 {
@@ -529,155 +442,66 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+fn tidy_in(root: &Path, now: u64) -> Option<Vec<String>> {
+    if !root.is_dir() {
+        return None;
+    }
+    let stamp = root.join(STAMP);
+    if let Ok(s) = fs::read_to_string(&stamp)
+        && let Ok(t) = s.trim().parse::<u64>()
+        && t <= now
+        && now - t < DAY
+    {
+        return None;
+    }
+    fs::write(&stamp, now.to_string()).ok()?;
+    Some(prune_in(root, now))
 }
 
-pub fn show() -> Result<(), String> {
-    let r = root();
-    let entries = entries_in(&r);
-    let total: u64 = size(&r);
-    println!("cache: {} ({})", r.display(), human(total));
-    if std::env::var_os(ENV).is_some() {
-        println!("       set by {ENV}");
-    }
-    let now = now_secs();
-    for e in &entries {
-        let age = now.saturating_sub(e.used);
-        let ago = if age >= 86400 {
-            format!("{}d ago", age / 86400)
-        } else if age >= 3600 {
-            format!("{}h ago", age / 3600)
-        } else {
-            format!("{}m ago", age / 60)
-        };
-        println!(
-            "  {:<7} {:<48} {:>9}  used {ago}",
-            e.section,
-            e.name,
-            human(e.size)
-        );
-    }
-    if entries.is_empty() {
-        println!("  (empty)");
-    }
-    Ok(())
-}
-
-fn repo_of(name: &str) -> String {
-    let base = name.split_once('@').map_or(name, |(b, _)| b);
-    let base = base.strip_suffix(".git").unwrap_or(base);
-    match base.rsplit_once('-') {
-        Some((repo, h)) if h.len() == 12 && h.chars().all(|c| c.is_ascii_hexdigit()) => {
-            repo.to_string()
-        }
-        _ => base.to_string(),
-    }
-}
-
-pub fn report_in(root: &Path, set_by: Option<&str>, tool_version: &str, now: u64) -> Value {
-    let entries = entries_in(root);
-    let stale = prune_entries(
-        root,
-        entries.clone(),
-        Duration::from_secs(PRUNE_DAYS * 86400),
-        false,
-        now / 1000,
-        true,
-    );
-    let listed: Vec<Value> = entries
-        .iter()
-        .map(|e| {
-            json!({
-                "section": e.section,
-                "name": e.name,
-                "repo": repo_of(&e.name),
-                "path": e.path.display().to_string(),
-                "bytes": e.size,
-                "used": e.used * 1000,
-                "in_use": claim(root, e, false).is_none(),
-            })
-        })
-        .collect();
-    json!({
-        "v": 1,
-        "tool": "prec",
-        "tool_version": tool_version,
-        "root": root.display().to_string(),
-        "root_set_by": set_by,
-        "bytes": size(root),
-        "at": now,
-        "entries": listed,
-        "prune": {
-            "after_days": PRUNE_DAYS,
-            "stale_bytes": stale.removed.iter().map(|g| g.size).sum::<u64>(),
-        },
-    })
-}
-
-pub fn show_json() -> Result<(), String> {
-    let r = root();
-    let r = std::path::absolute(&r).unwrap_or(r);
-    let set_by = std::env::var_os(ENV).filter(|p| !p.is_empty()).map(|_| ENV);
-    let report = report_in(&r, set_by, env!("CARGO_PKG_VERSION"), now_ms());
-    println!("{report}");
-    Ok(())
-}
-
-pub fn prune_report(pruned: &Pruned) -> Value {
-    json!({
-        "v": 1,
-        "freed": pruned.removed.iter().map(|g| g.size).sum::<u64>(),
-        "removed": pruned
-            .removed
-            .iter()
-            .map(|g| json!({"section": g.section, "name": g.name, "bytes": g.size}))
-            .collect::<Vec<_>>(),
-        "kept_in_use": pruned.kept_in_use.len(),
-    })
-}
-
-pub fn prune(older_than: Option<&str>, all: bool, json: bool, dry_run: bool) -> Result<(), String> {
-    let age = match older_than {
-        Some(s) => parse_age(s)?,
-        None => Duration::from_secs(PRUNE_DAYS * 86400),
-    };
-    let pruned = prune_in(&root(), age, all, now_secs(), dry_run);
-    if json {
-        println!("{}", prune_report(&pruned));
-        return Ok(());
-    }
-    let total: u64 = pruned.removed.iter().map(|g| g.size).sum();
-    for g in &pruned.removed {
-        println!("removed {}/{} ({})", g.section, g.name, human(g.size));
-    }
-    for name in &pruned.kept_in_use {
-        println!("kept    {name} (in use)");
-    }
-    println!(
-        "freed {} from {}; cache now {}",
-        human(total),
-        root().display(),
-        human(size(&root()))
-    );
-    Ok(())
+pub fn tidy() {
+    tidy_in(&root(), now_secs());
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    const NOW: u64 = 10_000_000;
 
     fn scratch_root(name: &str) -> PathBuf {
         let d = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tmp")
             .join("test-cache")
             .join(name);
+        writable(&d);
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    fn mk(r: &Path, rel: &str, used: u64) -> PathBuf {
+        let d = r.join(rel);
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("payload"), b"x").unwrap();
+        fs::write(d.join(USED), used.to_string()).unwrap();
+        d
+    }
+
+    fn shared(r: &Path, section: &str, name: &str) -> File {
+        paths::lock(&lock_path(r, section, name), Lock::Shared, "test").unwrap()
+    }
+
+    fn ready_entry(r: &Path, rel: &str) -> PathBuf {
+        let e = r.join(rel);
+        fs::create_dir_all(&e).unwrap();
+        fs::write(e.join("payload"), b"x").unwrap();
+        mark_ready(&e).unwrap();
+        e
+    }
+
+    fn far(r: &Path) -> Vec<String> {
+        prune_in(r, now_secs() + (PRUNE_DAYS + 1) * DAY)
     }
 
     #[test]
@@ -689,30 +513,6 @@ mod tests {
         assert!(a.starts_with("pito-work-"));
         assert_ne!(a, repo_key("ssh://git@github.com/gmrdad82/pito-pigeon.git"));
         assert_ne!(a, repo_key("/work/someone/app-work"));
-    }
-
-    #[test]
-    fn a_build_is_keyed_by_commit_and_its_command() {
-        let c = "0123456789abcdef0123456789abcdef01234567";
-        let k1 = build_key(c, "cargo build --release", "{target}/release");
-        assert!(k1.starts_with("0123456789ab-"));
-        assert_eq!(
-            k1,
-            build_key(c, "cargo build --release", "{target}/release")
-        );
-        assert_ne!(
-            k1,
-            build_key(c, "cargo build --release -p x", "{target}/release")
-        );
-        assert_ne!(k1, build_key(c, "cargo build --release", "{target}/debug"));
-        assert_ne!(
-            k1,
-            build_key(
-                "fedcba9876543210fedcba9876543210fedcba98",
-                "cargo build --release",
-                "{target}/release"
-            )
-        );
     }
 
     #[test]
@@ -728,221 +528,243 @@ mod tests {
     }
 
     #[test]
-    fn ages_read_in_days_hours_minutes_and_weeks() {
-        assert_eq!(parse_age("7d").unwrap(), Duration::from_secs(7 * 86400));
-        assert_eq!(parse_age("12h").unwrap(), Duration::from_secs(12 * 3600));
-        assert_eq!(parse_age("90m").unwrap(), Duration::from_secs(90 * 60));
-        assert_eq!(parse_age("2w").unwrap(), Duration::from_secs(14 * 86400));
-        assert_eq!(parse_age("30").unwrap(), Duration::from_secs(30 * 86400));
-        assert_eq!(parse_age(" 3h ").unwrap(), Duration::from_secs(3 * 3600));
-        for bad in [
-            "soon",
-            "",
-            "d",
-            "-1d",
-            "5x",
-            "1.5d",
-            "7 d",
-            "99999999999999999999d",
-            "999999999999999d",
-            "99999999999999999w",
-        ] {
-            assert_eq!(
-                parse_age(bad).unwrap_err(),
-                format!("--older-than {}: e.g. 30d, 12h or 90m", bad.trim()),
-                "{bad}"
-            );
-        }
-    }
-
-    fn populate(r: &Path, now: u64) -> PathBuf {
-        let mk = |rel: &str, used: u64, bytes: usize| {
-            let d = r.join(rel);
-            fs::create_dir_all(&d).unwrap();
-            fs::write(d.join("payload"), vec![0u8; bytes]).unwrap();
-            fs::write(d.join(USED), used.to_string()).unwrap();
-            d
-        };
-        mk("src/app-aaaaaaaaaaaa/old", now - 40 * 86400, 1000);
-        mk("src/app-aaaaaaaaaaaa/new", now - 86400, 500);
-        let held = mk("bin/app-aaaaaaaaaaaa/old-held", now - 40 * 86400, 2000);
-        mk("target/app-aaaaaaaaaaaa", now - 60 * 86400, 4000);
-        mk("git/app-aaaaaaaaaaaa.git", now - 5 * 86400, 100);
-        mk("work/other-bbbbbbbbbbbb", now - 1, 50);
-        held
-    }
-
-    fn stale_size(r: &Path) -> u64 {
-        size(&r.join("src/app-aaaaaaaaaaaa/old")) + size(&r.join("target/app-aaaaaaaaaaaa"))
-    }
-
-    fn prune_days(r: &Path, all: bool, now: u64, dry_run: bool) -> Pruned {
-        prune_in(
-            r,
-            Duration::from_secs(PRUNE_DAYS * 86400),
-            all,
-            now,
-            dry_run,
-        )
+    fn a_stale_entry_goes_and_a_fresh_one_stays() {
+        let r = scratch_root("prune-age");
+        let stale = mk(&r, "target/app-aaaaaaaaaaaa", NOW - 31 * DAY);
+        let edge = mk(&r, "work/app-bbbbbbbbbbbb", NOW - 30 * DAY);
+        let fresh = mk(&r, "target/other-cccccccccccc", NOW - DAY);
+        let removed = prune_in(&r, NOW);
+        assert_eq!(removed, ["target/app-aaaaaaaaaaaa"]);
+        assert!(!stale.exists());
+        assert!(edge.exists());
+        assert!(fresh.exists());
+        let _ = fs::remove_dir_all(&r);
     }
 
     #[test]
-    fn prune_takes_the_stale_and_leaves_the_fresh_and_the_held() {
-        let r = scratch_root("prune");
-        let now = 10_000_000;
-        let held = populate(&r, now);
-        let lock = shared(&r, "bin", "app-aaaaaaaaaaaa@old-held");
-        let pruned = prune_days(&r, false, now, false);
-        let names: Vec<_> = pruned
-            .removed
-            .iter()
-            .map(|g| format!("{}/{}", g.section, g.name))
-            .collect();
-        assert!(names.contains(&"src/app-aaaaaaaaaaaa@old".to_string()));
-        assert!(names.contains(&"target/app-aaaaaaaaaaaa".to_string()));
-        assert!(!names.contains(&"src/app-aaaaaaaaaaaa@new".to_string()));
-        assert_eq!(
-            pruned.kept_in_use,
-            vec!["bin/app-aaaaaaaaaaaa@old-held".to_string()]
-        );
-        assert!(r.join("src/app-aaaaaaaaaaaa/new").exists());
-        assert!(held.exists());
+    fn a_stale_entry_a_run_holds_stays_until_the_run_lets_go() {
+        let r = scratch_root("prune-held");
+        let held = mk(&r, "target/app-aaaaaaaaaaaa", NOW - 60 * DAY);
+        let lock = shared(&r, "target", "app-aaaaaaaaaaaa");
+        assert!(prune_in(&r, NOW).is_empty());
+        assert!(held.join("payload").exists());
         drop(lock);
         paths::quiesce();
-        let all = prune_days(&r, true, now, false);
-        assert!(
-            all.removed
-                .iter()
-                .any(|g| g.section == "src" && g.name == "app-aaaaaaaaaaaa@new")
-        );
-        assert!(all.kept_in_use.is_empty());
+        assert_eq!(prune_in(&r, NOW), ["target/app-aaaaaaaaaaaa"]);
         assert!(!held.exists());
         let _ = fs::remove_dir_all(&r);
     }
 
     #[test]
-    fn the_repo_is_the_name_without_its_hash() {
-        assert_eq!(repo_of("pito-app-5f514e3aeabc@f17d634909c2"), "pito-app");
-        assert_eq!(repo_of("pito-app-5f514e3aeabc.git"), "pito-app");
-        assert_eq!(repo_of("pito-app-5f514e3aeabc"), "pito-app");
-        assert_eq!(repo_of("plain"), "plain");
-        assert_eq!(repo_of("my-repo"), "my-repo");
+    fn a_build_tree_a_build_holds_stays() {
+        let r = scratch_root("prune-building");
+        let tree = mk(&r, "work/app-aaaaaaaaaaaa", NOW - 60 * DAY);
+        let building = paths::lock(
+            &lock_path(&r, "work", "app-aaaaaaaaaaaa"),
+            Lock::Exclusive,
+            "test",
+        )
+        .unwrap();
+        assert!(prune_in(&r, NOW).is_empty());
+        assert!(tree.exists());
+        drop(building);
+        let _ = fs::remove_dir_all(&r);
     }
 
     #[test]
-    fn the_report_has_the_agreed_keys_and_counts() {
-        let r = scratch_root("report");
-        let now = 10_000_000;
-        let held = populate(&r, now);
-        assert!(held.exists());
-        let lock = shared(&r, "bin", "app-aaaaaaaaaaaa@old-held");
-        let v = report_in(&r, Some(ENV), "9.9.9", now * 1000);
-        let mut top: Vec<_> = v.as_object().unwrap().keys().cloned().collect();
-        top.sort();
+    fn entries_an_older_prec_left_are_found_and_pruned_by_the_same_rule() {
+        let r = scratch_root("prune-retired");
+        let old_src = mk(&r, "src/app-aaaaaaaaaaaa/abc", NOW - 40 * DAY);
+        let new_src = mk(&r, "src/app-aaaaaaaaaaaa/def", NOW - DAY);
+        let old_bin = mk(&r, "bin/app-aaaaaaaaaaaa/abc-123", NOW - 40 * DAY);
+        let old_git = mk(&r, "git/app-aaaaaaaaaaaa.git", NOW - 40 * DAY);
+        let held = mk(&r, "bin/app-aaaaaaaaaaaa/held", NOW - 40 * DAY);
+        let lock = shared(&r, "bin", "app-aaaaaaaaaaaa@held");
+        let mut removed = prune_in(&r, NOW);
+        removed.sort();
         assert_eq!(
-            top,
+            removed,
             [
-                "at",
-                "bytes",
-                "entries",
-                "prune",
-                "root",
-                "root_set_by",
-                "tool",
-                "tool_version",
-                "v"
+                "bin/app-aaaaaaaaaaaa@abc-123",
+                "git/app-aaaaaaaaaaaa.git",
+                "src/app-aaaaaaaaaaaa@abc"
             ]
         );
-        assert_eq!(v["v"], 1);
-        assert_eq!(v["tool"], "prec");
-        assert_eq!(v["tool_version"], "9.9.9");
-        assert_eq!(v["root"], r.display().to_string());
-        assert_eq!(v["root_set_by"], ENV);
-        assert_eq!(v["at"], now * 1000);
-        assert_eq!(v["bytes"], size(&r));
-        assert_eq!(v["prune"]["after_days"], 30);
-        assert_eq!(v["prune"]["stale_bytes"].as_u64().unwrap(), stale_size(&r));
-        let entries = v["entries"].as_array().unwrap();
-        let keys: Vec<_> = entries
-            .iter()
-            .map(|e| {
-                (
-                    e["section"].as_str().unwrap().to_string(),
-                    e["name"].as_str().unwrap().to_string(),
-                )
-            })
-            .collect();
-        let mut sorted = keys.clone();
-        sorted.sort();
-        assert_eq!(keys, sorted);
-        assert_eq!(keys.len(), 6);
-        assert_eq!(keys[0].0, "bin");
-        assert_eq!(keys[5].0, "work");
-        for e in entries {
-            let mut names: Vec<_> = e.as_object().unwrap().keys().cloned().collect();
-            names.sort();
-            assert_eq!(
-                names,
-                ["bytes", "in_use", "name", "path", "repo", "section", "used"]
-            );
-            assert!(e["bytes"].is_u64());
-            assert!(e["used"].is_u64());
-            assert!(e["in_use"].is_boolean());
-            assert!(e["path"].as_str().unwrap().starts_with('/'));
-        }
-        let held_entry = entries
-            .iter()
-            .find(|e| e["name"] == "app-aaaaaaaaaaaa@old-held")
-            .unwrap();
-        assert_eq!(held_entry["in_use"], true);
-        assert_eq!(held_entry["repo"], "app");
-        assert_eq!(
-            held_entry["used"].as_u64().unwrap(),
-            (now - 40 * 86400) * 1000
-        );
-        assert_eq!(entries.iter().filter(|e| e["in_use"] == true).count(), 1);
-        drop(lock);
-        let _ = fs::remove_dir_all(&r);
-    }
-
-    #[test]
-    fn the_report_is_null_about_the_root_when_nothing_moved_it() {
-        let r = scratch_root("report-empty");
-        let v = report_in(&r, None, "0.0.0", 1);
-        assert!(v["root_set_by"].is_null());
-        assert_eq!(v["entries"].as_array().unwrap().len(), 0);
-        assert_eq!(v["prune"]["stale_bytes"], 0);
-        let _ = fs::remove_dir_all(&r);
-    }
-
-    #[test]
-    fn a_dry_run_removes_nothing_and_reports_what_a_prune_removes() {
-        let r = scratch_root("dry");
-        let now = 10_000_000;
-        let held = populate(&r, now);
+        assert!(!old_src.exists() && !old_bin.exists() && !old_git.exists());
+        assert!(new_src.exists());
         assert!(held.exists());
-        let lock = shared(&r, "bin", "app-aaaaaaaaaaaa@old-held");
-        let before = size(&r);
-        let dry = prune_days(&r, false, now, true);
-        assert_eq!(size(&r), before);
-        assert!(r.join("src/app-aaaaaaaaaaaa/old").exists());
-        assert!(r.join("target/app-aaaaaaaaaaaa").exists());
-        let dry_json = prune_report(&dry);
-        assert_eq!(dry_json["v"], 1);
-        assert_eq!(dry_json["kept_in_use"], 1);
-        assert_eq!(dry_json["freed"].as_u64().unwrap(), stale_size(&r));
-        let real = prune_days(&r, false, now, false);
-        assert_eq!(prune_report(&real), dry_json);
-        assert!(!r.join("src/app-aaaaaaaaaaaa/old").exists());
-        assert!(!r.join("target/app-aaaaaaaaaaaa").exists());
-        let names: Vec<_> = dry_json["removed"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|e| e["name"].as_str().unwrap().to_string())
-            .collect();
-        assert_eq!(names, ["app-aaaaaaaaaaaa@old", "app-aaaaaaaaaaaa"]);
         drop(lock);
+        let _ = fs::remove_dir_all(&r);
+    }
+
+    #[test]
+    fn a_read_only_source_tree_is_removed_too() {
+        let r = scratch_root("prune-read-only");
+        let tree = mk(&r, "src/app-aaaaaaaaaaaa/abc", NOW - 40 * DAY);
+        let inner = tree.join("sub/deeper");
+        fs::create_dir_all(&inner).unwrap();
+        fs::write(inner.join("file"), b"x").unwrap();
+        for d in [&inner, &tree.join("sub"), &tree] {
+            fs::set_permissions(d, fs::Permissions::from_mode(0o555)).unwrap();
+        }
+        assert_eq!(prune_in(&r, NOW), ["src/app-aaaaaaaaaaaa@abc"]);
+        assert!(!tree.exists());
+        let _ = fs::remove_dir_all(&r);
+    }
+
+    #[test]
+    fn the_prune_runs_once_a_day() {
+        let r = scratch_root("tidy-daily");
+        let first = mk(&r, "target/app-aaaaaaaaaaaa", NOW - 40 * DAY);
+        assert_eq!(tidy_in(&r, NOW).unwrap(), ["target/app-aaaaaaaaaaaa"]);
+        assert!(!first.exists());
+        assert_eq!(fs::read_to_string(r.join(STAMP)).unwrap(), NOW.to_string());
+        let second = mk(&r, "target/beta-dddddddddddd", NOW - 40 * DAY);
+        assert!(tidy_in(&r, NOW + DAY - 1).is_none());
+        assert!(second.exists());
+        assert_eq!(
+            tidy_in(&r, NOW + DAY).unwrap(),
+            ["target/beta-dddddddddddd"]
+        );
+        assert!(!second.exists());
+        assert_eq!(
+            fs::read_to_string(r.join(STAMP)).unwrap(),
+            (NOW + DAY).to_string()
+        );
+        let _ = fs::remove_dir_all(&r);
+    }
+
+    #[test]
+    fn a_stamp_from_the_future_or_garbage_does_not_hold_the_prune_back() {
+        let r = scratch_root("tidy-stamp");
+        for stamp in [(NOW + 5 * DAY).to_string(), "soon".to_string()] {
+            let stale = mk(&r, "target/app-aaaaaaaaaaaa", NOW - 40 * DAY);
+            fs::write(r.join(STAMP), stamp).unwrap();
+            assert_eq!(tidy_in(&r, NOW).unwrap().len(), 1);
+            assert!(!stale.exists());
+        }
+        let _ = fs::remove_dir_all(&r);
+    }
+
+    #[test]
+    fn a_prune_that_cannot_run_fails_nothing() {
+        let r = scratch_root("tidy-failing");
+        assert!(tidy_in(&r.join("absent"), NOW).is_none());
+        fs::write(r.join("file"), b"x").unwrap();
+        assert!(tidy_in(&r.join("file"), NOW).is_none());
+        let stale = mk(&r, "target/app-aaaaaaaaaaaa", NOW - 40 * DAY);
+        fs::create_dir(r.join(STAMP)).unwrap();
+        assert!(tidy_in(&r, NOW).is_none());
+        assert!(stale.exists());
+        let _ = fs::remove_dir_all(&r);
+    }
+
+    #[test]
+    fn a_prune_between_ready_and_hold_makes_hold_report_the_entry_gone() {
+        let r = scratch_root("prune-race");
+        let entry = ready_entry(&r, "work/app-aaaaaaaaaaaa");
+        assert!(ready(&entry));
+        assert_eq!(far(&r).len(), 1);
+        assert!(!hold(&entry).unwrap());
+        assert!(!entry.exists());
+        let _ = fs::remove_dir_all(&r);
+    }
+
+    #[test]
+    fn a_hold_waits_for_a_prune_that_is_deleting_and_then_sees_it_gone() {
+        let r = scratch_root("prune-wait");
+        let entry = ready_entry(&r, "target/app-aaaaaaaaaaaa");
+        let probe = Entry {
+            section: "target".into(),
+            name: "app-aaaaaaaaaaaa".into(),
+            path: entry.clone(),
+            used: 0,
+        };
+        let claimed = claim(&r, &probe).unwrap();
+        let waiter = {
+            let entry = entry.clone();
+            std::thread::spawn(move || hold(&entry))
+        };
+        fs::remove_file(entry.join(OK)).unwrap();
+        fs::remove_dir_all(&entry).unwrap();
+        drop(claimed);
+        assert!(!waiter.join().unwrap().unwrap());
+        assert!(!entry.exists());
+        let _ = fs::remove_dir_all(&r);
+    }
+
+    #[test]
+    fn an_entry_a_run_holds_survives_a_prune() {
+        let r = scratch_root("held-entry");
+        let entry = ready_entry(&r, "target/app-aaaaaaaaaaaa");
+        assert!(hold(&entry).unwrap());
+        assert!(far(&r).is_empty());
+        assert!(entry.join("payload").exists());
+        assert!(ready(&entry));
+        let _ = fs::remove_dir_all(&r);
+    }
+
+    #[test]
+    fn a_prune_during_a_build_waits_for_it_and_then_for_its_user() {
+        let r = scratch_root("prune-building-target");
+        let mut builds = 0;
+        let entry = entry_in(&r, "target", "app-aaaaaaaaaaaa", |p| {
+            builds += 1;
+            paths::fresh(p)?;
+            fs::write(p.join("payload"), b"half").unwrap();
+            assert!(far(&r).is_empty());
+            assert!(p.join("payload").exists());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(builds, 1);
+        assert_eq!(entry, entry_path(&r, "target", "app-aaaaaaaaaaaa"));
+        assert!(ready(&entry));
+        assert!(far(&r).is_empty());
+        assert!(entry.join("payload").exists());
+        let _ = fs::remove_dir_all(&r);
+    }
+
+    #[test]
+    fn a_prune_between_a_build_and_its_use_makes_the_user_rebuild() {
+        let r = scratch_root("prune-built");
+        let made = ready_entry(&r, "target/app-aaaaaaaaaaaa");
+        assert_eq!(far(&r).len(), 1);
+        assert!(!made.exists());
+        assert!(lock_path(&r, "target", "app-aaaaaaaaaaaa").exists());
+        let mut builds = 0;
+        let entry = entry_in(&r, "target", "app-aaaaaaaaaaaa", |p| {
+            builds += 1;
+            paths::fresh(p)?;
+            fs::write(p.join("payload"), b"again").map_err(|e| e.to_string())
+        })
+        .unwrap();
+        assert_eq!(builds, 1);
+        assert_eq!(entry, made);
+        assert!(far(&r).is_empty());
+        assert_eq!(fs::read(entry.join("payload")).unwrap(), b"again");
+        let _ = fs::remove_dir_all(&r);
+    }
+
+    #[test]
+    fn a_failed_build_leaves_no_ready_entry_and_the_next_user_builds_it() {
+        let r = scratch_root("build-fails");
+        let failed = entry_in(&r, "target", "app-aaaaaaaaaaaa", |p| {
+            paths::fresh(p)?;
+            fs::write(p.join("half"), b"x").unwrap();
+            Err("the build failed".into())
+        });
+        assert_eq!(failed.unwrap_err(), "the build failed");
+        let entry = entry_path(&r, "target", "app-aaaaaaaaaaaa");
+        assert!(!ready(&entry));
+        let entry = entry_in(&r, "target", "app-aaaaaaaaaaaa", |p| {
+            paths::fresh(p)?;
+            fs::write(p.join("whole"), b"x").map_err(|e| e.to_string())
+        })
+        .unwrap();
+        assert!(ready(&entry));
+        assert!(!entry.join("half").exists());
+        assert!(entry.join("whole").exists());
         let _ = fs::remove_dir_all(&r);
     }
 
@@ -1018,220 +840,16 @@ mod tests {
         let _ = fs::remove_dir_all(&r);
     }
 
-    fn ready_entry(r: &Path, rel: &str) -> PathBuf {
-        let e = r.join(rel);
-        fs::create_dir_all(&e).unwrap();
-        fs::write(e.join("payload"), b"x").unwrap();
-        mark_ready(&e).unwrap();
-        e
-    }
-
-    #[test]
-    fn a_prune_between_ready_and_hold_makes_hold_report_the_entry_gone() {
-        let r = scratch_root("prune-race");
-        let entry = ready_entry(&r, "src/app-aaaaaaaaaaaa/abc");
-        assert!(ready(&entry));
-        let pruned = prune_days(&r, true, now_secs(), false);
-        assert_eq!(pruned.removed.len(), 1);
-        assert!(!hold(&entry).unwrap());
-        assert!(!entry.exists());
-        let _ = fs::remove_dir_all(&r);
-    }
-
-    #[test]
-    fn a_hold_waits_for_a_prune_that_is_deleting_and_then_sees_it_gone() {
-        let r = scratch_root("prune-wait");
-        let entry = ready_entry(&r, "bin/app-aaaaaaaaaaaa/abc");
-        let probe = Entry {
-            section: "bin".into(),
-            name: "app-aaaaaaaaaaaa@abc".into(),
-            path: entry.clone(),
-            size: 0,
-            used: 0,
-        };
-        let claimed = claim(&r, &probe, true).unwrap();
-        let waiter = {
-            let entry = entry.clone();
-            std::thread::spawn(move || hold(&entry))
-        };
-        fs::remove_file(entry.join(OK)).unwrap();
-        fs::remove_dir_all(&entry).unwrap();
-        drop(claimed);
-        assert!(!waiter.join().unwrap().unwrap());
-        assert!(!entry.exists());
-        let _ = fs::remove_dir_all(&r);
-    }
-
-    #[test]
-    fn an_entry_a_render_holds_survives_even_prune_all() {
-        let r = scratch_root("held-entry");
-        let entry = ready_entry(&r, "src/app-aaaaaaaaaaaa/abc");
-        assert!(hold(&entry).unwrap());
-        let pruned = prune_days(&r, true, now_secs(), false);
-        assert!(pruned.removed.is_empty());
-        assert_eq!(pruned.kept_in_use, vec!["src/app-aaaaaaaaaaaa@abc"]);
-        assert!(entry.join("payload").exists());
-        assert!(ready(&entry));
-        let _ = fs::remove_dir_all(&r);
-    }
-
-    #[test]
-    fn work_and_target_entries_a_render_uses_are_kept() {
-        let r = scratch_root("held-build");
-        let now = 10_000_000;
-        for rel in ["work/app-aaaaaaaaaaaa", "target/app-aaaaaaaaaaaa"] {
-            let d = r.join(rel);
-            fs::create_dir_all(&d).unwrap();
-            fs::write(d.join("payload"), b"x").unwrap();
-        }
-        let building = paths::lock(
-            &lock_path(&r, "work", "app-aaaaaaaaaaaa"),
-            Lock::Exclusive,
-            "test",
-        )
-        .unwrap();
-        let running = shared(&r, "target", "app-aaaaaaaaaaaa");
-        let pruned = prune_days(&r, true, now, false);
-        assert!(pruned.removed.is_empty());
-        assert_eq!(pruned.kept_in_use.len(), 2);
-        drop(building);
-        paths::quiesce();
-        let pruned = prune_days(&r, true, now, false);
-        assert_eq!(pruned.kept_in_use, vec!["target/app-aaaaaaaaaaaa"]);
-        assert_eq!(pruned.removed.len(), 1);
-        assert!(r.join("target/app-aaaaaaaaaaaa/payload").exists());
-        assert!(!r.join("work/app-aaaaaaaaaaaa").exists());
-        drop(running);
-        let _ = fs::remove_dir_all(&r);
-    }
-
-    fn shared(r: &Path, section: &str, name: &str) -> File {
-        paths::lock(&lock_path(r, section, name), Lock::Shared, "test").unwrap()
-    }
-
-    const KINDS: [(&str, &str); 3] = [
-        ("src", "app-aaaaaaaaaaaa@abc"),
-        ("bin", "app-aaaaaaaaaaaa@abc-def"),
-        ("target", "app-aaaaaaaaaaaa"),
-    ];
-
-    fn listed(pruned: &Pruned, section: &str, name: &str) -> bool {
-        pruned
-            .kept_in_use
-            .iter()
-            .any(|k| *k == format!("{section}/{name}"))
-    }
-
-    #[test]
-    fn a_prune_during_a_build_waits_for_it_and_then_for_its_user() {
-        for (section, name) in KINDS {
-            let r = scratch_root(&format!("prune-building-{section}"));
-            let mut builds = 0;
-            let entry = entry_in(&r, section, name, |p| {
-                builds += 1;
-                paths::fresh(p)?;
-                fs::write(p.join("payload"), b"half").unwrap();
-                let pruned = prune_days(&r, true, now_secs(), false);
-                assert!(pruned.removed.is_empty(), "{section}");
-                assert!(listed(&pruned, section, name), "{section}");
-                assert!(p.join("payload").exists(), "{section}");
-                Ok(())
-            })
-            .unwrap();
-            assert_eq!(builds, 1);
-            assert_eq!(entry, entry_path(&r, section, name));
-            assert!(ready(&entry));
-            let pruned = prune_days(&r, true, now_secs(), false);
-            assert!(pruned.removed.is_empty(), "{section}");
-            assert!(listed(&pruned, section, name), "{section}");
-            assert!(entry.join("payload").exists());
-            let _ = fs::remove_dir_all(&r);
-        }
-    }
-
-    #[test]
-    fn a_prune_between_a_build_and_its_use_makes_the_user_rebuild() {
-        for (section, name) in KINDS {
-            let r = scratch_root(&format!("prune-built-{section}"));
-            let rel = entry_path(Path::new(""), section, name);
-            let made = ready_entry(&r, &rel.to_string_lossy());
-            let pruned = prune_days(&r, true, now_secs(), false);
-            assert_eq!(pruned.removed.len(), 1, "{section}");
-            assert!(!made.exists());
-            assert!(lock_path(&r, section, name).exists());
-            let mut builds = 0;
-            let entry = entry_in(&r, section, name, |p| {
-                builds += 1;
-                paths::fresh(p)?;
-                fs::write(p.join("payload"), b"again").map_err(|e| e.to_string())
-            })
-            .unwrap();
-            assert_eq!(builds, 1, "{section}");
-            assert_eq!(entry, made);
-            let pruned = prune_days(&r, true, now_secs(), false);
-            assert!(listed(&pruned, section, name), "{section}");
-            assert_eq!(fs::read(entry.join("payload")).unwrap(), b"again");
-            let _ = fs::remove_dir_all(&r);
-        }
-    }
-
-    #[test]
-    fn a_failed_build_leaves_no_ready_entry_and_the_next_user_builds_it() {
-        let r = scratch_root("build-fails");
-        let failed = entry_in(&r, "bin", "app-aaaaaaaaaaaa@abc-def", |p| {
-            paths::fresh(p)?;
-            fs::write(p.join("half"), b"x").unwrap();
-            Err("the build failed".into())
-        });
-        assert_eq!(failed.unwrap_err(), "the build failed");
-        let entry = entry_path(&r, "bin", "app-aaaaaaaaaaaa@abc-def");
-        assert!(!ready(&entry));
-        let entry = entry_in(&r, "bin", "app-aaaaaaaaaaaa@abc-def", |p| {
-            paths::fresh(p)?;
-            fs::write(p.join("whole"), b"x").map_err(|e| e.to_string())
-        })
-        .unwrap();
-        assert!(ready(&entry));
-        assert!(!entry.join("half").exists());
-        assert!(entry.join("whole").exists());
-        let _ = fs::remove_dir_all(&r);
-    }
-
-    #[test]
-    fn a_source_is_the_commits_tree_checked_out_once_and_held() {
-        let (r, gitdir, first, second) = two_commits("source");
-        let cache = r.join("cache");
-        let one = source_in(&cache, &gitdir, "app-aaaaaaaaaaaa", &first).unwrap();
-        assert_eq!(one, cache.join("src/app-aaaaaaaaaaaa").join(&first));
-        assert_eq!(fs::read_to_string(one.join("a.txt")).unwrap(), "one");
-        assert!(!one.join("b.txt").exists());
-        assert!(ready(&one));
-        assert!(!one.with_extension("index").exists());
-        fs::write(one.join("marker"), b"kept").unwrap();
-        let again = source_in(&cache, &gitdir, "app-aaaaaaaaaaaa", &first).unwrap();
-        assert_eq!(again, one);
-        assert!(again.join("marker").exists());
-        let two = source_in(&cache, &gitdir, "app-aaaaaaaaaaaa", &second).unwrap();
-        assert_eq!(fs::read_to_string(two.join("b.txt")).unwrap(), "two");
-        let pruned = prune_days(&cache, true, now_secs(), false);
-        assert!(pruned.removed.is_empty());
-        assert_eq!(pruned.kept_in_use.len(), 2);
-        assert!(source_in(&cache, &gitdir, "app-aaaaaaaaaaaa", "0123456789abcdef").is_err());
-        let _ = fs::remove_dir_all(&r);
-    }
-
     #[test]
     fn a_target_comes_back_after_a_prune_with_its_lock_still_in_place() {
         let r = scratch_root("target-back");
         let lock = lock_path(&r, "target", "app-aaaaaaaaaaaa");
         fs::create_dir_all(r.join("target/app-aaaaaaaaaaaa")).unwrap();
-        let pruned = prune_days(&r, true, now_secs(), false);
-        assert_eq!(pruned.removed.len(), 1);
+        assert_eq!(far(&r).len(), 1);
         assert!(lock.exists());
         let t = target_in(&r, "app-aaaaaaaaaaaa").unwrap();
         assert!(t.is_dir());
-        let pruned = prune_days(&r, true, now_secs(), false);
-        assert_eq!(pruned.kept_in_use, vec!["target/app-aaaaaaaaaaaa"]);
+        assert!(far(&r).is_empty());
         assert!(t.is_dir());
         let _ = fs::remove_dir_all(&r);
     }
@@ -1239,10 +857,11 @@ mod tests {
     #[test]
     fn an_entry_path_and_its_name_map_both_ways() {
         let r = Path::new("/c");
-        for (section, name) in KINDS.into_iter().chain([
+        for (section, name) in [
             ("git", "app-aaaaaaaaaaaa.git"),
             ("work", "app-aaaaaaaaaaaa"),
-        ]) {
+            ("target", "app-aaaaaaaaaaaa"),
+        ] {
             let (root, s, n) = named(&entry_path(r, section, name)).unwrap();
             assert_eq!((root.as_path(), s.as_str(), n.as_str()), (r, section, name));
         }
@@ -1259,7 +878,7 @@ mod tests {
         );
         assert!(!key.starts_with('-') && !key.contains("--"), "{key}");
         let r = Path::new("/c");
-        for section in ["git", "work", "target"] {
+        for section in ["work", "target"] {
             let path = entry_path(r, section, key);
             assert_eq!(path.parent(), Some(r.join(section).as_path()), "{key}");
             let (root, s, n) = named(&path).unwrap();
@@ -1339,64 +958,5 @@ mod tests {
             File::create(lock_path(&r, "target", key)).unwrap();
         }
         assert_eq!(fs::read_dir(r.join("target")).unwrap().count(), 2);
-    }
-
-    #[test]
-    fn a_build_key_is_a_short_safe_name_whatever_the_command() {
-        let c = "0123456789abcdef0123456789abcdef01234567";
-        for (command, bin_dir) in [
-            ("", ""),
-            ("../../x", "/"),
-            ("cargo build @ ..", "{target}/../.."),
-            ("a\nb", "c"),
-            (&"y".repeat(10_000)[..], "z"),
-        ] {
-            let k = build_key(c, command, bin_dir);
-            assert_eq!(k.len(), 25, "{k}");
-            assert!(k.starts_with("0123456789ab-"));
-            assert!(k.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-'), "{k}");
-        }
-        assert!(build_key("abc", "x", "y").starts_with("abc-"));
-        assert_eq!(build_key("abc", "x", "y").len(), 16);
-    }
-
-    #[test]
-    fn a_newline_moved_between_command_and_bin_dir_is_another_build() {
-        let c = "0123456789abcdef0123456789abcdef01234567";
-        assert_ne!(build_key(c, "a\nb", "c"), build_key(c, "a", "b\nc"));
-        assert_ne!(build_key(c, "a\nb", "c"), build_key(c, "a\nb\nc", ""));
-        assert_ne!(build_key(c, "a", "b"), build_key(c, "a\nb", ""));
-        assert_ne!(build_key(c, "a", "b"), build_key(c, "", "a\nb"));
-    }
-
-    #[test]
-    fn a_one_line_build_keeps_the_key_its_cached_binaries_already_have() {
-        let c = "0123456789abcdef0123456789abcdef01234567";
-        let old = paths::hash_bytes(b"cargo build --release\n{target}/release");
-        assert_eq!(
-            build_key(c, "cargo build --release", "{target}/release"),
-            format!("0123456789ab-{}", &old[..12])
-        );
-    }
-
-    #[test]
-    fn a_source_and_a_bin_entry_nest_their_commit_under_the_repo_folder() {
-        let r = Path::new("/c");
-        let key = repo_key("ssh://h/../../app");
-        let commit = "0123456789abcdef0123456789abcdef01234567";
-        let bin = format!("{key}@{}", build_key(commit, "make", "out"));
-        for (section, name) in [("src", format!("{key}@{commit}")), ("bin", bin)] {
-            let path = entry_path(r, section, &name);
-            assert_eq!(
-                path.parent().and_then(Path::parent),
-                Some(r.join(section).as_path())
-            );
-            assert!(
-                path.components()
-                    .all(|part| !matches!(part, std::path::Component::ParentDir))
-            );
-            let (root, s, n) = named(&path).unwrap();
-            assert_eq!((root.as_path(), s.as_str(), n), (r, section, name));
-        }
     }
 }

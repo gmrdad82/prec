@@ -87,11 +87,11 @@ Each `[shots.<name>]` is one render:
 | `grid` | this shot's own grid |
 | `status` | a free word shown by `prec shots` |
 | `mask` | this shot's own masks, added to the top-level ones |
-| `fixtures` | the name of the fixture set this shot needs; prec refuses to record it without `--fixtures` naming that set ([Render a tag or commit](render-a-revision.md)) |
+| `fixtures` | the name of the fixture set this shot needs; prec refuses to record it without `--fixtures` naming that set (see [Fixtures](#fixtures)) |
 
 ## Placeholders
 
-`{tmp}` (the repository's `tmp/`), `{scratch}` (this run's scratch), `{app}` (the checkout), `{bin}` (the cached build of this commit), `{target}` (the repository's shared cargo target dir in the [machine cache](manage-the-cache.md)) and `{fixtures}` expand the same way in `setup`, `teardown`, `launch`, `cwd`, every `[env]` value and the `[build]` command. `bin_dir` takes `{tmp}`, `{app}` and `{target}`. `{home}` expands in `cwd` and `launch` only: to the `home` key's path when it is set, else to the scratch `HOME`.
+`{tmp}` (the repository's `tmp/`), `{scratch}` (this run's scratch), `{app}` (the checkout), `{bin}` (this run's own copy of the built binaries), `{target}` (the repository's shared cargo target dir in the [machine cache](manage-the-cache.md)) and `{fixtures}` expand the same way in `setup`, `teardown`, `launch`, `cwd`, every `[env]` value and the `[build]` command. `bin_dir` takes `{tmp}`, `{app}` and `{target}`. `{home}` expands in `cwd` and `launch` only: to the `home` key's path when it is set, else to the scratch `HOME`.
 
 ## The pty's environment
 
@@ -137,6 +137,27 @@ mask = [{ match = "[\\w.]+'s Organization" }]
 - `rect = [col, row, cols, rows]` covers a fixed block of cells, counted from 0 at the top left; it must lie inside the grid.
 - Top-level masks apply to every shot and a shot's own are added to them. They are written into the cast, so `prec render` covers the same regions at any size, rate or theme.
 - The scan for private data reads the screen with the masks applied, so a masked label passes.
+
+## A prebuilt binary
+
+`--bin DIR` skips the build and puts `DIR` first on the pty's `PATH`:
+
+```sh
+cargo build --release
+prec clip myapp tour --bin target/release
+```
+
+## Fixtures
+
+An app that needs data to show can take a fixture folder: `--fixtures DIR` passes it to the app as `{fixtures}` in the recipe and in the variable `fixtures_env` names (default `PITO_<APP>_FIXTURES`). A shot with `fixtures = "<set>"` refuses to record without a folder of that name. The manifest records the folder, the variable and every file's sha256.
+
+## One recording at a time
+
+Recording one shot is exclusive in a working tree: a second `prec clip myapp tour` waits for the first. Replays of a cast at different sizes, rates or themes run at once.
+
+## Cancel
+
+TERM, INT and HUP stop everything prec started, process groups and all, run the recipe's `teardown`, and exit 128 plus the signal. A render builds its files in its scratch folder and writes the manifest last, so a cancelled re-render never leaves new files beside an old manifest.
 
 ## A working example
 

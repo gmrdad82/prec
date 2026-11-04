@@ -7,6 +7,7 @@ use std::process::{Command, Output};
 
 const GROUP: &str = "cli";
 
+const RETIRED: &str = concat!("--re", "v");
 const FOOTER: &str = "For more information, try '--help'.\n";
 
 fn setup(name: &str) -> PathBuf {
@@ -80,7 +81,7 @@ fn unparsed() -> Vec<(Vec<&'static str>, String)> {
         (
             vec![],
             short(
-                "error: 'prec' requires a subcommand but one was not provided\n  [subcommands: shots, clip, still, record, render, themes, doctor, cache, help]",
+                "error: 'prec' requires a subcommand but one was not provided\n  [subcommands: shots, clip, still, record, render, themes, doctor, help]",
                 Some("Usage: prec <COMMAND>"),
             ),
         ),
@@ -99,23 +100,32 @@ fn unparsed() -> Vec<(Vec<&'static str>, String)> {
             ),
         ),
         (
-            vec!["cache", "prune", "--older-than"],
+            vec!["cache"],
             short(
-                "error: a value is required for '--older-than <OLDER_THAN>' but none was supplied",
-                None,
+                "error: unrecognized subcommand 'cache'",
+                Some("Usage: prec <COMMAND>"),
+            ),
+        ),
+        (
+            vec!["clip", "alpha", "intro", RETIRED, "v1"],
+            short(
+                &format!(
+                    "error: unexpected argument '{RETIRED}' found\n\n  tip: a similar argument exists: '--derive'"
+                ),
+                Some("Usage: prec clip --derive <DERIVE> <PRODUCT> <SHOT>"),
             ),
         ),
         (
             vec!["archive"],
             short(
-                "error: unrecognized subcommand 'archive'\n\n  tip: a similar subcommand exists: 'cache'",
+                "error: unrecognized subcommand 'archive'",
                 Some("Usage: prec <COMMAND>"),
             ),
         ),
         (
             vec!["archive", "--retry"],
             short(
-                "error: unrecognized subcommand 'archive'\n\n  tip: a similar subcommand exists: 'cache'",
+                "error: unrecognized subcommand 'archive'",
                 Some("Usage: prec <COMMAND>"),
             ),
         ),
@@ -152,10 +162,6 @@ fn bad_flags_on_a_subcommand_are_refused_before_anything_runs() {
         (
             &["still", "alpha", "intro", "--web", "wide"],
             "error: invalid value 'wide' for '--web <WEB>': ",
-        ),
-        (
-            &["cache", "prune", "--dry-run"],
-            "error: the following required arguments were not provided:",
         ),
         (&["themes", "--x"], "error: unexpected argument '--x' found"),
     ] {
@@ -258,7 +264,7 @@ fn help_prints_the_whole_help_on_stdout_with_exit_0() {
     let help = out(&long);
     assert!(help.contains("\nUsage: prec <COMMAND>\n"), "{help}");
     for c in [
-        "shots", "clip", "still", "record", "render", "themes", "doctor", "cache", "help",
+        "shots", "clip", "still", "record", "render", "themes", "doctor", "help",
     ] {
         assert!(help.contains(&format!("\n  {c} ")), "{c}: {help}");
     }

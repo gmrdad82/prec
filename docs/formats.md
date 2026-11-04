@@ -39,7 +39,7 @@ The terminal renderer's own keys:
 
 | key | meaning |
 |---|---|
-| `app` | `rev`, `tag`, `pinned`, `commit`, `bin_dir`, `bin_sha256` and `terminal_toml_sha256`, copied from the cast |
+| `app` | `rev`, `commit`, `bin_dir`, `bin_sha256` and `terminal_toml_sha256`, copied from the cast; casts and manifests written before 1.7.0 also carry `tag` and `pinned`, which new ones drop and which still read and render |
 | `shot`, `shot_sha256`, `tape_sha256`, `cast_sha256` | the shot's name, and the hashes of its resolved recipe, its tape and the cast |
 | `fixtures` | `null`, or `{"path", "door", "files": [{"file", "sha256"}]}`: the materialized fixture set, the variable that named it to the app, and every file's hash |
 | `pass_env` | the names the cast's record passed from prec's environment (`pass_env` in `terminal.toml`), never their values; `[]` when none |
@@ -64,21 +64,7 @@ The terminal renderer's own keys:
 
 Removed in 1.6.0: prec no longer archives renders.
 
-## 4. The cache reports
-
-`prec cache --json` prints one JSON object and nothing else on stdout, in a shape shared by every PITO MD tool's cache report. It never waits on a lock.
-
-| field | meaning |
-|---|---|
-| `v`, `tool`, `tool_version` | `1`, `"prec"` and the running version |
-| `root`, `root_set_by` | the absolute cache root, and `"PREC_CACHE"` when that variable chose it, else `null` |
-| `bytes`, `at` | the whole root's size in bytes, and now in Unix milliseconds |
-| `entries[]` | one per entry, sorted by `section` then `name`: `section` (`git`, `src`, `work`, `target` or `bin`), `name` (as `cache` lists it), `repo` (the repo name without its hash), `path`, `bytes`, `used` (last use, Unix ms) and `in_use` (a render holds its lock) |
-| `prune` | `after_days` (30) and `stale_bytes`, what `cache prune` would free now |
-
-`prec cache prune --json [--dry-run]` takes `--older-than` and `--all` as the text form does, and prints `{"v": 1, "freed": <bytes>, "removed": [{"section": …, "name": …, "bytes": …}], "kept_in_use": <n>}`: the bytes removed, the entries removed in `cache --json`'s order, and how many stale entries stayed because a render holds them. With `--dry-run` nothing is removed and the object says what a real prune would remove.
-
-## 5. The rest
+## 4. The rest
 
 - **Job records** are written by prec itself, in the format pito-jobs v1.0.3 wrote (byte for byte: the same folder, file names, keys and their order); README's Job records section names their folder, variables, stages and progress units. Each `<pid>-<started ms>.json` is one compact JSON object, at most 4096 bytes, with its keys in this order: `v` (1), `id` (`<host>:<pid>:<started>`), `host`, `pid`, `pid_start` (the process's start time in clock ticks since boot, field 22 of `/proc/self/stat`, or 0 where there is no `/proc`), `tool` (`prec`), `app`, `label`, `detail`, `invoker`, `parent`, `state` (`running`, `done` or `failed`), `stage`, `stages` (left out while empty), `stage_note`, `progress` (`{"done", "total", "unit"}`), `rate` (units a second, `null` for a `seconds` stage and until two progress samples exist), `pgpu` (`{"pid", "as"}`), `device`, `out` (an absolute path), `started`, `updated`, `ended` (Unix milliseconds), `exit` and `error`; a key with no value is `null`.
 - **`prec --version`** prints `prec <x.y.z>`.

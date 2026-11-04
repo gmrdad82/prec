@@ -1,6 +1,6 @@
 ---
 title: Manage the machine cache
-description: What prec keeps between runs, where it lives, and how to prune it.
+description: What prec keeps between runs, where it lives, and how it prunes itself.
 sidebar:
   order: 11
 ---
@@ -9,41 +9,18 @@ Everything reusable lives in one cache, shared by every repository: `${XDG_CACHE
 
 | folder | holds | keyed by |
 |---|---|---|
-| `src/<repo>/<commit>/` | that commit's source, checked out by `git read-tree` with a private index, read-only (`{app}`) | repo and commit |
-| `work/<repo>/` | the build tree, moved between commits so only changed files change | repo |
-| `target/<repo>/` | the repo's shared cargo target dir, so a new commit rebuilds incrementally | repo |
-| `bin/<repo>/<commit>-<build>/` | the built binaries (`{bin}`) | repo, commit and the build command's hash |
+| `work/<repo>/` | the build tree, where a clean tree builds at its HEAD | repo |
+| `target/<repo>/` | the repo's shared cargo target dir, so every build is incremental | repo |
 | `locks/` | one lock per entry, so a prune never removes an entry being built or used | |
 
 A `<repo>` key is the repository's name and a hash of its origin URL, so every checkout and worktree of one repository shares entries.
 
-## See it
+prec records only the working tree. A clean tree builds at its HEAD in the build tree and a dirty tree builds in place; both build into the shared target dir. Each run copies the built binaries into its own scratch and runs them from there, so another build in the same target dir never changes a binary a run is using.
 
-```sh
-prec cache
-```
+## It prunes itself
 
-```text
-cache: tmp/cache (0 B)
-       set by PREC_CACHE
-  (empty)
-```
+When a record or render starts, at most once a day, prec removes the entries unused for 30 days. It does this quietly and a failed prune never fails the run. An entry a run holds is never removed, and removing one costs only time: the next build recreates it. The day's stamp is the `.pruned` file in the cache root.
 
-With entries, `prec cache` lists each with its size and last use. `prec cache --json` prints one JSON object, specified in [Formats](../reference/formats.md#4-the-cache-reports); it never waits on a lock.
+Folders an older prec left (`src/`, `bin/` and `git/`) are pruned by the same rule, and are not read for anything else.
 
-## Prune it
-
-```sh
-prec cache prune                    # entries unused for 30 days
-prec cache prune --older-than 2w    # or 12h, 90m, 30d
-prec cache prune --all              # every entry not in use
-prec cache prune --json --dry-run   # what a prune would remove, removing nothing
-```
-
-```text
-{"freed":0,"kept_in_use":0,"removed":[],"v":1}
-```
-
-An entry a render holds stays, and the JSON's `kept_in_use` counts them. Removing an entry costs only time: the next render of that commit checks it out and builds it again.
-
-prec downloads nothing, so the cache only ever holds your own repositories' sources and builds.
+prec downloads nothing, so the cache only ever holds your own repositories' builds.

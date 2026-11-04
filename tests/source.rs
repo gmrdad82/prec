@@ -32,15 +32,15 @@ fn an_app_renders_from_its_own_tree_and_nowhere_else() {
             "typing",
             "--app-dir",
             other.to_str().unwrap(),
-            "--rev",
-            "HEAD",
         ],
     );
     assert!(err.contains("outside this repository"), "{err}");
     assert!(!caller.join("tmp/prec/run").exists());
 
     for retired in [
-        &["clip", "demo", "typing", "--git", "x", "--rev", "v1"][..],
+        &["clip", "demo", "typing", "--git", "x"][..],
+        &["clip", "demo", "typing", concat!("--re", "v"), "v1"][..],
+        &["shots", "demo", concat!("--re", "v"), "HEAD"][..],
         &["clip", "demo", "typing", "--publish"][..],
         &["still", "demo", "palette", "--assets", "x"][..],
     ] {
