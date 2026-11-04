@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Clips encode with pito-codecs 3.1.0, which never runs ffmpeg or ffprobe. Masters are not byte-identical to those of 1.6.0: a draft of the same cast (1280x720, 30 fps, Catppuccin Mocha) changes its master's sha256 from `4d49d3f4…ced987` to `5ace411d…7de7d4`; they keep their BT.709 limited-range tags and stay byte-identical across machines.
+
 ## v1.6.0 — 2026-11-03
 
 ### Removed
