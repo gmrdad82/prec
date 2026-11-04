@@ -41,4 +41,4 @@ Measured on 2026-10-16 by `docs/bench/bench.sh` in prec's repository: an AMD Ryz
 
 ## Size and build
 
-The Linux x86_64 binary is 5,935,688 bytes (5.7 MB; 2,508,494 bytes packed as the release's `.tar.gz`), built with fat LTO, one codegen unit and stripped; a cold `cargo build --release --locked` took 70.4 s with 4 build jobs. prec has 18 direct dependencies and 95 crates in its Linux build; the xterm.js files, the VHS themes and pito-codecs' H.264 encoder are compiled in, so it runs no encoder of yours and reads nothing from the network.
+The Linux x86_64 binary is 5,995,872 bytes (5.7 MB; 2,557,323 bytes packed as the release's `.tar.gz`), built with fat LTO, one codegen unit and stripped; a cold `cargo build --release --locked` took 70.4 s with 4 build jobs (measured with prec 1.2.0). prec has 17 direct dependencies and 105 crates in its Linux build; the xterm.js files, the VHS themes and pito-codecs' H.264 encoder are compiled in, so it runs no encoder of yours and reads nothing from the network.
