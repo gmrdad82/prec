@@ -12,7 +12,27 @@ pub const RATE: u32 = 48_000;
 pub const CHANNELS: u16 = 2;
 
 const SOCKET_PATH_MAX: usize = 107;
-const SOCKETS: [&str; 2] = ["pipewire-0", "pulse/native"];
+const LONGEST: &str = "pulse/native";
+const DISABLE: &str = "PREC_AUDIO";
+const TOOLS: [&str; 4] = ["pipewire", "wireplumber", "pw-record", "pw-dump"];
+const PULSE: &str = "pipewire-pulse";
+const READY: Duration = Duration::from_secs(20);
+const POLL: Duration = Duration::from_millis(5);
+const SCRUBBED: [&str; 11] = [
+    "DBUS_SESSION_BUS_ADDRESS",
+    "PIPEWIRE_REMOTE",
+    "PIPEWIRE_RUNTIME_DIR",
+    "PIPEWIRE_CONFIG_DIR",
+    "PIPEWIRE_CONFIG_NAME",
+    "PIPEWIRE_CONFIG_PREFIX",
+    "PULSE_SERVER",
+    "PULSE_RUNTIME_PATH",
+    "PULSE_CONFIG_PATH",
+    "WIREPLUMBER_CONFIG_DIR",
+    "XDG_SESSION_ID",
+];
+const SINK: &str = "context.objects = [\n  { factory = adapter\n    args = { factory.name = support.null-audio-sink node.name = null-sink media.class = Audio/Sink audio.position = [ FL FR ] object.linger = true }\n  }\n]\n";
+const OFF: &str = "wireplumber.profiles = {\n  main = {\n    monitor.alsa = disabled\n    monitor.alsa-midi = disabled\n    monitor.bluez = disabled\n    monitor.bluez-midi = disabled\n    monitor.libcamera = disabled\n    monitor.v4l2 = disabled\n    support.logind = disabled\n    support.reserve-device = disabled\n  }\n}\n";
 const STREAM_CLASS: &str = "Stream/Output/Audio";
 
 #[derive(Debug, Default, PartialEq)]
@@ -129,6 +149,13 @@ pub enum Change {
     Gone(u64),
 }
 
+fn pid_of(props: &Value) -> Option<u32> {
+    props["application.process.id"]
+        .as_u64()
+        .or_else(|| props["pipewire.sec.pid"].as_u64())
+        .map(|p| p as u32)
+}
+
 #[derive(Default)]
 struct Node {
     serial: Option<u64>,
@@ -161,8 +188,8 @@ impl Graph {
             let kind = o["type"].as_str().unwrap_or_default();
             let props = &o["info"]["props"];
             if kind.ends_with(":Client") {
-                if let Some(pid) = props["pipewire.sec.pid"].as_u64() {
-                    self.clients.insert(id, pid as u32);
+                if let Some(pid) = pid_of(props) {
+                    self.clients.insert(id, pid);
                 }
             } else if kind.ends_with(":Node") {
                 let node = self.nodes.entry(id).or_default();
@@ -171,10 +198,7 @@ impl Graph {
                 }
                 node.serial = props["object.serial"].as_u64().or(node.serial);
                 node.client = props["client.id"].as_u64().or(node.client);
-                node.pid = props["pipewire.sec.pid"]
-                    .as_u64()
-                    .map(|p| p as u32)
-                    .or(node.pid);
+                node.pid = pid_of(props).or(node.pid);
             }
         }
         let clients = &self.clients;
@@ -252,57 +276,121 @@ fn on_path(tool: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|p| crate::doctor::found_in(&p, tool).is_some())
 }
 
-pub fn tools_found() -> bool {
-    on_path("pw-record") && on_path("pw-dump")
+pub fn missing_tool() -> Option<&'static str> {
+    TOOLS.into_iter().find(|t| !on_path(t))
 }
 
-pub struct Sockets {
-    dir: PathBuf,
-    owned: bool,
+pub fn tools_found() -> bool {
+    missing_tool().is_none()
+}
+
+pub fn pulse_found() -> bool {
+    on_path(PULSE)
+}
+
+pub fn disabled() -> bool {
+    std::env::var(DISABLE).is_ok_and(|v| v == "off")
+}
+
+#[derive(Clone)]
+pub struct Private {
+    runtime: PathBuf,
+    home: PathBuf,
+}
+
+impl Private {
+    pub fn runtime(&self) -> &Path {
+        &self.runtime
+    }
+
+    pub fn apply(&self, c: &mut Command) {
+        for name in SCRUBBED {
+            c.env_remove(name);
+        }
+        c.env("XDG_RUNTIME_DIR", &self.runtime)
+            .env("HOME", &self.home)
+            .env("XDG_CONFIG_HOME", self.home.join(".config"))
+            .env("XDG_STATE_HOME", self.home.join(".state"))
+            .env("XDG_CACHE_HOME", self.home.join(".cache"))
+            .env("XDG_DATA_HOME", self.home.join(".data"));
+    }
+}
+
+pub struct Sound {
+    base: PathBuf,
+    private: Private,
+    kids: Vec<Child>,
+}
+
+static LAID: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+fn laid() -> std::sync::MutexGuard<'static, Vec<PathBuf>> {
+    LAID.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+pub fn sweep() {
+    for base in laid().drain(..) {
+        let _ = std::fs::remove_dir_all(base);
+    }
 }
 
 static PLACED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-fn fits(dir: &Path, name: &str) -> bool {
-    dir.join(name).as_os_str().len() <= SOCKET_PATH_MAX
+fn fits(dir: &Path) -> bool {
+    dir.join(LONGEST).as_os_str().len() <= SOCKET_PATH_MAX
 }
 
-impl Sockets {
-    pub fn prepare(parent: &Path) -> Option<Sockets> {
-        if !cfg!(target_os = "linux") || !tools_found() {
+fn lay(base: &Path) -> Result<Private, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let runtime = base.join("x");
+    let home = base.join("h");
+    let pw = home.join(".config/pipewire/pipewire.conf.d");
+    let wp = home.join(".config/wireplumber/wireplumber.conf.d");
+    for d in [&runtime, &pw, &wp] {
+        std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
+    }
+    std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o700))
+        .map_err(|e| format!("{}: {e}", runtime.display()))?;
+    for (path, text) in [
+        (pw.join("10-null.conf"), SINK),
+        (wp.join("10-off.conf"), OFF),
+    ] {
+        std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    Ok(Private { runtime, home })
+}
+
+impl Sound {
+    pub fn start(parent: &Path) -> Option<Sound> {
+        if !cfg!(target_os = "linux") || disabled() {
             return None;
         }
-        let host = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty())?);
-        if !host.is_absolute() {
+        if let Some(tool) = missing_tool() {
+            eprintln!("prec: audio: {tool} is not on PATH; recording without sound");
             return None;
         }
-        let present: Vec<&str> = SOCKETS
-            .into_iter()
-            .filter(|name| host.join(name).symlink_metadata().is_ok())
-            .collect();
-        let near = parent.join("a");
-        let (dir, owned) = if present.iter().all(|n| fits(&near, n)) {
-            (near, false)
+        let near = parent.join("snd");
+        let base = if fits(&near.join("x")) {
+            near
         } else {
             let n = PLACED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let name = format!("p{}-{n}", std::process::id());
-            (crate::cache::root().join("sockets").join(name), true)
+            crate::cache::root().join("sockets").join(name)
         };
-        let all = present.len();
-        let present: Vec<&str> = present.into_iter().filter(|n| fits(&dir, n)).collect();
-        if present.len() < all {
+        let mut sound = Sound {
+            private: Private {
+                runtime: base.join("x"),
+                home: base.join("h"),
+            },
+            base,
+            kids: vec![],
+        };
+        if !fits(&sound.private.runtime) {
             eprintln!("prec: audio: a socket path is too long; recording without sound");
-        }
-        if present.is_empty() {
             return None;
         }
-        let sockets = Sockets { dir, owned };
-        let linked = present
-            .into_iter()
-            .map(|name| link(&host.join(name), &sockets.dir.join(name)))
-            .collect::<Result<Vec<_>, String>>();
-        match linked {
-            Ok(_) => Some(sockets),
+        match sound.bring_up() {
+            Ok(()) => Some(sound),
             Err(e) => {
                 eprintln!("prec: audio: {e}; recording without sound");
                 None
@@ -310,28 +398,96 @@ impl Sockets {
         }
     }
 
-    pub fn dir(&self) -> &Path {
-        &self.dir
+    pub fn private(&self) -> &Private {
+        &self.private
     }
-}
 
-impl Drop for Sockets {
-    fn drop(&mut self) {
-        if self.owned {
-            let _ = std::fs::remove_dir_all(&self.dir);
+    fn daemon(&mut self, tool: &str) -> Result<(), String> {
+        let mut c = Command::new(tool);
+        c.current_dir(&self.private.home)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        self.private.apply(&mut c);
+        let child = crate::paths::spawn(&mut c).map_err(|e| format!("{tool}: {e}"))?;
+        self.kids.push(child);
+        Ok(())
+    }
+
+    fn alive(&mut self) -> bool {
+        self.kids
+            .iter_mut()
+            .all(|k| matches!(k.try_wait(), Ok(None)))
+    }
+
+    fn wait(&mut self, what: &str, mut ready: impl FnMut(&Private) -> bool) -> Result<(), String> {
+        let until = Instant::now() + READY;
+        loop {
+            if ready(&self.private) {
+                return Ok(());
+            }
+            if !self.alive() {
+                return Err(format!("a daemon stopped before {what}"));
+            }
+            if Instant::now() > until {
+                return Err(format!("no {what} in time"));
+            }
+            std::thread::sleep(POLL);
         }
     }
+
+    fn bring_up(&mut self) -> Result<(), String> {
+        laid().push(self.base.clone());
+        self.private = lay(&self.base)?;
+        self.daemon("pipewire")?;
+        self.wait("pipewire socket", |p| p.runtime.join("pipewire-0").exists())?;
+        self.daemon("wireplumber")?;
+        let pulse = pulse_found();
+        if pulse {
+            self.daemon(PULSE)?;
+        }
+        self.wait("default sink", |p| {
+            has_default_sink(p) && (!pulse || p.runtime.join("pulse/native").exists())
+        })
+    }
 }
 
-fn link(from: &Path, to: &Path) -> Result<(), String> {
-    use std::os::unix::fs::{DirBuilderExt, symlink};
-    let parent = to.parent().unwrap_or(to);
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(parent)
-        .map_err(|e| format!("{}: {e}", parent.display()))?;
-    symlink(from, to).map_err(|e| format!("{}: {e}", to.display()))
+fn names_default_sink(dump: &[u8]) -> bool {
+    serde_json::from_slice::<Value>(dump).is_ok_and(|v| {
+        v.as_array().into_iter().flatten().any(|o| {
+            o["metadata"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|m| m["key"] == "default.audio.sink" && !m["value"].is_null())
+        })
+    })
+}
+
+fn has_default_sink(p: &Private) -> bool {
+    let mut c = Command::new("pw-dump");
+    c.arg("--no-colors");
+    p.apply(&mut c);
+    crate::paths::output(&mut c).is_ok_and(|o| names_default_sink(&o.stdout))
+}
+
+impl Drop for Sound {
+    fn drop(&mut self) {
+        for k in self.kids.iter().rev() {
+            let _ = kill(Pid::from_raw(k.id() as i32), Signal::SIGTERM);
+        }
+        let until = Instant::now() + Duration::from_secs(3);
+        for k in self.kids.iter_mut().rev() {
+            while Instant::now() < until && !matches!(k.try_wait(), Ok(Some(_))) {
+                std::thread::sleep(POLL);
+            }
+            let _ = k.kill();
+            let _ = k.wait();
+            crate::paths::reaped(k.id());
+        }
+        laid().retain(|b| b != &self.base);
+        let _ = std::fs::remove_dir_all(&self.base);
+    }
 }
 
 struct Tap {
@@ -366,7 +522,7 @@ fn capture(out: impl Read, clock: Instant) -> Capture {
 }
 
 impl Tap {
-    fn start(serial: u64, clock: Instant) -> Option<Tap> {
+    fn start(serial: u64, clock: Instant, private: &Private) -> Option<Tap> {
         let mut cmd = Command::new("pw-record");
         cmd.args(["--target", &serial.to_string(), "--raw", "--rate"])
             .arg(RATE.to_string())
@@ -376,6 +532,7 @@ impl Tap {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
+        private.apply(&mut cmd);
         let mut child = crate::paths::spawn(&mut cmd).ok()?;
         let Some(out) = child.stdout.take() else {
             let _ = child.kill();
@@ -412,7 +569,7 @@ impl Drop for Tap {
     }
 }
 
-fn watch(out: impl Read, root: u32, clock: Instant) -> Vec<Capture> {
+fn watch(out: impl Read, root: u32, clock: Instant, private: &Private) -> Vec<Capture> {
     let mut graph = Graph::default();
     let mut live: HashMap<u64, Tap> = HashMap::new();
     let mut done = Vec::new();
@@ -425,7 +582,7 @@ fn watch(out: impl Read, root: u32, clock: Instant) -> Vec<Capture> {
             match change {
                 Change::Appeared { id, serial, pid } => {
                     if in_tree(pid, &procs(), root)
-                        && let Some(tap) = Tap::start(serial, clock)
+                        && let Some(tap) = Tap::start(serial, clock, private)
                     {
                         live.insert(id, tap);
                     }
@@ -448,12 +605,13 @@ pub struct Audio {
 }
 
 impl Audio {
-    pub fn start(root: u32, clock: Instant) -> Option<Audio> {
+    pub fn start(root: u32, clock: Instant, private: &Private) -> Option<Audio> {
         let mut cmd = Command::new("pw-dump");
         cmd.args(["--no-colors", "--monitor"])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
+        private.apply(&mut cmd);
         let mut watcher = crate::paths::spawn(&mut cmd).ok()?;
         let Some(out) = watcher.stdout.take() else {
             let _ = watcher.kill();
@@ -461,9 +619,12 @@ impl Audio {
             crate::paths::reaped(watcher.id());
             return None;
         };
+        let private = private.clone();
         Some(Audio {
             watcher,
-            thread: Some(std::thread::spawn(move || watch(out, root, clock))),
+            thread: Some(std::thread::spawn(move || {
+                watch(out, root, clock, &private)
+            })),
         })
     }
 
@@ -543,6 +704,23 @@ mod tests {
     }
 
     #[test]
+    fn a_pulse_stream_is_dated_by_the_clients_own_process_not_the_servers() {
+        let mut g = Graph::default();
+        let c = json!({"id": 10, "type": "PipeWire:Interface:Client", "info": {"props": {"pipewire.sec.pid": 900, "application.process.id": 4000}}});
+        assert_eq!(
+            g.apply(&json!([
+                c,
+                stream(20, 21, Some(10), None, "Stream/Output/Audio")
+            ])),
+            [Change::Appeared {
+                id: 20,
+                serial: 21,
+                pid: 4000
+            }]
+        );
+    }
+
+    #[test]
     fn a_stream_seen_before_its_serial_is_announced_once_the_serial_comes() {
         let mut g = Graph::default();
         let bare = json!([{"id": 20, "type": "PipeWire:Interface:Node", "info": {"props": {"media.class": "Stream/Output/Audio", "pipewire.sec.pid": 4000}}}]);
@@ -616,6 +794,16 @@ mod tests {
                 pid: 4000
             }]
         );
+    }
+
+    #[test]
+    fn a_default_sink_is_named_only_by_a_metadata_entry_with_a_value() {
+        let named = br#"[{"id": 1, "metadata": [{"key": "default.audio.sink", "value": {"name": "null-sink"}}]}]"#;
+        let bare = br#"[{"id": 1, "metadata": [{"key": "default.audio.sink", "value": null}]}, {"id": 2, "info": {"props": {"note": "default.audio.sink"}}}]"#;
+        assert!(names_default_sink(named));
+        assert!(!names_default_sink(bare));
+        assert!(!names_default_sink(b"[{\"id\": 1, \"metadata\": []}]"));
+        assert!(!names_default_sink(b"not json"));
     }
 
     #[test]

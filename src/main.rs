@@ -510,6 +510,7 @@ fn cancel(signal: i32) -> ! {
     };
     let _ = writeln!(std::io::stderr(), "prec: {name}: stopping");
     render::tear_down(paths::stop_children);
+    audio::sweep();
     let _ = writeln!(std::io::stderr(), "prec: cancelled by {name}");
     std::process::exit(128 + signal);
 }

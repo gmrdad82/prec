@@ -416,9 +416,11 @@ pub fn record(spec: &Spec) -> Result<(Vec<Event>, Option<crate::audio::Mix>), St
         cmd.env(k, v);
     }
     cmd.cwd(spec.cwd);
-    let sockets = crate::audio::Sockets::prepare(spec.scratch);
-    if let Some(sockets) = &sockets {
-        cmd.env("XDG_RUNTIME_DIR", sockets.dir());
+    let sound = (!spec.still)
+        .then(|| crate::audio::Sound::start(spec.scratch))
+        .flatten();
+    if let Some(sound) = &sound {
+        cmd.env("XDG_RUNTIME_DIR", sound.private().runtime());
     }
     let mut child =
         crate::paths::spawn_session(|| pair.slave.spawn_command(cmd), |c| c.process_id())
@@ -433,10 +435,10 @@ pub fn record(spec: &Spec) -> Result<(Vec<Event>, Option<crate::audio::Mix>), St
         .take_writer()
         .map_err(|e| format!("pty writer: {e}"))?;
     let start = Instant::now();
-    let audio = sockets
+    let audio = sound
         .as_ref()
-        .and(child.process_id())
-        .and_then(|pid| crate::audio::Audio::start(pid, start));
+        .zip(child.process_id())
+        .and_then(|(sound, pid)| crate::audio::Audio::start(pid, start, sound.private()));
     let (tx, rx) = channel();
     let reader_thread = std::thread::spawn(move || {
         let mut buf = vec![0u8; 65536];

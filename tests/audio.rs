@@ -4,14 +4,23 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::time::Duration;
 
 const TONE_HZ: f64 = 440.0;
 const TONE_SECONDS: f64 = 1.5;
 const START_TOLERANCE: f64 = 0.5;
 
-const TOOLS: [&str; 5] = ["pipewire", "wireplumber", "pw-cat", "pw-record", "pw-dump"];
+const TOOLS: [&str; 8] = [
+    "pipewire",
+    "wireplumber",
+    "pipewire-pulse",
+    "pw-cat",
+    "pw-record",
+    "pw-dump",
+    "paplay",
+    "pactl",
+];
 
 fn on_path(tool: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|p| {
@@ -24,97 +33,6 @@ fn on_path(tool: &str) -> bool {
 
 fn missing_tool() -> Option<&'static str> {
     TOOLS.into_iter().find(|t| !on_path(t))
-}
-
-struct Daemons {
-    xdg: PathBuf,
-    home: PathBuf,
-    kids: Vec<Child>,
-}
-
-impl Daemons {
-    fn env(&self, c: &mut Command) {
-        c.env("XDG_RUNTIME_DIR", &self.xdg)
-            .env("HOME", &self.home)
-            .env("XDG_CONFIG_HOME", self.home.join(".config"))
-            .env("XDG_STATE_HOME", self.home.join(".state"))
-            .env("XDG_CACHE_HOME", self.home.join(".cache"))
-            .env("XDG_DATA_HOME", self.home.join(".data"))
-            .env_remove("DBUS_SESSION_BUS_ADDRESS")
-            .env_remove("PIPEWIRE_REMOTE")
-            .env_remove("PULSE_SERVER");
-    }
-
-    fn daemon(&self, tool: &str, dir: &Path) -> Child {
-        let mut c = Command::new("prlimit");
-        c.args(["--core=1:1", "--", "timeout", "300", tool])
-            .current_dir(dir)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        self.env(&mut c);
-        c.spawn().unwrap()
-    }
-
-    fn start(dir: &Path) -> Daemons {
-        let xdg = dir.join("x");
-        let home = dir.join("h");
-        let pw = home.join(".config/pipewire/pipewire.conf.d");
-        let wp = home.join(".config/wireplumber/wireplumber.conf.d");
-        for d in [&xdg, &pw, &wp] {
-            std::fs::create_dir_all(d).unwrap();
-        }
-        std::fs::set_permissions(&xdg, std::fs::Permissions::from_mode(0o700)).unwrap();
-        std::fs::write(
-            pw.join("10-null.conf"),
-            "context.objects = [\n  { factory = adapter\n    args = { factory.name = support.null-audio-sink node.name = null-sink media.class = Audio/Sink audio.position = [ FL FR ] object.linger = true }\n  }\n]\n",
-        )
-        .unwrap();
-        std::fs::write(
-            wp.join("10-off.conf"),
-            "wireplumber.profiles = {\n  main = {\n    monitor.alsa = disabled\n    monitor.alsa-midi = disabled\n    monitor.bluez = disabled\n    monitor.bluez-midi = disabled\n    monitor.libcamera = disabled\n    monitor.v4l2 = disabled\n    support.logind = disabled\n    support.reserve-device = disabled\n  }\n}\n",
-        )
-        .unwrap();
-        let mut d = Daemons {
-            xdg,
-            home,
-            kids: vec![],
-        };
-        let first = d.daemon("pipewire", dir);
-        d.kids.push(first);
-        assert!(
-            common::until(Duration::from_secs(30), || d
-                .xdg
-                .join("pipewire-0")
-                .exists()),
-            "pipewire made no socket"
-        );
-        let second = d.daemon("wireplumber", dir);
-        d.kids.push(second);
-        assert!(
-            common::until(Duration::from_secs(30), || d
-                .dump()
-                .contains("default.audio.sink")),
-            "wireplumber never named a default sink"
-        );
-        d
-    }
-
-    fn dump(&self) -> String {
-        let mut c = Command::new("pw-dump");
-        c.arg("--no-colors");
-        self.env(&mut c);
-        String::from_utf8_lossy(&c.output().unwrap().stdout).into_owned()
-    }
-}
-
-impl Drop for Daemons {
-    fn drop(&mut self) {
-        for k in self.kids.iter_mut().rev() {
-            common::signal(k.id(), "TERM");
-            let _ = k.wait();
-        }
-    }
 }
 
 fn wav(samples: &[i16]) -> Vec<u8> {
@@ -181,15 +99,17 @@ fn hertz(h: &Heard) -> f64 {
 }
 
 fn app(dir: &Path, hooks: &str, tone_file: &Path) -> PathBuf {
+    let tone_file = tone_file.display();
+    let dump = dir.join("dump.json");
+    let info = dir.join("info.txt");
     let app = common::demo_app(dir, hooks);
     let bin = app.join("render/terminal/bin/demo");
     std::fs::write(
         &bin,
         format!(
-            "#!/usr/bin/env bash\ncase \"$1\" in\n  tone) printf 'tone-start\\n'; pw-cat -p '{}' ;;\n  quiet) printf 'quiet\\n'; sleep 1 ;;\n  later) printf 'tone-start\\n'; sleep 1; pw-cat -p '{}'; pw-cat -p '{}' ;;\nesac\n",
-            tone_file.display(),
-            tone_file.display(),
-            tone_file.display()
+            "#!/usr/bin/env bash\ncase \"$1\" in\n  tone) printf 'tone-start\\n'; pw-cat -p '{tone_file}' ;;\n  pulse) printf 'tone-start\\n'; paplay '{tone_file}' ;;\n  quiet) printf 'quiet\\n'; sleep 1 ;;\n  later) printf 'tone-start\\n'; sleep 1; pw-cat -p '{tone_file}'; pw-cat -p '{tone_file}' ;;\n  graph) pw-dump --no-colors > '{}'; pactl info > '{}' ;;\nesac\n",
+            dump.display(),
+            info.display()
         ),
     )
     .unwrap();
@@ -198,6 +118,18 @@ fn app(dir: &Path, hooks: &str, tone_file: &Path) -> PathBuf {
         &app,
         "tone",
         "Sleep 200ms\nType \"demo tone\"\nEnter\nSleep 3s\n",
+        "",
+    );
+    common::add_shot(
+        &app,
+        "pulse",
+        "Sleep 200ms\nType \"demo pulse\"\nEnter\nSleep 3s\n",
+        "",
+    );
+    common::add_shot(
+        &app,
+        "graph",
+        "Sleep 200ms\nType \"demo graph\"\nEnter\nSleep 2s\n",
         "",
     );
     common::add_shot(
@@ -215,7 +147,7 @@ fn app(dir: &Path, hooks: &str, tone_file: &Path) -> PathBuf {
     app
 }
 
-fn record(dir: &Path, app: &Path, shot: &str, daemons: &Daemons) -> std::process::Output {
+fn command(dir: &Path, app: &Path, shot: &str) -> Command {
     let mut c = common::prec(
         dir,
         &[
@@ -228,9 +160,15 @@ fn record(dir: &Path, app: &Path, shot: &str, daemons: &Daemons) -> std::process
             "tmp/out",
         ],
     );
-    c.env("XDG_CACHE_HOME", dir.join("cache"));
-    c.env("XDG_RUNTIME_DIR", &daemons.xdg);
-    c.output().unwrap()
+    c.env_remove("PREC_AUDIO")
+        .env("PULSE_SERVER", "unix:/nonexistent/pulse")
+        .env("PIPEWIRE_REMOTE", "/nonexistent/pipewire")
+        .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/bus");
+    c
+}
+
+fn record(dir: &Path, app: &Path, shot: &str) -> std::process::Output {
+    command(dir, app, shot).output().unwrap()
 }
 
 fn cast_header(dir: &Path, shot: &str) -> Value {
@@ -252,25 +190,24 @@ fn marker_time(dir: &Path, shot: &str, needle: &str) -> f64 {
         .unwrap()
 }
 
-fn setup(name: &str) -> Option<(PathBuf, Daemons, PathBuf)> {
+fn setup(name: &str) -> Option<(PathBuf, PathBuf)> {
     if let Some(tool) = missing_tool() {
-        eprintln!("skipped: {tool} is not on PATH, so no private audio daemon can run");
+        eprintln!("skipped: {tool} is not on PATH, so the private sound cannot run");
         return None;
     }
     let dir = common::caller("au", name);
-    let daemons = Daemons::start(&dir);
     let tone_file = dir.join("t.wav");
     tone(&tone_file);
-    Some((dir, daemons, tone_file))
+    Some((dir, tone_file))
 }
 
 #[test]
 fn a_recorded_app_that_plays_a_tone_leaves_a_wav_and_a_cast_header_that_dates_it() {
-    let Some((dir, daemons, tone_file)) = setup("t") else {
+    let Some((dir, tone_file)) = setup("t") else {
         return;
     };
     let app = app(&dir, "", &tone_file);
-    let o = record(&dir, &app, "tone", &daemons);
+    let o = record(&dir, &app, "tone");
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let header = cast_header(&dir, "tone");
     let audio = &header["x_terminal_renderer"]["audio"];
@@ -309,20 +246,20 @@ fn a_recorded_app_that_plays_a_tone_leaves_a_wav_and_a_cast_header_that_dates_it
         !String::from_utf8_lossy(
             &std::fs::read(dir.join("tmp/out/demo/clip/demo-clip-tone.cast")).unwrap()
         )
-        .contains(daemons.xdg.to_str().unwrap())
+        .contains("/snd/x")
     );
 }
 
 #[test]
 fn a_silent_app_leaves_no_wav_and_no_audio_key_and_a_stale_wav_is_removed() {
-    let Some((dir, daemons, tone_file)) = setup("q") else {
+    let Some((dir, tone_file)) = setup("q") else {
         return;
     };
     let app = app(&dir, "", &tone_file);
     let out = dir.join("tmp/out/demo/clip");
     std::fs::create_dir_all(&out).unwrap();
     std::fs::write(out.join("demo-clip-quiet.wav"), "old").unwrap();
-    let o = record(&dir, &app, "quiet", &daemons);
+    let o = record(&dir, &app, "quiet");
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert!(
         cast_header(&dir, "quiet")["x_terminal_renderer"]
@@ -334,11 +271,11 @@ fn a_silent_app_leaves_no_wav_and_no_audio_key_and_a_stale_wav_is_removed() {
 
 #[test]
 fn a_stream_opened_late_and_reopened_is_followed_into_one_wav() {
-    let Some((dir, daemons, tone_file)) = setup("l") else {
+    let Some((dir, tone_file)) = setup("l") else {
         return;
     };
     let app = app(&dir, "", &tone_file);
-    let o = record(&dir, &app, "later", &daemons);
+    let o = record(&dir, &app, "later");
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let header = cast_header(&dir, "later");
     let audio = &header["x_terminal_renderer"]["audio"];
@@ -354,8 +291,8 @@ fn a_stream_opened_late_and_reopened_is_followed_into_one_wav() {
 }
 
 #[test]
-fn a_session_with_a_home_namespace_still_reaches_the_sockets() {
-    let Some((dir, daemons, tone_file)) = setup("n") else {
+fn a_session_with_a_home_namespace_still_reaches_the_private_sockets() {
+    let Some((dir, tone_file)) = setup("n") else {
         return;
     };
     let app = app(
@@ -363,7 +300,7 @@ fn a_session_with_a_home_namespace_still_reaches_the_sockets() {
         "home = \"/home/prec-alpha\"\nhostname = \"beta-box\"\n",
         &tone_file,
     );
-    let o = record(&dir, &app, "tone", &daemons);
+    let o = record(&dir, &app, "tone");
     if !o.status.success() {
         let said = String::from_utf8_lossy(&o.stderr);
         if said.contains("namespace") {
@@ -379,8 +316,8 @@ fn a_session_with_a_home_namespace_still_reaches_the_sockets() {
 }
 
 #[test]
-fn an_interrupt_stops_and_reaps_every_capture_process() {
-    let Some((dir, daemons, tone_file)) = setup("i") else {
+fn an_interrupt_stops_and_reaps_every_sound_process() {
+    let Some((dir, tone_file)) = setup("i") else {
         return;
     };
     let app = app(&dir, "", &tone_file);
@@ -390,38 +327,23 @@ fn an_interrupt_stops_and_reaps_every_capture_process() {
         "Sleep 200ms\nType \"demo later\"\nEnter\nSleep 600s\n",
         "",
     );
-    let mut c = common::prec(
-        &dir,
-        &[
-            "record",
-            "demo",
-            "long",
-            "--app-dir",
-            app.to_str().unwrap(),
-            "--out",
-            "tmp/out",
-        ],
-    );
-    c.env("XDG_CACHE_HOME", dir.join("cache"));
-    c.env("XDG_RUNTIME_DIR", &daemons.xdg);
-    let mut child = common::spawn(c, &dir);
+    let mut child = common::spawn(command(&dir, &app, "long"), &dir);
+    let suffix = format!("/sockets/p{}-0/x", child.id());
     let mine = |p: &common::Proc| {
-        p.args
-            .first()
-            .is_some_and(|a| a.ends_with("pw-record") || a.ends_with("pw-dump"))
-            && p.env
-                .iter()
-                .any(|e| e == &format!("XDG_RUNTIME_DIR={}", daemons.xdg.display()))
+        p.env.iter().any(|e| {
+            e.strip_prefix("XDG_RUNTIME_DIR=")
+                .is_some_and(|v| v.ends_with(&suffix))
+        })
     };
-    let captures = |name: &str| {
-        common::procs()
-            .iter()
-            .any(|p| mine(p) && p.args.first().is_some_and(|a| a.ends_with(name)))
-    };
+    let named =
+        |p: &common::Proc, name: &str| mine(p) && p.args.first().is_some_and(|a| a.ends_with(name));
+    let running = |name: &str| common::procs().iter().any(|p| named(p, name));
     common::wait_for("a capture of the app's stream", &dir, 60, || {
-        captures("pw-record")
+        running("pw-record")
     });
-    assert!(captures("pw-dump"));
+    for daemon in ["pipewire", "wireplumber", "pipewire-pulse", "pw-dump"] {
+        assert!(running(daemon), "{daemon} is not running");
+    }
     assert!(common::signal(child.id(), "TERM"));
     let status = common::exits(&mut child, &dir);
     assert_eq!(status.code(), Some(143), "{}", common::said(&dir));
@@ -430,7 +352,106 @@ fn an_interrupt_stops_and_reaps_every_capture_process() {
     });
     assert!(
         left.is_empty(),
-        "capture processes outlived prec: {:?}",
+        "sound processes outlived prec: {:?}",
         left.iter().map(|p| (p.pid, &p.args)).collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn the_private_graph_has_the_null_sink_only_and_no_device() {
+    let Some((dir, tone_file)) = setup("g") else {
+        return;
+    };
+    let app = app(&dir, "", &tone_file);
+    let o = record(&dir, &app, "graph");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let dump: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("dump.json")).unwrap()).unwrap();
+    let objects = dump.as_array().unwrap();
+    let kind = |o: &Value| o["type"].as_str().unwrap_or_default().to_string();
+    assert!(
+        objects.iter().all(|o| !kind(o).ends_with(":Device")),
+        "a device exists"
+    );
+    let nodes: Vec<&Value> = objects
+        .iter()
+        .filter(|o| kind(o).ends_with(":Node"))
+        .collect();
+    fn class(n: &Value) -> &str {
+        n["info"]["props"]["media.class"]
+            .as_str()
+            .unwrap_or_default()
+    }
+
+    let sinks: Vec<&str> = nodes
+        .iter()
+        .filter(|n| class(n).contains("Sink"))
+        .map(|n| n["info"]["props"]["node.name"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(sinks, ["null-sink"]);
+    for n in &nodes {
+        assert!(
+            !class(n).contains("Source") && !class(n).starts_with("Video"),
+            "{}",
+            class(n)
+        );
+        let props = n["info"]["props"].as_object().unwrap();
+        assert!(
+            props
+                .keys()
+                .all(|k| !k.starts_with("api.") && !k.starts_with("device.")),
+            "{props:?}"
+        );
+    }
+    let info = std::fs::read_to_string(dir.join("info.txt")).unwrap();
+    assert!(info.contains("Default Sink: null-sink"), "{info}");
+}
+
+#[test]
+fn a_pulse_client_is_heard_through_the_private_pulse_server() {
+    let Some((dir, tone_file)) = setup("p") else {
+        return;
+    };
+    let app = app(&dir, "", &tone_file);
+    let o = record(&dir, &app, "pulse");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let heard = read_wav(&dir.join("tmp/out/demo/clip/demo-clip-pulse.wav"));
+    assert!((hertz(&heard) - TONE_HZ).abs() < 2.0);
+    assert!(heard.left.iter().map(|s| s.unsigned_abs()).max().unwrap() > 4000);
+}
+
+#[test]
+fn a_daemon_that_fails_leaves_a_silent_recording_and_one_line() {
+    let Some((dir, tone_file)) = setup("f") else {
+        return;
+    };
+    let app = app(&dir, "", &tone_file);
+    let stub = dir.join("stub");
+    std::fs::create_dir_all(&stub).unwrap();
+    std::fs::write(stub.join("pipewire"), "#!/bin/sh\nexit 1\n").unwrap();
+    std::fs::set_permissions(
+        stub.join("pipewire"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let mut path = vec![stub];
+    path.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    let mut c = command(&dir, &app, "tone");
+    c.env("PATH", std::env::join_paths(path).unwrap());
+    let o = c.output().unwrap();
+    let said = String::from_utf8_lossy(&o.stderr);
+    assert!(o.status.success(), "{said}");
+    assert_eq!(
+        said.lines()
+            .filter(|l| l.starts_with("prec: audio:"))
+            .count(),
+        1,
+        "{said}"
+    );
+    assert!(
+        cast_header(&dir, "tone")["x_terminal_renderer"]
+            .get("audio")
+            .is_none()
+    );
+    assert!(!dir.join("tmp/out/demo/clip/demo-clip-tone.wav").exists());
 }
