@@ -10,6 +10,7 @@ use crate::paths;
 use crate::private;
 use crate::record::{self, Cast, Timeline};
 use crate::replay::{self, Look, Take};
+use crate::sound;
 use crate::tape;
 use crate::theme::{self, Choice};
 use chrono::{Local, SecondsFormat};
@@ -50,7 +51,20 @@ pub struct Opts {
     pub web: Vec<u32>,
     pub profile: Vec<String>,
     pub allow_private: bool,
+    pub audio_offset: Option<f64>,
+    pub audio_gain: Option<f64>,
 }
+
+impl Opts {
+    pub fn tune(&self) -> sound::Tune {
+        sound::Tune {
+            offset: self.audio_offset.unwrap_or(0.0),
+            gain_db: self.audio_gain.unwrap_or(0.0),
+        }
+    }
+}
+
+pub const AUDIO_FLAGS: &str = "--audio-offset and --audio-gain are for clip and render";
 
 pub fn stages(kind: &str, build: bool, record: bool, render: bool) -> Vec<&'static str> {
     let mut out = Vec::new();
@@ -99,6 +113,10 @@ pub fn version(rev: &str, commit: Option<&str>) -> String {
 }
 
 pub fn validate(kind: &str, opts: &Opts) -> Result<(), String> {
+    opts.tune().check()?;
+    if kind != "clip" && (opts.audio_offset.is_some() || opts.audio_gain.is_some()) {
+        return Err(AUDIO_FLAGS.into());
+    }
     if let Some(p) = &opts.poster {
         if kind != "clip" {
             return Err("--poster is for clip and render".into());
@@ -1021,6 +1039,8 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
         checked_name("the cast's shot", meta["shot"].as_str().unwrap_or("shot"))?.to_string();
     let kind = checked_kind(meta["kind"].as_str().unwrap_or("clip"))?.to_string();
     validate(&kind, opts)?;
+    let heard = sound::find(&cast_path, &meta)?;
+    let tune = opts.tune();
     if !opts.allow_private {
         private::refuse(
             &cast_path,
@@ -1206,9 +1226,42 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
                 paths_in.len()
             } else {
                 let output = stage.join(format!("{manifest_stem}.master.mp4"));
-                let (count, used) =
-                    compose::master(&paths_in, fade, pl.master_size, pl.fps, &output)?;
+                let length = paths_in.len() - fade.unwrap_or(0);
+                let want_frames = sound::frames_of(length, pl.fps);
+                let bed = match &heard {
+                    Some(src) => Some(sound::arrange(
+                        &src.pcm()?,
+                        src.start,
+                        &timeline.segments,
+                        tune,
+                        want_frames,
+                    )),
+                    None => None,
+                };
+                let with_sound = bed.as_deref().map(|pcm| encode::Sound { pcm, tune });
+                let (count, used) = compose::master(
+                    &paths_in,
+                    fade,
+                    pl.master_size,
+                    pl.fps,
+                    &output,
+                    with_sound.as_ref(),
+                )?;
                 let (size, frames, rate) = encode::probe(&output)?;
+                let want_audio = with_sound.as_ref().map(|_| encode::Heard {
+                    rate: sound::RATE,
+                    channels: sound::CHANNELS as u32,
+                    frames: want_frames as u64,
+                    skipped: sound::PRIMING,
+                    packets: want_frames.div_ceil(1024) + 1,
+                });
+                let has_audio = encode::probe_audio(&output)?;
+                if has_audio != want_audio {
+                    return Err(format!(
+                        "{}: the audio track reads back as {has_audio:?}, not the {want_audio:?} prec encoded",
+                        output.display()
+                    ));
+                }
                 if size != pl.master_size || frames != count || rate != Some(pl.fps) {
                     return Err(format!(
                         "{}: the file holds {frames} frames at {}x{} and {}, not the {count} at {}x{} and {} fps prec encoded",
@@ -1236,7 +1289,7 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
                 files.push(encode::file_entry(
                     &stage,
                     &output,
-                    &encode::master_what(),
+                    &encode::master_what(heard.is_some()),
                     json!({"role": "master", "fps": pl.fps, "size": pl.master_size}),
                 )?);
                 files.push(encode::file_entry(
@@ -1267,6 +1320,16 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
                 "render_seconds": (render_started.elapsed().as_secs_f64() * 10.0).round() / 10.0,
             });
         }
+    }
+    if let Some(src) = &heard {
+        let staged = stage.join(&src.file);
+        std::fs::write(&staged, src.bytes()).map_err(|e| format!("{}: {e}", staged.display()))?;
+        files.push(encode::file_entry(
+            &stage,
+            &staged,
+            "audio: the sound the app made while recorded, 48 kHz 16-bit stereo WAV that the cast names and every render muxes from",
+            json!({"role": "audio"}),
+        )?);
     }
     let staged_cast = stage.join(format!("{manifest_stem}.cast"));
     std::fs::copy(&cast_path, &staged_cast)
@@ -1322,7 +1385,7 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
         },
         "outputs": {
             "delivery": if kind == "clip" { "pcod makes delivery formats from the H.264 master" } else { "8-bit sRGB PNG with an sRGB chunk" },
-            "master": if kind == "clip" { if opts.no_encode { "none: frames only" } else { "H.264 High by pito-codecs, CRF 14, 8-bit 4:2:0 BT.709 limited range in MP4" } } else { "16-bit sRGB PNG, lossless" },
+            "master": if kind == "clip" { if opts.no_encode { "none: frames only" } else if heard.is_some() { "H.264 High by pito-codecs, CRF 14, 8-bit 4:2:0 BT.709 limited range, with AAC 320 kb/s audio, in MP4" } else { "H.264 High by pito-codecs, CRF 14, 8-bit 4:2:0 BT.709 limited range in MP4" } } else { "16-bit sRGB PNG, lossless" },
             "poster": poster_out,
             "resampling": format!("{} (the master is drawn at its own size, never scaled)", encode::LANCZOS),
         },
@@ -1343,6 +1406,9 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
         "frames": frames_record,
         "encodes": encodes,
     });
+    if heard.is_some() && kind == "clip" {
+        manifest["params"]["audio"] = tune.to_json();
+    }
     if let Some((g, c)) = rendered.max {
         manifest["max_grid"] = json!({"cols": g[0], "rows": g[1], "canvas": [c[0], c[1]]});
     }

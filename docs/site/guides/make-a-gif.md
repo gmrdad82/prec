@@ -5,7 +5,7 @@ sidebar:
   order: 9
 ---
 
-prec writes masters: a clip is one silent H.264 file at CRF 14, larger and sharper than a page needs. Make the delivery from it with pcod from [pito-codecs](https://docs.pitomd.com/pito-codecs/) or ffmpeg.
+prec writes masters: a clip is one H.264 file at CRF 14, with the app's sound as AAC 320 kb/s when it made any,, larger and sharper than a page needs. Make the delivery from it with pcod from [pito-codecs](https://docs.pitomd.com/pito-codecs/) or ffmpeg.
 
 ## With pcod
 

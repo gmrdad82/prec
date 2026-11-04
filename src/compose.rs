@@ -306,9 +306,10 @@ pub fn master(
     size: [u32; 2],
     fps: Fps,
     output: &Path,
+    sound: Option<&encode::Sound>,
 ) -> Result<(usize, Vec<String>), String> {
     let pics = pictures(files, fade);
-    let used = encode::master(&pics, size, fps, output)?;
+    let used = encode::master(&pics, size, fps, output, sound)?;
     Ok((pics.len(), used))
 }
 
@@ -649,7 +650,7 @@ mod tests {
             .collect();
         let files: Vec<&Path> = names.iter().map(PathBuf::as_path).collect();
         let out = dir.join("a.master.mp4");
-        let (count, used) = master(&files, Some(2), [64, 64], Fps::new(30, 1), &out).unwrap();
+        let (count, used) = master(&files, Some(2), [64, 64], Fps::new(30, 1), &out, None).unwrap();
         assert_eq!(count, 4);
         assert!(used.contains(&"bframes 0".to_string()));
         assert_eq!(
