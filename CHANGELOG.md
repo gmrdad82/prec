@@ -2,8 +2,16 @@
 
 ## Unreleased
 
+### Removed
+
+- Breaking: `--rev` is gone and is refused as an unknown argument. prec records only the working tree; the per-commit source checkouts and cached binaries are gone, and the build tree and the shared cargo target dir stay.
+- Breaking: the `prec cache` and `prec cache prune` commands, with their `--json` reports, `--older-than`, `--all` and `--dry-run`. The cache stays and prunes itself.
+- The manifest's and the cast's `app.tag` and `app.pinned`. `app.rev` stays, and older casts that carry them still read and render.
+
 ### Changed
 
+- The cache prunes itself: when a record or render starts, at most once a day, entries unused for 30 days are removed quietly, and an entry a run holds stays. Folders an older prec left (`src/`, `bin/`, `git/`) are removed by the same rule, read-only trees included.
+- A build's binaries are copied into the run's own scratch and run from there, so a run never executes a binary another build can overwrite.
 - Clips encode with pito-codecs 3.1.0, which never runs ffmpeg or ffprobe. Masters are not byte-identical to those of 1.6.0: a draft of the same cast (1280x720, 30 fps, Catppuccin Mocha) changes its master's sha256 from `4d49d3f4…ced987` to `5ace411d…7de7d4`; they keep their BT.709 limited-range tags and stay byte-identical across machines.
 
 ## v1.6.0 — 2026-11-03

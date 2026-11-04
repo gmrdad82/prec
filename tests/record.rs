@@ -350,8 +350,8 @@ fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 #[test]
-fn a_pinned_recording_builds_its_commit_once_from_the_cache_and_ignores_the_working_tree() {
-    let dir = common::caller("record", "pinned");
+fn a_clean_tree_builds_at_head_in_the_build_tree_and_runs_a_copy_of_the_binary() {
+    let dir = common::caller("record", "clean");
     let app = common::demo_app(&dir, "");
     std::fs::rename(app.join("render"), dir.join("render")).unwrap();
     let toml = dir.join("render/terminal.toml");
@@ -366,61 +366,70 @@ fn a_pinned_recording_builds_its_commit_once_from_the_cache_and_ignores_the_work
         ),
     )
     .unwrap();
-    let tape = "Type@0ms \"echo pinned-$((40+1))\"\nEnter\nWait+Screen /(?m)^pinned-4\\d$/\n";
-    common::add_shot(&dir, "pinned", tape, "");
+    let tape = "Type@0ms \"echo kept-$((40+1))\"\nEnter\nWait+Screen /(?m)^kept-4\\d$/\n";
+    common::add_shot(&dir, "kept", tape, "");
     git(&dir, &["add", "render"]);
     git(&dir, &["commit", "-q", "-m", "one"]);
-    git(&dir, &["tag", "v9"]);
     let commit = git(&dir, &["rev-parse", "HEAD"]);
+    let record = || {
+        prec(&dir, &["record", "demo", "kept", "--out", "tmp/out"])
+            .output()
+            .unwrap()
+    };
+    let first = record();
+    common::expect_ok(&first, "prec record on a clean tree");
+    let header = |name: &str| -> Value {
+        let text = std::fs::read_to_string(cast_of(&dir, name)).unwrap();
+        serde_json::from_str(text.lines().next().unwrap()).unwrap()
+    };
+    let meta = header("kept")["x_terminal_renderer"]["app"].clone();
+    assert_eq!(meta["commit"], commit.as_str(), "{meta}");
+    assert_eq!(meta["rev"], commit[..12], "{meta}");
+    assert!(meta.get("tag").is_none(), "{meta}");
+    assert!(meta.get("pinned").is_none(), "{meta}");
+    let bin_dir = PathBuf::from(meta["bin_dir"].as_str().unwrap());
+    assert!(!bin_dir.starts_with(dir.join("cache")), "{meta}");
+    assert!(bin_dir.join("demo").is_file(), "{meta}");
+    let works: Vec<_> = std::fs::read_dir(dir.join("cache/prec/work"))
+        .unwrap()
+        .collect();
+    assert_eq!(works.len(), 1);
+    let tree = works[0].as_ref().unwrap().path().join("tree");
+    assert!(tree.join("render/terminal/bin/demo").is_file());
+    assert!(!dir.join("cache/prec/bin").exists());
+    assert!(!dir.join("cache/prec/src").exists());
     std::fs::write(
-        dir.join("render/terminal/pinned.tape"),
+        dir.join("render/terminal/kept.tape"),
         tape.replace("40+1", "40+2"),
     )
     .unwrap();
-    let pinned = |rev: &str| {
-        prec(
-            &dir,
-            &["record", "demo", "pinned", "--rev", rev, "--out", "tmp/out"],
-        )
-        .output()
-        .unwrap()
-    };
-    let said = refused(&pinned("nope"));
-    assert!(
-        said.ends_with(&format!("prec: {} has no nope\n", dir.display())),
-        "{said}"
-    );
-    let first = pinned("v9");
-    common::expect_ok(&first, "prec record --rev v9");
-    assert!(
-        !stderr(&first).contains("using the cached build"),
-        "{}",
-        stderr(&first)
-    );
-    let text = std::fs::read_to_string(cast_of(&dir, "pinned")).unwrap();
-    let header: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
-    let meta = &header["x_terminal_renderer"]["app"];
-    assert_eq!(meta["commit"], commit.as_str(), "{meta}");
-    assert_eq!(meta["rev"], "v9", "{meta}");
-    assert_eq!(meta["tag"], "v9", "{meta}");
-    assert_eq!(meta["pinned"], true, "{meta}");
-    let bin_dir = PathBuf::from(meta["bin_dir"].as_str().unwrap());
-    assert!(bin_dir.starts_with(dir.join("cache")), "{meta}");
-    assert!(bin_dir.join("demo").is_file(), "{meta}");
-    let shown: String = cast_events(&dir, "pinned")
+    let dirty = record();
+    common::expect_ok(&dirty, "prec record on a dirty tree");
+    let meta = header("kept")["x_terminal_renderer"]["app"].clone();
+    assert_eq!(meta["rev"], format!("{}+dirty", &commit[..12]), "{meta}");
+    let shown: String = cast_events(&dir, "kept")
         .iter()
         .filter(|e| e[1] == "o")
         .map(|e| e[2].as_str().unwrap().to_string())
         .collect();
-    assert!(shown.contains("pinned-41"), "{shown:?}");
-    assert!(!shown.contains("pinned-42"), "{shown:?}");
-    let again = pinned("v9");
-    common::expect_ok(&again, "prec record --rev v9 again");
-    assert!(
-        stderr(&again).contains(&format!("demo@{}: using the cached build", &commit[..12])),
-        "{}",
-        stderr(&again)
-    );
+    assert!(shown.contains("kept-42"), "{shown:?}");
+    assert!(!shown.contains("kept-41"), "{shown:?}");
+}
+
+#[test]
+fn rev_is_refused_and_records_nothing() {
+    let dir = common::caller("record", "rev");
+    common::demo_app(&dir, "");
+    let o = prec(
+        &dir,
+        &["record", "demo", "typing", concat!("--re", "v"), "HEAD"],
+    )
+    .output()
+    .unwrap();
+    let said = stderr(&o);
+    assert_eq!(o.status.code(), Some(2), "{said}");
+    assert!(said.contains("unexpected argument '--re"), "{said}");
+    assert!(!dir.join("tmp/prec/run").exists());
 }
 
 #[test]

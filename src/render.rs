@@ -87,17 +87,13 @@ pub fn caller(raw: Option<&str>) -> String {
     }
 }
 
-pub fn version(rev: &str, commit: Option<&str>, named_tag: Option<&str>) -> String {
+pub fn version(rev: &str, commit: Option<&str>) -> String {
     if rev == "local" && commit.is_none() {
         return "local".into();
     }
     let dirty = rev.ends_with("+dirty");
     let named = rev.trim_end_matches("+dirty");
-    let base = if let Some(name) = named_tag {
-        name.to_string()
-    } else {
-        commit.unwrap_or(named).chars().take(12).collect()
-    };
+    let base: String = commit.unwrap_or(named).chars().take(12).collect();
     format!("{base}{}", if dirty { "-dirty" } else { "" })
 }
 
@@ -617,7 +613,14 @@ fn prepare(resolved: Resolved, kind: &str, opts: &Opts, run_name: &str) -> Resul
         jobs::stage("build", None, "steps");
         jobs::note(&format!("{}@{}", opts.product, resolved.rev));
     }
-    let bin_dir = app::build(&resolved, &opts.product, opts.bin.as_deref())?;
+    let work = paths::scratch(&["run", run_name])?;
+    paths::fresh(&work)?;
+    let bin_dir = app::build(
+        &resolved,
+        &opts.product,
+        opts.bin.as_deref(),
+        &work.join("bin"),
+    )?;
     let family = opts
         .font
         .clone()
@@ -641,8 +644,6 @@ fn prepare(resolved: Resolved, kind: &str, opts: &Opts, run_name: &str) -> Resul
         None => shot.grid.unwrap_or(terminal.grid),
     };
     crate::mask::Masks::new(&terminal.masks(&shot), grid)?;
-    let work = paths::scratch(&["run", run_name])?;
-    paths::fresh(&work)?;
     let scratch_dir = work.join("scratch");
     let home = scratch_dir.join("home");
     std::fs::create_dir_all(&home).map_err(|e| e.to_string())?;
@@ -935,8 +936,6 @@ fn cast_meta(
         "shown_seconds": (shown * 1e6).round() / 1e6,
         "app": {
             "rev": p.resolved.rev,
-            "tag": p.resolved.tag,
-            "pinned": p.resolved.pinned && opts.bin.is_none(),
             "commit": p.resolved.commit,
             "bin_dir": p.bin_dir.display().to_string(),
             "bin_sha256": paths::hash_file(&p.bin_dir.join(&p.terminal.bin)).ok(),
@@ -1259,7 +1258,6 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
     let version = version(
         meta["app"]["rev"].as_str().unwrap_or("local"),
         meta["app"]["commit"].as_str(),
-        meta["app"]["tag"].as_str(),
     );
     let poster_out = match (&poster_choice, poster_slot) {
         (Some(p), Some(slot)) if !matches!(p, app::Poster::First) => {
@@ -1413,8 +1411,6 @@ mod tests {
                 dir: PathBuf::from("/a"),
                 commit: None,
                 rev: "local".into(),
-                tag: None,
-                pinned: false,
                 terminal: terminal.clone(),
                 source_sha256: String::new(),
                 gitdir: None,
@@ -1984,22 +1980,15 @@ mod tests {
         assert_eq!(caller(Some("Alpha Beta 2")), "alpha-beta-2");
         assert_eq!(caller(Some("___")), "manual");
         assert_eq!(caller(None), "manual");
-        assert_eq!(version("local", None, None), "local");
+        assert_eq!(version("local", None), "local");
+        assert_eq!(version("main", Some("0123456789abcdef")), "0123456789ab");
         assert_eq!(
-            version("main", Some("0123456789abcdef"), None),
-            "0123456789ab"
-        );
-        assert_eq!(
-            version("main+dirty", Some("0123456789abcdef"), None),
+            version("main+dirty", Some("0123456789abcdef")),
             "0123456789ab-dirty"
         );
+        assert_eq!(version("abc1234", None), "abc1234");
         assert_eq!(
-            version("v1.2.3", Some("0123456789abcdef"), Some("v1.2.3")),
-            "v1.2.3"
-        );
-        assert_eq!(version("abc1234", None, None), "abc1234");
-        assert_eq!(
-            version("local+dirty", Some("fedcba9876543210"), None),
+            version("local+dirty", Some("fedcba9876543210")),
             "fedcba987654-dirty"
         );
     }

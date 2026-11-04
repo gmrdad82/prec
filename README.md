@@ -81,7 +81,7 @@ A clip is one silent H.264 master (CRF 14, BT.709 limited range, tagged), encode
 
 ### Your app, your repository
 
-Each app keeps its own `render/terminal.toml` and tapes. prec builds the app (a cached build per commit), runs its fixture setup and teardown in a clean environment, and renders the working tree or any tag or commit with `--rev`.
+Each app keeps its own `render/terminal.toml` and tapes. prec builds the app in a build tree and a shared cargo target dir, runs its fixture setup and teardown in a clean environment, and records the working tree as it is.
 
 ## Speed
 
@@ -147,7 +147,7 @@ prec runs inside your app's git repository and reads `render/terminal.toml` at i
 prec shots myapp
 prec clip  myapp tour --size 1080p --fps 60
 prec still myapp palette --size 2160p --derive 1080p --web 800
-prec clip  myapp tour --rev v1.4.0 --themes "Catppuccin Latte,Catppuccin Mocha"
+prec clip  myapp tour --themes "Catppuccin Latte,Catppuccin Mocha"
 prec render tmp/renders/myapp/clip/myapp-clip-tour-1920x1080-60fps.cast --size 720p --fps 30
 ```
 
@@ -188,7 +188,7 @@ settle = "3s"
 closure = "palindrome"
 ```
 
-The placeholders are `{tmp}` (the repository's `tmp/`), `{scratch}` (this run's scratch), `{app}` (the checkout), `{bin}` (the cached build of this commit), `{target}` (the repository's shared cargo target dir in the cache) and `{fixtures}`. They expand the same way in `setup`, `teardown`, `launch`, `cwd`, every `[env]` value and the `[build]` command, and `bin_dir` takes `{tmp}`, `{app}` and `{target}`. `bin_dir` alone, with no `command`, uses prebuilt binaries in the tree, and `--bin DIR` skips the build.
+The placeholders are `{tmp}` (the repository's `tmp/`), `{scratch}` (this run's scratch), `{app}` (the checkout), `{bin}` (this run's own copy of the built binaries), `{target}` (the repository's shared cargo target dir in the cache) and `{fixtures}`. They expand the same way in `setup`, `teardown`, `launch`, `cwd`, every `[env]` value and the `[build]` command, and `bin_dir` takes `{tmp}`, `{app}` and `{target}`. `bin_dir` alone, with no `command`, uses prebuilt binaries in the tree, and `--bin DIR` skips the build.
 
 - **Environment.** The pty starts from a clean environment: `TZ=UTC`, `LANG=C.UTF-8`, `TERM=xterm-256color`, `COLORTERM=truecolor`, a scratch `HOME`, `USER`, `LOGNAME`, `[env]` as written, every `pass_env` variable, and `PATH=<bin>:<system PATH>`. `setup` runs before the recording and `teardown` after it, even when the recording fails or prec is cancelled.
 - **No private data.** `pass_env = ["NAME", …]` hands each named variable from prec's own environment to the pty and the hooks; the cast and manifest list the names, never the values, and an unset name refuses the record. `home = "/home/<name>"` (Linux only) runs the session under `unshare` in a user, mount and UTS namespace with that absolute home (bound to the scratch `HOME`, `USER` and `LOGNAME` its last part), `hostname` (default `prec`) as its host, and every path of yours still reachable; `{home}` expands to it in `cwd` and `launch`, so `cwd = "{home}/work"` starts the shell there. Before a replay, `clip`, `still` and `render` read the screen the cast shows and refuse a picture with your home path, hostname, user name, an email, a passed value, or a plan or organisation label (`Claude Max`, `someone's Organization`) or a usage limit line (`You've used 77% of your weekly limit`, `session limit · resets 3pm`), one line per finding at its shown second; `record` keeps the cast and prints them as warnings.
@@ -211,15 +211,12 @@ The placeholders are `{tmp}` (the repository's `tmp/`), `{scratch}` (this run's 
 | `render <cast>` | replays a cast at a chosen size, fps and theme |
 | `themes [--all]` | the curated pairs, your installed Omarchy themes, and with `--all` every built-in scheme |
 | `doctor` | checks Chromium, the fonts, git, the config and the cache, and names the built-in encoder |
-| `cache [--json]` | the machine cache: where it is, its size, and every entry with its size and last use |
-| `cache prune [--older-than 30d] [--all] [--json] [--dry-run]` | removes entries unused for 30 days (or `--older-than`), or all of them; entries in use stay |
 
 Flags for `clip`, `still` and `record`:
 
 | flag | meaning |
 |---|---|
 | `--app-dir DIR` | the app's folder in this repository; default the repository's top |
-| `--rev R` | a tag or commit to build and render, read from git without touching the index or tree |
 | `--bin DIR` | a prebuilt folder holding the app's binary; skips the build |
 | `--size` | the largest delivery: `N` (square), `WxH` (even for clips), `720p`, `1080p`, `1440p` or `2160p` |
 | `--derive` | more still sizes from the same master |
@@ -285,13 +282,11 @@ Everything reusable lives in one cache, shared by every repository: `${XDG_CACHE
 
 | folder | holds | keyed by |
 |---|---|---|
-| `src/<repo>/<commit>/` | that commit's source, checked out by `git read-tree` with a private index, read-only (`{app}`) | repo and commit |
-| `work/<repo>/` | the build tree, moved between commits so only changed files change | repo |
-| `target/<repo>/` | the repo's shared cargo target dir, so a new commit rebuilds incrementally | repo |
-| `bin/<repo>/<commit>-<build>/` | the built binaries (`{bin}`) | repo, commit and the build command's hash |
+| `work/<repo>/` | the build tree, where a clean tree builds at its HEAD | repo |
+| `target/<repo>/` | the repo's shared cargo target dir, so every build is incremental | repo |
 | `locks/` | one lock per entry, so a prune never removes an entry being built or used | |
 
-A `<repo>` key is the repository's name and a hash of its origin URL, so every checkout and worktree of one repository shares entries. A dirty working tree builds incrementally in the shared target dir and is never stored as a commit. prec downloads nothing.
+A `<repo>` key is the repository's name and a hash of its origin URL, so every checkout and worktree of one repository shares entries. A clean tree builds at its HEAD in the build tree and a dirty tree builds in place, both into the shared target dir; each run then copies the built binaries into its own scratch and runs them from there, so a second build never changes a binary a run is using. prec records only the working tree. The cache cleans itself: when a record or render starts, at most once a day, entries unused for 30 days are removed quietly, and an entry a run holds is never removed. prec downloads nothing.
 
 ## How it renders
 

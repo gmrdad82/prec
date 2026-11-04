@@ -321,8 +321,6 @@ pub struct Resolved {
     pub dir: PathBuf,
     pub commit: Option<String>,
     pub rev: String,
-    pub tag: Option<String>,
-    pub pinned: bool,
     pub terminal: Terminal,
     pub source_sha256: String,
     pub gitdir: Option<PathBuf>,
@@ -398,33 +396,6 @@ fn identity(dir: &Path) -> String {
         })
 }
 
-fn commit_of(gitdir: &Path, rev: &str) -> Option<String> {
-    let out = paths::output(Command::new("git").arg("--git-dir").arg(gitdir).args([
-        "rev-parse",
-        "--verify",
-        "--quiet",
-        &format!("{rev}^{{commit}}"),
-    ]))
-    .ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
-        .filter(|c| !c.is_empty())
-}
-
-fn tag_of(gitdir: &Path, rev: &str) -> Option<String> {
-    let found = paths::output(Command::new("git").arg("--git-dir").arg(gitdir).args([
-        "show-ref",
-        "--verify",
-        "--quiet",
-        &format!("refs/tags/{rev}"),
-    ]))
-    .ok()?
-    .status
-    .success();
-    found.then(|| rev.to_string())
-}
-
 fn checked(product: &str, dir: &Path) -> Result<(Terminal, String), String> {
     let (terminal, sha) = load(dir)?;
     if terminal.app != product {
@@ -452,69 +423,42 @@ fn own(dir: &Path, tree: &Path) -> Result<(), String> {
     match (common_dir(tree), common_dir(dir)) {
         (Some(ours), Some(theirs)) if ours == theirs => Ok(()),
         _ => Err(format!(
-            "{} is outside this repository ({}): prec renders only the caller's own app, from its own tree or from its own repository at --rev, and another product's renders come from that product's own repository",
+            "{} is outside this repository ({}): prec renders only the caller's own app, from its own tree, and another product's renders come from that product's own repository",
             dir.display(),
             tree.display()
         )),
     }
 }
 
-pub fn resolve(
-    product: &str,
-    app_dir: Option<&Path>,
-    rev: Option<&str>,
-) -> Result<Resolved, String> {
+pub fn resolve(product: &str, app_dir: Option<&Path>) -> Result<Resolved, String> {
     let tree = paths::caller_tree()?;
     let local = match app_dir {
         Some(d) => paths::absolute(d)?,
         None => tree.clone(),
     };
     own(&local, &tree)?;
-    let Some(r) = rev else {
-        let (terminal, sha) = checked(product, &local)?;
-        let gitdir = git(&local, &["rev-parse", "--absolute-git-dir"]).map(PathBuf::from);
-        let commit = git(&local, &["rev-parse", "HEAD"]);
-        let dirty = git(&local, &["status", "--porcelain"]).is_some_and(|s| !s.is_empty());
-        let rev = match &commit {
-            Some(c) => format!(
-                "{}{}",
-                &c[..c.len().min(12)],
-                if dirty { "+dirty" } else { "" }
-            ),
-            None => "local".into(),
-        };
-        let key = gitdir.as_ref().map(|_| cache::repo_key(&identity(&local)));
-        return Ok(Resolved {
-            dir: local,
-            clean: commit.is_some() && !dirty,
-            commit,
-            rev,
-            tag: None,
-            pinned: false,
-            terminal,
-            source_sha256: sha,
-            gitdir,
-            key,
-        });
+    let (terminal, sha) = checked(product, &local)?;
+    let gitdir = git(&local, &["rev-parse", "--absolute-git-dir"]).map(PathBuf::from);
+    let commit = git(&local, &["rev-parse", "HEAD"]);
+    let dirty = git(&local, &["status", "--porcelain"]).is_some_and(|s| !s.is_empty());
+    let rev = match &commit {
+        Some(c) => format!(
+            "{}{}",
+            &c[..c.len().min(12)],
+            if dirty { "+dirty" } else { "" }
+        ),
+        None => "local".into(),
     };
-    let gitdir = git(&local, &["rev-parse", "--absolute-git-dir"])
-        .map(PathBuf::from)
-        .ok_or_else(|| format!("{} is not a git checkout", local.display()))?;
-    let commit = commit_of(&gitdir, r).ok_or_else(|| format!("{} has no {r}", local.display()))?;
-    let key = cache::repo_key(&identity(&local));
-    let dir = cache::source(&gitdir, &key, &commit)?;
-    let (terminal, sha) = checked(product, &dir)?;
+    let key = gitdir.as_ref().map(|_| cache::repo_key(&identity(&local)));
     Ok(Resolved {
-        dir,
-        commit: Some(commit),
-        rev: r.to_string(),
-        tag: tag_of(&gitdir, r),
-        pinned: true,
+        dir: local,
+        clean: commit.is_some() && !dirty,
+        commit,
+        rev,
         terminal,
         source_sha256: sha,
-        gitdir: Some(gitdir),
-        key: Some(key),
-        clean: true,
+        gitdir,
+        key,
     })
 }
 
@@ -573,6 +517,7 @@ pub fn build(
     app: &Resolved,
     product: &str,
     bin_override: Option<&Path>,
+    keep: &Path,
 ) -> Result<PathBuf, String> {
     if let Some(b) = bin_override {
         let dir = paths::absolute(b)?;
@@ -600,72 +545,38 @@ pub fn build(
         ];
         return Ok(PathBuf::from(expand(&build.bin_dir, &vars)));
     };
-    let cached = match (&app.key, &app.gitdir, &app.commit, app.clean) {
-        (Some(k), Some(g), Some(c), true) => Some((k.clone(), g.clone(), c.clone())),
+    let growth = app
+        .key
+        .as_ref()
+        .map(|k| cache::Growth::of(&target, &format!("target/{k}")));
+    let _guard = match &app.key {
+        Some(k) => Some(cache::exclusive("work", k)?),
+        None => None,
+    };
+    let tree = match (&app.key, &app.gitdir, &app.commit, app.clean) {
+        (Some(k), Some(g), Some(c), true) => Some(cache::worktree(g, k, c)?),
         _ => None,
     };
-    let Some((key, gitdir, commit)) = cached else {
-        let growth = app
-            .key
-            .as_ref()
-            .map(|k| cache::Growth::of(&target, &format!("target/{k}")));
-        let _guard = match &app.key {
-            Some(k) => Some(cache::exclusive("work", k)?),
-            None => None,
-        };
-        let vars = [
-            ("tmp", tmp.as_path()),
-            ("app", app.dir.as_path()),
-            ("target", target.as_path()),
-        ];
-        run_build(&expand(command, &vars), &app.dir, &target, product)?;
-        if let Some(g) = growth {
-            g.report();
-        }
-        let dir = PathBuf::from(expand(&build.bin_dir, &vars));
-        if !dir.join(&app.terminal.bin).is_file() {
-            return Err(format!(
-                "{} is missing after the build",
-                dir.join(&app.terminal.bin).display()
-            ));
-        }
-        return Ok(dir);
-    };
-    let name = format!(
-        "{key}@{}",
-        cache::build_key(&commit, command, &build.bin_dir)
-    );
-    let mut built = false;
-    let entry = cache::entry("bin", &name, |entry| {
-        built = true;
-        let growth = cache::Growth::of(&target, &format!("target/{key}"));
-        let _work = cache::exclusive("work", &key)?;
-        let tree = cache::worktree(&gitdir, &key, &commit)?;
-        let vars = [
-            ("tmp", tmp.as_path()),
-            ("app", tree.as_path()),
-            ("target", target.as_path()),
-        ];
-        run_build(&expand(command, &vars), &tree, &target, product)?;
-        growth.report();
-        let from = PathBuf::from(expand(&build.bin_dir, &vars));
-        paths::fresh(entry)?;
-        cache::keep(&from, entry)?;
-        if !entry.join(&app.terminal.bin).is_file() {
-            return Err(format!(
-                "{} is missing after the build",
-                from.join(&app.terminal.bin).display()
-            ));
-        }
-        Ok(())
-    })?;
-    if !built {
-        eprintln!(
-            "{product}@{}: using the cached build",
-            &commit[..commit.len().min(12)]
-        );
+    let dir = tree.as_deref().unwrap_or(&app.dir);
+    let vars = [
+        ("tmp", tmp.as_path()),
+        ("app", dir),
+        ("target", target.as_path()),
+    ];
+    run_build(&expand(command, &vars), dir, &target, product)?;
+    if let Some(g) = growth {
+        g.report();
     }
-    Ok(entry)
+    let from = PathBuf::from(expand(&build.bin_dir, &vars));
+    paths::fresh(keep)?;
+    cache::keep(&from, keep)?;
+    if !keep.join(&app.terminal.bin).is_file() {
+        return Err(format!(
+            "{} is missing after the build",
+            from.join(&app.terminal.bin).display()
+        ));
+    }
+    Ok(keep.to_path_buf())
 }
 
 #[cfg(test)]
@@ -826,8 +737,6 @@ mod tests {
             dir: dir.to_path_buf(),
             commit: None,
             rev: "local".into(),
-            tag: None,
-            pinned: false,
             terminal,
             source_sha256: String::new(),
             gitdir: None,
@@ -1097,26 +1006,33 @@ mod tests {
         let flag = work.join("flag");
         std::fs::create_dir_all(&flag).unwrap();
         std::fs::write(flag.join("alpha"), "").unwrap();
-        assert_eq!(build(&app, "alpha-unit", Some(&flag)).unwrap(), flag);
+        assert_eq!(
+            build(&app, "alpha-unit", Some(&flag), &work.join("kept")).unwrap(),
+            flag
+        );
         assert_eq!(
             build(
                 &app,
                 "alpha-unit",
-                Some(Path::new("tmp/app-unit/bin/./other/../flag"))
+                Some(Path::new("tmp/app-unit/bin/./other/../flag")),
+                &work.join("kept")
             )
             .unwrap(),
             std::env::current_dir()
                 .unwrap()
                 .join("tmp/app-unit/bin/flag")
         );
-        assert_eq!(build(&app, "alpha-unit", None).unwrap(), work);
+        assert_eq!(
+            build(&app, "alpha-unit", None, &work.join("kept")).unwrap(),
+            work
+        );
         let release = resolved(
             &work,
             parsed(&format!(
                 "{HEAD}[build]\nbin_dir = \"{{target}}/release\"\n"
             )),
         );
-        let dir = build(&release, "alpha-unit", None).unwrap();
+        let dir = build(&release, "alpha-unit", None, &work.join("kept")).unwrap();
         assert!(
             dir.ends_with("tmp/tools/alpha-unit@local/target/release"),
             "{}",
@@ -1135,27 +1051,27 @@ mod tests {
         let app = resolved(&work, parsed(HEAD));
         let gone = work.join("gone");
         assert_eq!(
-            build(&app, "alpha-unit", Some(&gone)).unwrap_err(),
+            build(&app, "alpha-unit", Some(&gone), &work.join("kept")).unwrap_err(),
             format!("--bin {}: no such folder", gone.display())
         );
         let empty = work.join("empty");
         std::fs::create_dir_all(&empty).unwrap();
         assert_eq!(
-            build(&app, "alpha-unit", Some(&empty)).unwrap_err(),
+            build(&app, "alpha-unit", Some(&empty), &work.join("kept")).unwrap_err(),
             format!("{} is missing from --bin", empty.join("alpha").display())
         );
         let other = work.join("other");
         std::fs::create_dir_all(other.join("alpha")).unwrap();
         std::fs::write(other.join("beta"), "").unwrap();
         assert_eq!(
-            build(&app, "alpha-unit", Some(&other)).unwrap_err(),
+            build(&app, "alpha-unit", Some(&other), &work.join("kept")).unwrap_err(),
             format!("{} is missing from --bin", other.join("alpha").display())
         );
         std::fs::remove_dir_all(&work).unwrap();
     }
 
     #[test]
-    fn a_build_command_runs_in_the_app_and_its_binary_must_be_there_after() {
+    fn a_build_command_runs_in_the_app_and_its_binary_is_run_from_a_copy() {
         let work = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tmp/app-unit/build");
         let _ = std::fs::remove_dir_all(&work);
         std::fs::create_dir_all(&work).unwrap();
@@ -1168,10 +1084,16 @@ mod tests {
             )
         };
         assert_eq!(
-            build(&with("exit 3"), "alpha-build", None).unwrap_err(),
+            build(&with("exit 3"), "alpha-build", None, &work.join("kept")).unwrap_err(),
             "alpha-build's build command failed: exit 3"
         );
-        let missing = build(&with("mkdir -p out"), "alpha-build", None).unwrap_err();
+        let missing = build(
+            &with("mkdir -p out"),
+            "alpha-build",
+            None,
+            &work.join("kept"),
+        )
+        .unwrap_err();
         assert_eq!(
             missing,
             format!(
@@ -1180,18 +1102,22 @@ mod tests {
             )
         );
         assert_eq!(
-            build(&with("mkdir -p out/alpha"), "alpha-build", None).unwrap_err(),
+            build(
+                &with("mkdir -p out/alpha"),
+                "alpha-build",
+                None,
+                &work.join("kept")
+            )
+            .unwrap_err(),
             missing
         );
         std::fs::remove_dir_all(work.join("out")).unwrap();
-        let made = build(
-            &with("mkdir -p {app}/out && touch out/alpha"),
-            "alpha-build",
-            None,
-        )
-        .unwrap();
-        assert_eq!(made, work.join("out"));
-        assert!(made.join("alpha").is_file());
+        let app = with("mkdir -p {app}/out && printf one > out/alpha && chmod +x out/alpha");
+        let made = build(&app, "alpha-build", None, &work.join("kept")).unwrap();
+        assert_eq!(made, work.join("kept"));
+        assert_eq!(std::fs::read(made.join("alpha")).unwrap(), b"one");
+        std::fs::write(work.join("out/alpha"), "two").unwrap();
+        assert_eq!(std::fs::read(made.join("alpha")).unwrap(), b"one");
         std::fs::remove_dir_all(&work).unwrap();
         std::fs::remove_dir_all(paths::caller_tmp().unwrap().join("tools/alpha-build@local"))
             .unwrap();

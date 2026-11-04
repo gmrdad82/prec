@@ -43,8 +43,6 @@ struct Source {
         help = "The app's folder in this repository, holding render/terminal.toml; default the repository's top"
     )]
     app_dir: Option<PathBuf>,
-    #[arg(long, help = "A tag or commit of this repository to build and render")]
-    rev: Option<String>,
 }
 
 #[derive(Args, Clone)]
@@ -270,33 +268,6 @@ enum Kind {
     },
     #[command(about = "Check the machine for everything a render needs")]
     Doctor,
-    #[command(
-        about = "Show the machine cache (app sources, shared target dirs, cached builds), or prune it"
-    )]
-    Cache {
-        #[arg(long, global = true, help = "Print one JSON object on stdout")]
-        json: bool,
-        #[command(subcommand)]
-        action: Option<CacheAction>,
-    },
-}
-
-#[derive(Subcommand)]
-enum CacheAction {
-    #[command(
-        about = "Remove entries unused for a while (30 days unless --older-than); entries in use stay"
-    )]
-    Prune {
-        #[arg(long, help = "Age like 30d, 2w, 12h or 90m")]
-        older_than: Option<String>,
-        #[arg(long, help = "Remove every entry that is not in use")]
-        all: bool,
-        #[arg(
-            long,
-            help = "With --json, report what would be removed and remove nothing"
-        )]
-        dry_run: bool,
-    },
 }
 
 fn opts(s: &Shot, theme: &str, made: &str) -> render::Opts {
@@ -350,15 +321,7 @@ fn replay_opts(r: &Replay, theme: &str, made: &str) -> render::Opts {
 
 fn begin(verb: &str, kind: &str, s: &Shot) -> Result<(), String> {
     let out = paths::inside_tmp(&s.out)?.join(&s.product).join(kind);
-    let mut detail = vec![
-        verb.to_string(),
-        s.shot.clone(),
-        s.source
-            .rev
-            .as_ref()
-            .map(|r| format!("@{r}"))
-            .unwrap_or_else(|| "local".into()),
-    ];
+    let mut detail = vec![verb.to_string(), s.shot.clone(), "local".into()];
     if let Some(size) = &s.size {
         detail.push(size.clone());
     }
@@ -384,6 +347,7 @@ fn begin(verb: &str, kind: &str, s: &Shot) -> Result<(), String> {
 }
 
 fn shoot(kind: &str, s: &Shot, made: &str) -> Result<(), String> {
+    cache::tidy();
     s.camera.refuse()?;
     render::validate(kind, &opts(s, &s.theme, made))?;
     begin(kind, kind, s)?;
@@ -414,7 +378,7 @@ fn shoot(kind: &str, s: &Shot, made: &str) -> Result<(), String> {
 }
 
 fn resolve(product: &str, source: &Source) -> Result<app::Resolved, String> {
-    app::resolve(product, source.app_dir.as_deref(), source.rev.as_deref())
+    app::resolve(product, source.app_dir.as_deref())
 }
 
 fn run(command: Kind) -> Result<(), String> {
@@ -449,6 +413,7 @@ fn run(command: Kind) -> Result<(), String> {
                 return Err("--poster is for clip and render".into());
             }
             s.camera.refuse()?;
+            cache::tidy();
             let resolved = resolve(&s.product, &s.source)?;
             let kind = resolved
                 .terminal
@@ -470,6 +435,7 @@ fn run(command: Kind) -> Result<(), String> {
         }
         Kind::Render(r) => {
             r.camera.refuse()?;
+            cache::tidy();
             let meta = record::read(&r.cast)?.meta;
             let product = meta["product"].as_str().unwrap_or_default();
             let kind = meta["kind"].as_str().unwrap_or("clip");
@@ -535,15 +501,6 @@ fn run(command: Kind) -> Result<(), String> {
             }
             Ok(())
         }
-        Kind::Cache { json, action } => match action {
-            None if json => cache::show_json(),
-            None => cache::show(),
-            Some(CacheAction::Prune {
-                older_than,
-                all,
-                dry_run,
-            }) => cache::prune(older_than.as_deref(), all, json, dry_run),
-        },
         Kind::Doctor => {
             if doctor::doctor() {
                 Ok(())
@@ -588,21 +545,7 @@ where
     T: Into<std::ffi::OsString> + Clone,
 {
     let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
-    let command = Cli::try_parse_from(&args)?.command;
-    if matches!(
-        command,
-        Kind::Cache {
-            json: false,
-            action: Some(CacheAction::Prune { dry_run: true, .. })
-        }
-    ) {
-        use clap::CommandFactory;
-        let strict = Cli::command().mut_subcommand("cache", |c| {
-            c.mut_subcommand("prune", |p| p.mut_arg("dry_run", |a| a.requires("json")))
-        });
-        strict.try_get_matches_from(&args)?;
-    }
-    Ok(command)
+    Ok(Cli::try_parse_from(&args)?.command)
 }
 
 fn main() {
@@ -623,6 +566,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const RETIRED: &str = concat!("--re", "v");
     use clap::CommandFactory;
     use clap::error::ErrorKind;
 
@@ -650,7 +595,7 @@ mod tests {
         assert_eq!(s.theme, "app");
         assert!(s.themes.is_empty() && s.derive.is_empty() && s.web.is_empty());
         assert!(s.fps.is_none() && s.size.is_none() && s.bin.is_none());
-        assert!(s.source.app_dir.is_none() && s.source.rev.is_none());
+        assert!(s.source.app_dir.is_none());
         assert!(!s.allow_private && !s.keep_frames && !s.no_encode);
         assert!(s.camera.refuse().is_ok());
         let s = shot(&[
@@ -674,8 +619,6 @@ mod tests {
             "tmp/bin",
             "--app-dir",
             "examples/demo",
-            "--rev",
-            "v1.0.0",
             "--seed",
             "9",
         ]);
@@ -686,7 +629,6 @@ mod tests {
         assert_eq!(s.set, ["grid=80x24", "typing=10ms"]);
         assert_eq!(s.bin, Some(PathBuf::from("tmp/bin")));
         assert_eq!(s.source.app_dir, Some(PathBuf::from("examples/demo")));
-        assert_eq!(s.source.rev.as_deref(), Some("v1.0.0"));
         assert_eq!(s.seed, 9);
     }
 
@@ -834,42 +776,6 @@ mod tests {
             Kind::Themes { all: true }
         ));
         assert!(matches!(parsed(&["prec", "doctor"]), Kind::Doctor));
-        assert!(matches!(
-            parsed(&["prec", "cache"]),
-            Kind::Cache {
-                json: false,
-                action: None
-            }
-        ));
-        for args in [
-            &["prec", "cache", "--json", "prune", "--dry-run"][..],
-            &["prec", "cache", "prune", "--json", "--dry-run"],
-            &["prec", "cache", "prune", "--dry-run", "--json"],
-        ] {
-            let Kind::Cache {
-                json: true,
-                action:
-                    Some(CacheAction::Prune {
-                        older_than: None,
-                        all: false,
-                        dry_run: true,
-                    }),
-            } = parsed(args)
-            else {
-                panic!("{args:?}")
-            };
-        }
-        let Kind::Cache {
-            action: Some(CacheAction::Prune {
-                older_than, all, ..
-            }),
-            ..
-        } = parsed(&["prec", "cache", "prune", "--older-than", "2w", "--all"])
-        else {
-            panic!("prune")
-        };
-        assert_eq!(older_than.as_deref(), Some("2w"));
-        assert!(all);
     }
 
     #[test]
@@ -889,18 +795,40 @@ mod tests {
             (e.kind(), e.exit_code()),
             (ErrorKind::MissingRequiredArgument, 2)
         );
-        let e = refusal(&["prec", "cache", "prune", "--dry-run"]);
-        assert_eq!(
-            (e.kind(), e.exit_code()),
-            (ErrorKind::MissingRequiredArgument, 2)
-        );
-        let e = refusal(&["prec", "cache", "prune", "--older-than"]);
-        assert_eq!(e.exit_code(), 2);
-        let said = e.render().to_string();
-        assert_eq!(
-            said,
-            "error: a value is required for '--older-than <OLDER_THAN>' but none was supplied\n\nFor more information, try '--help'.\n"
-        );
+    }
+
+    #[test]
+    fn rev_is_an_unknown_argument_and_the_cache_command_is_gone() {
+        for args in [
+            &["prec", "clip", "alpha", "intro", RETIRED, "v1.0.0"][..],
+            &[
+                "prec",
+                "record",
+                "alpha",
+                "intro",
+                &format!("{RETIRED}=v1.0.0"),
+            ],
+            &["prec", "shots", "alpha", RETIRED, "v1.0.0"],
+        ] {
+            let e = refusal(args);
+            assert_eq!(
+                (e.kind(), e.exit_code()),
+                (ErrorKind::UnknownArgument, 2),
+                "{args:?}"
+            );
+        }
+        for args in [
+            &["prec", "cache"][..],
+            &["prec", "cache", "prune"],
+            &["prec", "cache", "--json"],
+        ] {
+            let e = refusal(args);
+            assert_eq!(
+                (e.kind(), e.exit_code()),
+                (ErrorKind::InvalidSubcommand, 2),
+                "{args:?}"
+            );
+        }
     }
 
     #[test]
@@ -939,10 +867,6 @@ mod tests {
                 &["prec", "archive", "--reindex"][..],
                 ErrorKind::InvalidSubcommand,
             ),
-            (
-                &["prec", "cache", "prune", "--dry-run"][..],
-                ErrorKind::MissingRequiredArgument,
-            ),
         ] {
             let e = refusal(args);
             assert_eq!((e.kind(), e.exit_code()), (kind, 2), "{args:?}");
@@ -954,37 +878,5 @@ mod tests {
             );
             assert!(!said.contains("Commands:"), "{said}");
         }
-    }
-
-    #[test]
-    fn a_dry_run_without_json_is_refused_as_clap_refuses_a_missing_flag() {
-        for args in [
-            &["prec", "cache", "prune", "--dry-run"][..],
-            &["prec", "cache", "prune", "--all", "--dry-run"],
-            &["prec", "cache", "prune", "--dry-run", "--older-than", "2w"],
-        ] {
-            let e = refusal(args);
-            assert_eq!(
-                (e.kind(), e.exit_code()),
-                (ErrorKind::MissingRequiredArgument, 2),
-                "{args:?}"
-            );
-            let said = e.render().to_string();
-            assert!(
-                said.starts_with("error: the following required arguments were not provided:\n  --json\n\nUsage: prec cache prune "),
-                "{said}"
-            );
-            assert!(
-                said.ends_with("\n\nFor more information, try '--help'.\n"),
-                "{said}"
-            );
-        }
-        let Kind::Cache {
-            json: false,
-            action: Some(CacheAction::Prune { dry_run: false, .. }),
-        } = parsed(&["prec", "cache", "prune", "--all"])
-        else {
-            panic!("a prune without --dry-run needs no --json")
-        };
     }
 }

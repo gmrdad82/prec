@@ -1104,7 +1104,7 @@ fn a_render_writes_only_to_its_out_whatever_archive_the_environment_or_config_na
     assert!(m.starts_with(&out), "{}", m.display());
     let manifest = json_of(&m);
     assert!(manifest.get("archive").is_none(), "{manifest}");
-    assert_eq!(manifest["version"], "v1.0.0");
+    assert_eq!(manifest["version"], "0123456789ab");
     every_file_is_what_the_manifest_says(&manifest, m.parent().unwrap());
     for dir in [&from_env, &from_config] {
         assert_eq!(
