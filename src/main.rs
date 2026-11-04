@@ -16,6 +16,7 @@ mod private;
 mod record;
 mod render;
 mod replay;
+mod sound;
 mod tape;
 mod theme;
 
@@ -120,6 +121,18 @@ struct Shot {
     web: Vec<u32>,
     #[arg(long, value_delimiter = ',', help = "Clip formats belong to pcod")]
     profile: Vec<String>,
+    #[arg(
+        long,
+        allow_negative_numbers = true,
+        help = "Seconds to play the clip's sound later, or earlier when negative"
+    )]
+    audio_offset: Option<f64>,
+    #[arg(
+        long,
+        allow_negative_numbers = true,
+        help = "Decibels to raise the clip's sound, or lower when negative"
+    )]
+    audio_gain: Option<f64>,
     #[arg(long, hide = true)]
     no_archive: bool,
     #[arg(
@@ -231,6 +244,18 @@ struct Replay {
     web: Vec<u32>,
     #[arg(long, value_delimiter = ',', help = "Clip formats belong to pcod")]
     profile: Vec<String>,
+    #[arg(
+        long,
+        allow_negative_numbers = true,
+        help = "Seconds to play the clip's sound later, or earlier when negative"
+    )]
+    audio_offset: Option<f64>,
+    #[arg(
+        long,
+        allow_negative_numbers = true,
+        help = "Decibels to raise the clip's sound, or lower when negative"
+    )]
+    audio_gain: Option<f64>,
     #[arg(long, hide = true)]
     no_archive: bool,
     #[arg(
@@ -250,7 +275,7 @@ enum Kind {
         #[command(flatten)]
         source: Source,
     },
-    #[command(about = "Render a clip: H.264 master, poster and manifest")]
+    #[command(about = "Render a clip: H.264 master with the app's sound, poster and manifest")]
     Clip(Shot),
     #[command(about = "Render a still: a 16-bit master and 8-bit PNG deliveries")]
     Still(Shot),
@@ -294,6 +319,8 @@ fn opts(s: &Shot, theme: &str, made: &str) -> render::Opts {
         web: s.web.clone(),
         profile: s.profile.clone(),
         allow_private: s.allow_private,
+        audio_offset: s.audio_offset,
+        audio_gain: s.audio_gain,
     }
 }
 
@@ -316,6 +343,8 @@ fn replay_opts(r: &Replay, theme: &str, made: &str) -> render::Opts {
         web: r.web.clone(),
         profile: r.profile.clone(),
         allow_private: r.allow_private,
+        audio_offset: r.audio_offset,
+        audio_gain: r.audio_gain,
         ..Default::default()
     }
 }
@@ -412,6 +441,9 @@ fn run(command: Kind) -> Result<(), String> {
         Kind::Record(s) => {
             if s.poster.is_some() {
                 return Err("--poster is for clip and render".into());
+            }
+            if s.audio_offset.is_some() || s.audio_gain.is_some() {
+                return Err(render::AUDIO_FLAGS.into());
             }
             s.camera.refuse()?;
             cache::tidy();

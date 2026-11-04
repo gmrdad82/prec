@@ -1,8 +1,9 @@
 use crate::fps::Fps;
+use crate::sound::{self, Bed, Tune};
 use pito_codecs::filter::{ColorSpec, Order, Packed, packed_to_yuv};
 use pito_codecs::h264::{Color, Encoder, EncoderConfig, Preset, Profile};
 use pito_codecs::media::{Bitstream, Frame, Packet, PixelFormat, Rate, Rgba, TimeBase};
-use pito_codecs::mp4::{AvcConfig, Reader, SampleEntry, TrackConfig, TrackKind, Writer};
+use pito_codecs::mp4::{AvcConfig, Edit, Reader, SampleEntry, TrackConfig, TrackKind, Writer};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -16,14 +17,15 @@ const THREADS: usize = 16;
 const CRF: u8 = 14;
 const B_FRAMES: u8 = 0;
 
-pub fn master_what() -> String {
+pub fn master_what(sound: bool) -> String {
     format!(
-        "master: H.264 High by pito-codecs {CODECS}, CRF {CRF}, 8-bit 4:2:0 BT.709 limited range"
+        "master: H.264 High by pito-codecs {CODECS}, CRF {CRF}, 8-bit 4:2:0 BT.709 limited range{}",
+        if sound { ", AAC 320 kb/s audio" } else { "" }
     )
 }
 
-pub fn settings(fps: Fps) -> Vec<String> {
-    vec![
+pub fn settings(fps: Fps, sound: Option<&Sound>) -> Vec<String> {
+    let mut out = vec![
         format!("pito-codecs {CODECS}"),
         "h264 High, preset quality".to_string(),
         format!("crf {CRF}"),
@@ -31,8 +33,20 @@ pub fn settings(fps: Fps) -> Vec<String> {
         format!("bframes {B_FRAMES}"),
         format!("threads {THREADS}"),
         "BT.709 limited range, left-sited 4:2:0 chroma".to_string(),
-        "mp4 faststart, no audio".to_string(),
-    ]
+    ];
+    match sound {
+        Some(s) => {
+            out.push("mp4 faststart".to_string());
+            out.push(s.tune.args());
+        }
+        None => out.push("mp4 faststart, no audio".to_string()),
+    }
+    out
+}
+
+pub struct Sound<'a> {
+    pub pcm: &'a [f32],
+    pub tune: Tune,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -107,6 +121,7 @@ pub fn master(
     size: [u32; 2],
     fps: Fps,
     output: &Path,
+    sound: Option<&Sound>,
 ) -> Result<Vec<String>, String> {
     if pics.is_empty() {
         return Err("the clip has no frames".into());
@@ -187,26 +202,46 @@ pub fn master(
                 fps.num,
             ))
             .map_err(|e| named(&e))?;
-        let mut held: Option<Packet> = None;
-        let mut write = |next: Option<Packet>| -> Result<(), String> {
-            if let Some(h) = held.take() {
-                let duration = next
-                    .as_ref()
-                    .map_or(1, |n| u32::try_from((n.dts - h.dts).max(1)).unwrap_or(1));
-                let den = i64::from(fps.den);
-                mux.push_sample(
-                    track,
-                    &h.data,
-                    h.pts * den,
-                    h.dts * den,
-                    duration * fps.den,
-                    h.keyframe,
-                )
-                .map_err(|e| named(&e))?;
+        let mut bed = match sound {
+            Some(s) => {
+                if s.pcm.len() != sound::frames_of(pics.len(), fps) * sound::CHANNELS {
+                    return Err(named(&"the audio is not the length of the master"));
+                }
+                let bed = Bed::new(s.pcm).map_err(|e| named(&e))?;
+                let mut cfg = TrackConfig::new(bed.entry(), sound::RATE);
+                cfg.edits = vec![Edit {
+                    segment_duration: bed.frames() as u64,
+                    media_time: sound::PRIMING,
+                    media_rate: 0x10000,
+                }];
+                mux.set_movie_timescale(sound::RATE);
+                let id = mux.add_track(cfg).map_err(|e| named(&e))?;
+                mux.set_frame_duration(id, 1024).map_err(|e| named(&e))?;
+                Some((bed, id))
             }
-            held = next;
-            Ok(())
+            None => None,
         };
+        let mut held: Option<Packet> = None;
+        let mut write =
+            |mux: &mut Writer<std::fs::File>, next: Option<Packet>| -> Result<(), String> {
+                if let Some(h) = held.take() {
+                    let duration = next
+                        .as_ref()
+                        .map_or(1, |n| u32::try_from((n.dts - h.dts).max(1)).unwrap_or(1));
+                    let den = i64::from(fps.den);
+                    mux.push_sample(
+                        track,
+                        &h.data,
+                        h.pts * den,
+                        h.dts * den,
+                        duration * fps.den,
+                        h.keyframe,
+                    )
+                    .map_err(|e| named(&e))?;
+                }
+                held = next;
+                Ok(())
+            };
         let mut current: Option<Frame> = None;
         let mut k = 0;
         for n in 0..pics.len() {
@@ -218,14 +253,25 @@ pub fn master(
             f.pts = n as i64;
             f.time_base = TimeBase::new(fps.den, fps.num);
             for p in enc.encode(f).map_err(|e| named(&e))? {
-                write(Some(p))?;
+                write(&mut mux, Some(p))?;
+            }
+            if let Some((bed, id)) = bed.as_mut() {
+                let upto = sound::frames_of(n + 1, fps);
+                for p in bed.through(upto).map_err(|e| named(&e))? {
+                    mux.push(*id, &p).map_err(|e| named(&e))?;
+                }
             }
             crate::jobs::progress(n + 1);
         }
-        for p in enc.flush().map_err(|e| named(&e))? {
-            write(Some(p))?;
+        if let Some((bed, id)) = bed.as_mut() {
+            for p in bed.finish().map_err(|e| named(&e))? {
+                mux.push(*id, &p).map_err(|e| named(&e))?;
+            }
         }
-        write(None)?;
+        for p in enc.flush().map_err(|e| named(&e))? {
+            write(&mut mux, Some(p))?;
+        }
+        write(&mut mux, None)?;
         mux.finish_faststart().map_err(|e| named(&e))?;
         Ok(())
     };
@@ -241,7 +287,7 @@ pub fn master(
     if done.is_err() {
         let _ = std::fs::remove_file(output);
     }
-    done.map(|()| settings(fps))
+    done.map(|()| settings(fps, sound))
 }
 
 pub fn probe(video: &Path) -> Result<([u32; 2], usize, Option<Fps>), String> {
@@ -256,6 +302,40 @@ pub fn probe(video: &Path) -> Result<([u32; 2], usize, Option<Fps>), String> {
         .first()
         .and_then(|s| Fps::reduced(t.timescale, s.duration));
     Ok(([t.width, t.height], t.samples.len(), rate))
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Heard {
+    pub rate: u32,
+    pub channels: u32,
+    pub frames: u64,
+    pub skipped: i64,
+    pub packets: usize,
+}
+
+pub fn probe_audio(video: &Path) -> Result<Option<Heard>, String> {
+    let r = Reader::open(video).map_err(|e| format!("{}: {e}", video.display()))?;
+    let mut tracks = r.tracks.iter().filter(|t| t.kind == TrackKind::Audio);
+    let Some(t) = tracks.next() else {
+        return Ok(None);
+    };
+    if tracks.next().is_some() {
+        return Err(format!("{}: more than one audio track", video.display()));
+    }
+    let [edit] = t.edits.as_slice() else {
+        return Err(format!(
+            "{}: the audio track has {} edits, prec writes one",
+            video.display(),
+            t.edits.len()
+        ));
+    };
+    Ok(Some(Heard {
+        rate: t.sample_rate(),
+        channels: t.channels(),
+        frames: edit.segment_duration,
+        skipped: edit.media_time,
+        packets: t.samples.len(),
+    }))
 }
 
 pub fn temp_of(path: &Path) -> PathBuf {
@@ -464,7 +544,14 @@ mod tests {
         let target = dir.join("a.master.mp4");
         std::fs::write(&target, b"half").unwrap();
         let missing = dir.join("missing.png");
-        master(&[Pic::One(&missing)], [64, 64], Fps::new(30, 1), &target).unwrap_err();
+        master(
+            &[Pic::One(&missing)],
+            [64, 64],
+            Fps::new(30, 1),
+            &target,
+            None,
+        )
+        .unwrap_err();
         assert!(names(&dir).is_empty());
     }
 
@@ -481,7 +568,7 @@ mod tests {
         let film = Fps::new(24000, 1001);
         let out = dir.join("a.master.mp4");
         assert!(
-            master(&pics, [64, 64], film, &out)
+            master(&pics, [64, 64], film, &out, None)
                 .unwrap()
                 .contains(&"gop 48".to_string())
         );
@@ -492,6 +579,65 @@ mod tests {
         for (n, s) in t.samples.iter().enumerate() {
             assert_eq!((s.pts, s.duration), (n as i64 * 1001, 1001));
         }
+    }
+
+    #[test]
+    fn a_master_with_sound_reads_back_with_one_audio_track_trimmed_by_its_edit() {
+        let dir = work("sound");
+        let a = dir.join("a.png");
+        write_png8(&a, [64, 64], &[90; 64 * 64 * 3]).unwrap();
+        let pics: Vec<Pic> = (0..45).map(|_| Pic::One(&a)).collect();
+        let fps = Fps::new(30, 1);
+        let frames = sound::frames_of(pics.len(), fps);
+        let pcm: Vec<f32> = (0..frames * sound::CHANNELS)
+            .map(|i| ((i / 2) as f32 * 0.1).sin() * 0.3)
+            .collect();
+        let tune = Tune {
+            offset: 0.5,
+            gain_db: -2.5,
+        };
+        let out = dir.join("a.master.mp4");
+        let used = master(&pics, [64, 64], fps, &out, Some(&Sound { pcm: &pcm, tune })).unwrap();
+        assert_eq!(used.last().unwrap(), &tune.args());
+        assert!(used.contains(&"mp4 faststart".to_string()));
+        assert!(!used.iter().any(|u| u.contains("no audio")));
+        assert_eq!(probe(&out).unwrap(), ([64, 64], 45, Some(fps)));
+        assert_eq!(
+            probe_audio(&out).unwrap(),
+            Some(Heard {
+                rate: 48_000,
+                channels: 2,
+                frames: 72_000,
+                skipped: 1024,
+                packets: 72_000usize.div_ceil(1024) + 1,
+            })
+        );
+        let short = vec![0.0f32; 10];
+        let e = master(
+            &pics,
+            [64, 64],
+            fps,
+            &out,
+            Some(&Sound { pcm: &short, tune }),
+        )
+        .unwrap_err();
+        assert!(
+            e.ends_with("the audio is not the length of the master"),
+            "{e}"
+        );
+        assert!(!out.exists());
+    }
+
+    #[test]
+    fn a_master_without_sound_has_no_audio_track() {
+        let dir = work("no-sound");
+        let a = dir.join("a.png");
+        write_png8(&a, [64, 64], &[90; 64 * 64 * 3]).unwrap();
+        let out = dir.join("a.master.mp4");
+        let used = master(&[Pic::One(&a); 3], [64, 64], Fps::new(30, 1), &out, None).unwrap();
+        assert_eq!(used.last().unwrap(), "mp4 faststart, no audio");
+        assert_eq!(probe_audio(&out).unwrap(), None);
+        assert!(probe_audio(&dir.join("gone.mp4")).is_err());
     }
 
     #[test]
@@ -531,7 +677,7 @@ mod tests {
             (Fps::new(60000, 1001), 120),
         ] {
             assert_eq!(f.gop(), gop, "{f}");
-            assert!(settings(f).contains(&format!("gop {gop}")), "{f}");
+            assert!(settings(f, None).contains(&format!("gop {gop}")), "{f}");
         }
     }
 
@@ -540,7 +686,7 @@ mod tests {
         let dir = work("empty");
         let out = dir.join("a.master.mp4");
         assert_eq!(
-            master(&[], [64, 64], Fps::new(30, 1), &out).unwrap_err(),
+            master(&[], [64, 64], Fps::new(30, 1), &out, None).unwrap_err(),
             "the clip has no frames"
         );
         assert!(names(&dir).is_empty());
@@ -552,7 +698,7 @@ mod tests {
         let a = dir.join("a.png");
         write_png8(&a, [32, 32], &[9; 32 * 32 * 3]).unwrap();
         let out = dir.join("a.master.mp4");
-        let e = master(&[Pic::One(&a)], [64, 64], Fps::new(30, 1), &out).unwrap_err();
+        let e = master(&[Pic::One(&a)], [64, 64], Fps::new(30, 1), &out, None).unwrap_err();
         assert_eq!(e, "a frame is 32x32, the master is 64x64");
         assert_eq!(names(&dir), ["a.png"]);
     }
@@ -565,7 +711,14 @@ mod tests {
         write_png8(&a, [64, 64], &[9; 64 * 64 * 3]).unwrap();
         write_png8(&b, [32, 32], &[9; 32 * 32 * 3]).unwrap();
         let out = dir.join("a.master.mp4");
-        let e = master(&[Pic::Blend(&a, &b, 0.5)], [64, 64], Fps::new(30, 1), &out).unwrap_err();
+        let e = master(
+            &[Pic::Blend(&a, &b, 0.5)],
+            [64, 64],
+            Fps::new(30, 1),
+            &out,
+            None,
+        )
+        .unwrap_err();
         assert_eq!(
             e,
             format!("{}: not the size of {}", b.display(), a.display())
@@ -594,7 +747,7 @@ mod tests {
             .count();
         assert_eq!(fresh, pics.len());
         let out = dir.join("a.master.mp4");
-        let e = master(&pics, [64, 64], Fps::new(30, 1), &out).unwrap_err();
+        let e = master(&pics, [64, 64], Fps::new(30, 1), &out, None).unwrap_err();
         assert!(e.contains("bad.png"), "{e}");
         assert!(!out.exists());
         assert!(!temp_of(&out).exists());
