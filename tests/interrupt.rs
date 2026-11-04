@@ -1,7 +1,6 @@
 mod common;
 
 use common::said;
-use serde_json::Value;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -39,11 +38,6 @@ fn prec(dir: &Path, args: &[&str]) -> Command {
     common::prec(dir, args)
 }
 
-fn with_jobs(c: &mut Command, dir: &Path) {
-    c.env_remove("PITO_JOBS")
-        .env("PITO_JOBS_DIR", dir.join("jobs"));
-}
-
 fn of_run(dir: &Path) -> Vec<common::Proc> {
     let mark = format!("{}/", dir.display());
     common::procs()
@@ -59,20 +53,6 @@ fn none_left(dir: &Path) {
         "processes of the run outlived prec: {:?}",
         left.iter().map(|p| (p.pid, &p.args)).collect::<Vec<_>>()
     );
-}
-
-fn job_of(dir: &Path, pid: u32) -> Value {
-    let jobs = dir.join("jobs");
-    for e in std::fs::read_dir(&jobs)
-        .unwrap_or_else(|e| panic!("{}: {e}", jobs.display()))
-        .flatten()
-    {
-        let name = e.file_name().to_string_lossy().to_string();
-        if name.starts_with(&format!("{pid}-")) && name.ends_with(".json") {
-            return serde_json::from_str(&std::fs::read_to_string(e.path()).unwrap()).unwrap();
-        }
-    }
-    panic!("no job record of prec {pid} in {}", jobs.display());
 }
 
 fn torn_down(dir: &Path) {
@@ -91,10 +71,10 @@ fn torn_down(dir: &Path) {
 }
 
 #[test]
-fn term_during_the_recording_runs_teardown_stops_the_run_and_fails_the_job() {
+fn term_during_the_recording_runs_teardown_stops_the_run() {
     let dir = case("term");
     let app = app(&dir, SETUP, TEARDOWN);
-    let mut c = prec(
+    let c = prec(
         &dir,
         &[
             "clip",
@@ -110,7 +90,6 @@ fn term_during_the_recording_runs_teardown_stops_the_run_and_fails_the_job() {
             "30",
         ],
     );
-    with_jobs(&mut c, &dir);
     let mut child = common::spawn(c, &dir);
     common::wait_for("the pty's shell", &dir, 60, || {
         of_run(&dir).iter().any(|p| {
@@ -122,16 +101,13 @@ fn term_during_the_recording_runs_teardown_stops_the_run_and_fails_the_job() {
     assert_eq!(status.code(), Some(143), "{}", said(&dir));
     torn_down(&dir);
     none_left(&dir);
-    let job = job_of(&dir, child.id());
-    assert_eq!(job["state"], "failed", "{job}");
-    assert_eq!(job["exit"], 143, "{job}");
 }
 
 #[test]
 fn a_failed_setup_still_runs_teardown() {
     let dir = case("setup");
     let app = app(&dir, &format!("{SETUP}; exit 1"), TEARDOWN);
-    let mut c = prec(
+    let c = prec(
         &dir,
         &[
             "record",
@@ -143,15 +119,12 @@ fn a_failed_setup_still_runs_teardown() {
             "tmp/out",
         ],
     );
-    with_jobs(&mut c, &dir);
     let mut child = common::spawn(c, &dir);
     let status = common::exits(&mut child, &dir);
     assert!(!status.success());
     assert!(said(&dir).contains("failed"), "{}", said(&dir));
     torn_down(&dir);
     none_left(&dir);
-    let job = job_of(&dir, child.id());
-    assert_eq!(job["state"], "failed", "{job}");
 }
 
 #[test]
@@ -237,19 +210,11 @@ fn int_during_the_encode_stops_it_and_leaves_no_chromium() {
         ],
     );
     common::confined(&mut c, &dir);
-    with_jobs(&mut c, &dir);
     let mut child = common::spawn(c, &dir);
-    let pid = child.id();
-    common::wait_for("the run's encode", &dir, 240, || {
-        std::fs::read_dir(dir.join("jobs")).is_ok_and(|mut d| {
-            d.any(|e| {
-                e.is_ok_and(|e| {
-                    let name = e.file_name().to_string_lossy().to_string();
-                    name.starts_with(&format!("{pid}-"))
-                        && std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains("\"master\""))
-                })
-            })
-        })
+    common::wait_for("the run's browser", &dir, 240, || {
+        of_run(&dir)
+            .iter()
+            .any(|p| p.args.iter().any(|w| w.contains("chrom")))
     });
     assert!(common::signal(child.id(), "INT"));
     let status = common::exits(&mut child, &dir);

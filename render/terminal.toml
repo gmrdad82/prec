@@ -14,7 +14,6 @@ bin_dir = "{target}/release"
 HOME = "home"
 TMPDIR = "temp"
 NO_COLOR = "1"
-PITO_JOBS = "off"
 
 [theme]
 name = "Catppuccin Mocha"

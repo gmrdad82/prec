@@ -9,7 +9,6 @@ mod encode;
 mod font;
 mod fps;
 mod home;
-mod jobs;
 mod mask;
 mod paths;
 mod private;
@@ -349,39 +348,11 @@ fn replay_opts(r: &Replay, theme: &str, made: &str) -> render::Opts {
     }
 }
 
-fn begin(verb: &str, kind: &str, s: &Shot) -> Result<(), String> {
-    let out = paths::inside_tmp(&s.out)?.join(&s.product).join(kind);
-    let mut detail = vec![verb.to_string(), s.shot.clone(), "local".into()];
-    if let Some(size) = &s.size {
-        detail.push(size.clone());
-    }
-    if let Some(fps) = s.fps {
-        detail.push(format!("{}fps", fps.label()));
-    }
-    if let Some(poster) = &s.poster {
-        detail.push(format!("poster {poster}"));
-    }
-    if !s.themes.is_empty() {
-        detail.push(s.themes.join(","));
-    } else if s.theme != "app" {
-        detail.push(s.theme.clone());
-    }
-    jobs::start(
-        Some(&s.product),
-        &s.shot,
-        detail.join(" "),
-        "CPU".to_string(),
-        &out,
-    );
-    Ok(())
-}
-
 fn shoot(kind: &str, s: &Shot, made: &str) -> Result<(), String> {
     cache::tidy();
     s.camera.refuse()?;
     render::validate(kind, &opts(s, &s.theme, made))?;
-    begin(kind, kind, s)?;
-    jobs::stages(&render::stages(kind, s.bin.is_none(), true, true));
+    paths::inside_tmp(&s.out)?;
     let themes = if s.themes.is_empty() {
         vec![s.theme.clone()]
     } else {
@@ -455,8 +426,7 @@ fn run(command: Kind) -> Result<(), String> {
                 .map(|x| x.kind.clone())
                 .ok_or_else(|| format!("{} has no shot {}", s.product, s.shot))?;
             render::validate(&kind, &opts(&s, &s.theme, &made))?;
-            begin("record", &kind, &s)?;
-            jobs::stages(&render::stages(&kind, s.bin.is_none(), true, false));
+            paths::inside_tmp(&s.out)?;
             let _held = render::hold(
                 &s.product,
                 &s.shot,
@@ -470,21 +440,9 @@ fn run(command: Kind) -> Result<(), String> {
             r.camera.refuse()?;
             cache::tidy();
             let meta = record::read(&r.cast)?.meta;
-            let product = meta["product"].as_str().unwrap_or_default();
             let kind = meta["kind"].as_str().unwrap_or("clip");
             render::validate(kind, &replay_opts(&r, &r.theme, &made))?;
-            let out = paths::inside_tmp(&r.out)?.join(product).join(kind);
-            jobs::start(
-                Some(product).filter(|p| !p.is_empty()),
-                meta["shot"].as_str().unwrap_or("shot"),
-                format!(
-                    "render {}",
-                    r.cast.file_name().unwrap_or_default().to_string_lossy()
-                ),
-                "CPU".to_string(),
-                &out,
-            );
-            jobs::stages(&render::stages(kind, false, false, true));
+            paths::inside_tmp(&r.out)?;
             let themes = if r.themes.is_empty() {
                 vec![r.theme.clone()]
             } else {
@@ -552,7 +510,6 @@ fn cancel(signal: i32) -> ! {
     };
     let _ = writeln!(std::io::stderr(), "prec: {name}: stopping");
     render::tear_down(paths::stop_children);
-    jobs::cancelled(128 + signal, name);
     let _ = writeln!(std::io::stderr(), "prec: cancelled by {name}");
     std::process::exit(128 + signal);
 }
@@ -589,7 +546,6 @@ fn main() {
     }
     let result = watch_signals().and_then(|()| run(command));
     paths::settle();
-    jobs::end(&result);
     if let Err(e) = result {
         eprintln!("prec: {e}");
         std::process::exit(1);

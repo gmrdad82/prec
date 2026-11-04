@@ -581,7 +581,6 @@ pub fn render(
                     last = Some(p);
                 }
                 frames.push(last.clone().unwrap_or_default());
-                crate::jobs::progress(k + 1);
             }
         }
     }

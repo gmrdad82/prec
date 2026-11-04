@@ -22,7 +22,6 @@ fn prec(dir: &Path, args: &[&str]) -> Command {
         .current_dir(tree())
         .env("PREC_CONFIG", dir.join("config.toml"))
         .env("XDG_CACHE_HOME", dir.join("cache"))
-        .env("PITO_JOBS", "off")
         .env_remove("PREC_CACHE")
         .env_remove("PREC_CHROMIUM")
         .env_remove("NO_COLOR")
@@ -197,7 +196,6 @@ fn in_terminal(dir: &Path, args: &[&str], no_color: bool) -> (String, u32) {
     cmd.env("TERM", "xterm-256color");
     cmd.env("PREC_CONFIG", dir.join("config.toml"));
     cmd.env("XDG_CACHE_HOME", dir.join("cache"));
-    cmd.env("PITO_JOBS", "off");
     if no_color {
         cmd.env("NO_COLOR", "1");
     }
@@ -662,8 +660,7 @@ fn doctor(dir: &Path, path: &Path) -> Command {
         .env("PATH", path)
         .env("HOME", dir)
         .env("PREC_CONFIG", dir.join("config.toml"))
-        .env("XDG_CACHE_HOME", dir.join("cache"))
-        .env("PITO_JOBS", "off");
+        .env("XDG_CACHE_HOME", dir.join("cache"));
     if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
         c.env("LLVM_PROFILE_FILE", profile);
     }

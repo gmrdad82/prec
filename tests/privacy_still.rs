@@ -70,7 +70,6 @@ fn a_passed_value_reaches_the_still_app_and_no_file_the_render_wrote() {
     let mut text = std::fs::read_to_string(&toml).unwrap();
     text.push_str("\n[shots.quiet]\nkind = \"still\"\ntape = \"render/terminal/quiet.tape\"\n");
     std::fs::write(&toml, text).unwrap();
-    let jobs = dir.join("jobs");
     let o = common::prec(
         &dir,
         &[
@@ -88,11 +87,6 @@ fn a_passed_value_reaches_the_still_app_and_no_file_the_render_wrote() {
     .env("XDG_CACHE_HOME", dir.join("cache"))
     .env_remove("PREC_CACHE")
     .env(VAR, &secret)
-    .env_remove("PITO_JOBS")
-    .env_remove("PITO_JOB_ID")
-    .env_remove("PITO_INVOKER")
-    .env_remove("GPU_QUEUE_PID")
-    .env("PITO_JOBS_DIR", &jobs)
     .output()
     .unwrap();
     common::expect_ok(&o, "prec still");
@@ -138,11 +132,6 @@ fn a_passed_value_reaches_the_still_app_and_no_file_the_render_wrote() {
     assert!(written.contains(&manifest_path));
     assert!(written.contains(&out.join(&cast_name)));
     assert!(written.contains(&app.join("render/terminal/quiet.tape")));
-    let records: Vec<&PathBuf> = written
-        .iter()
-        .filter(|p| p.starts_with(&jobs) && p.extension().is_some_and(|e| e == "json"))
-        .collect();
-    assert!(!records.is_empty(), "the render left no job record");
     for path in &written {
         let bytes = std::fs::read(path).unwrap();
         assert!(

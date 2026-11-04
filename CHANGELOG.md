@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Removed
+
+- The job records: prec no longer writes the live record of a render, and `PITO_JOBS` and `PITO_JOBS_DIR` are ordinary variables it does not read. A dashboard reading `$XDG_RUNTIME_DIR/pito-jobs/` gets nothing from prec now.
+
 ## v2.0.0 — 2026-11-04
 
 ### Added
