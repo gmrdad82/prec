@@ -695,8 +695,11 @@ fn doctor_marks_every_missing_tool_and_exits_1() {
         assert_eq!(mark(&lines, what).0, "ok", "{what}");
     }
     assert_eq!(
-        mark(&lines, "pw-record (optional)"),
-        ("opt".into(), "absent or not Linux; clips are silent".into())
+        mark(&lines, "sound (optional)"),
+        (
+            "opt".into(),
+            "pipewire, wireplumber, pw-record and pw-dump are not all on PATH, or not Linux; clips are silent".into()
+        )
     );
     assert_eq!(
         mark(&lines, "cache"),

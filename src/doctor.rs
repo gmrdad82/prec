@@ -136,11 +136,19 @@ pub fn doctor() -> bool {
     line(
         heard,
         false,
-        "pw-record (optional)",
+        "sound (optional)",
         if heard {
-            "found with pw-dump; a clip carries the app's sound".into()
+            let pulse = if crate::audio::pulse_found() {
+                "pipewire-pulse found"
+            } else {
+                "pipewire-pulse absent, so Pulse apps are silent"
+            };
+            format!(
+                "pipewire, wireplumber, pw-record and pw-dump found; a clip carries the app's sound ({pulse})"
+            )
         } else {
-            "absent or not Linux; clips are silent".into()
+            "pipewire, wireplumber, pw-record and pw-dump are not all on PATH, or not Linux; clips are silent"
+                .into()
         },
     );
     let root = crate::cache::root();

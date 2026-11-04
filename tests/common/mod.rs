@@ -68,7 +68,7 @@ pub fn confine(c: &mut Command, cwd: &Path) {
     c.current_dir(cwd)
         .env("PREC_CONFIG", "/dev/null")
         .env("PREC_DIRECT", "1")
-        .env_remove("XDG_RUNTIME_DIR");
+        .env("PREC_AUDIO", "off");
 }
 
 pub fn confined(c: &mut Command, dir: &Path) {
