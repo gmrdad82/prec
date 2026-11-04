@@ -25,7 +25,7 @@ if [ "$mode" = fast ]; then
   export CARGO_NET_GIT_FETCH_WITH_CLI=true
 fi
 if command -v shellcheck >/dev/null; then
-  shellcheck bin/gate bin/docs-bundle bin/marks
+  shellcheck bin/gate bin/docs-bundle bin/marks bin/smoke
 fi
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings

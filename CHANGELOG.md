@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- `bin/smoke <prec binary>` runs `prec doctor` and a draft clip of `examples/demo` (one size, one theme, 30 fps) in a scratch tree, checks the master and the manifest, prints the manifest's frame count, and removes the scratch. It passed on Linux and on an Apple Silicon Mac (macOS 26.6.2).
+
+### Fixed
+
+- prec finds Chrome on macOS: when no browser is on the `PATH`, it tries `/Applications/Chromium.app` and `/Applications/Google Chrome.app`.
+
 ### Changed
 
 - Recording is silent on the machine. For each `record` or `clip`, prec starts its own `pipewire`, `wireplumber` and `pipewire-pulse` under a private runtime folder, home and configuration, with one null sink as the only output; no sound device, Bluetooth, camera or session bus is opened, and the session's PipeWire is never reached. The app's `XDG_RUNTIME_DIR` is that private folder, so Pulse apps are captured too. It needs `pipewire` and `wireplumber` (with `pw-record` and `pw-dump`), and `pipewire-pulse` for Pulse apps; without them, or when a daemon fails to start, the recording is silent with one line on stderr. The daemons add about 30 ms to a recording's start and stop on every exit path, including an interrupt. `prec doctor` names all four tools.

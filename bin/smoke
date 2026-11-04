@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[ "$#" -eq 1 ] || { echo "usage: bin/smoke <prec binary>" >&2; exit 2; }
+root=$(cd "$(dirname "$0")/.." && pwd)
+bin=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
+[ -x "$bin" ] || { echo "smoke: $bin is not executable" >&2; exit 2; }
+
+mkdir -p "$root/tmp"
+scratch=$(mktemp -d "$root/tmp/smoke.XXXXXX")
+trap 'rm -rf "$scratch"' EXIT
+
+mkdir -p "$scratch/tree"
+cp -R "$root/examples/demo" "$scratch/tree/demo"
+git -C "$scratch/tree" init -q
+cd "$scratch/tree"
+"$bin" doctor
+
+start=$(date +%s)
+"$bin" clip demo typing \
+  --app-dir demo \
+  --size 640x360 \
+  --fps 30 \
+  --theme app \
+  --out tmp/out
+end=$(date +%s)
+
+master=$(find "$scratch/tree/tmp/out" -name '*.mp4' | head -n 1)
+manifest=$(find "$scratch/tree/tmp/out" -name '*.json' | head -n 1)
+[ -s "$master" ] || { echo "smoke: no master" >&2; exit 1; }
+[ -s "$manifest" ] || { echo "smoke: no manifest" >&2; exit 1; }
+
+echo "smoke: $(basename "$master") in $((end - start)) s"
+frames=$(sed -n 's/^ *"master": *\([0-9][0-9]*\),*$/\1/p' "$manifest" | head -n 1)
+[ -n "$frames" ] && [ "$frames" -gt 0 ] || { echo "smoke: manifest has no frame count" >&2; exit 1; }
+
+echo "smoke: $(basename "$master"), $frames frames, $((end - start)) s"

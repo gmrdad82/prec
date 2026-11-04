@@ -99,11 +99,11 @@ Re-rendering the 30 fps recording's cast, with no app run: 720p 30 fps in 9.2 s 
 
 A window that resizes gets a new backdrop for every grid it passes through, and prec writes each one as a fast-compressed 8-bit RGB PNG. Measured on 2026-10-23 at 1280x720 and 30 fps, against prec 1.5.2's default-compressed RGBA PNGs, over a cast that resizes 40x10 → 38x16 → 40x10 → 60x20 → 40x10 (37 backdrops; medians of 10 interleaved runs): each write takes 788 µs instead of 1,608 µs, and the files are 2.2 times smaller (613,266 bytes instead of 1,375,323). The masters are byte-identical, and the whole render stays within run-to-run noise (8.80 s against 8.63 s).
 
-Size and build: the Linux x86_64 binary is 5,935,688 bytes (5.7 MB; 2,508,494 bytes packed as the release's `.tar.gz`), built with fat LTO, one codegen unit and stripped; a cold `cargo build --release --locked` took 70.4 s with 4 build jobs. `src/` is 10,912 lines of Rust with its unit tests. prec has 18 direct dependencies and 95 crates in its Linux build; the xterm.js files, the VHS themes and pito-codecs' H.264 encoder are compiled in, so it runs no encoder of yours and reads nothing from the network. Renders on a Mac are untested.
+Size and build: the Linux x86_64 binary is 5,935,688 bytes (5.7 MB; 2,508,494 bytes packed as the release's `.tar.gz`), built with fat LTO, one codegen unit and stripped; a cold `cargo build --release --locked` took 70.4 s with 4 build jobs. `src/` is 10,912 lines of Rust with its unit tests. prec has 18 direct dependencies and 95 crates in its Linux build; the xterm.js files, the VHS themes and pito-codecs' H.264 encoder are compiled in, so it runs no encoder of yours and reads nothing from the network.
 
 ## Install
 
-prec runs on Linux (x86_64), on Windows through WSL, and on macOS (Apple Silicon). Each [release](https://github.com/gmrdad82/prec/releases/latest) carries a Linux and a macOS binary with a `SHA256SUMS` file. On macOS the binary is built on an Apple Silicon Mac; renders on a Mac are untested.
+prec runs on Linux (x86_64), on Windows through WSL, and on macOS (Apple Silicon). Each [release](https://github.com/gmrdad82/prec/releases/latest) carries a Linux and a macOS binary with a `SHA256SUMS` file. On macOS the binary is built on an Apple Silicon Mac and checked with `bin/smoke`; Intel Macs are untested.
 
 **Linux and WSL:**
 
@@ -135,9 +135,11 @@ prec drives tools you install yourself:
 - **fontconfig** (`fc-match`, `fc-list`), the default font **JetBrainsMono Nerd Font** (or pass `--font`), and a CJK font for wide characters.
 - **git** and **bash**.
 
-On Debian or Ubuntu: `sudo apt install chromium fontconfig fonts-noto-cjk git`. On Arch: `sudo pacman -S chromium fontconfig noto-fonts-cjk ttf-jetbrains-mono-nerd git`. On macOS with Homebrew: `brew install fontconfig git` and `brew install --cask chromium font-jetbrains-mono-nerd-font`, then point `chromium` in the config at `/Applications/Chromium.app/Contents/MacOS/Chromium`. The JetBrainsMono Nerd Font is also at [nerdfonts.com](https://www.nerdfonts.com/font-downloads).
+On Debian or Ubuntu: `sudo apt install chromium fontconfig fonts-noto-cjk git`. On Arch: `sudo pacman -S chromium fontconfig noto-fonts-cjk ttf-jetbrains-mono-nerd git`. On macOS with Homebrew: `brew install fontconfig git` and `brew install --cask chromium font-jetbrains-mono-nerd-font`, then prec finds `/Applications/Chromium.app` or `/Applications/Google Chrome.app` by itself. The JetBrainsMono Nerd Font is also at [nerdfonts.com](https://www.nerdfonts.com/font-downloads).
 
 `prec doctor` checks all of it and says what is missing.
+
+**Tested on macOS:** on 2026-11-04, on macOS 26.6.2 (Apple Silicon) with Google Chrome 156, `fontconfig` from Homebrew and the JetBrainsMono Nerd Font cask, the release binary built there ran `prec doctor` and then `bin/smoke`: a draft clip of `examples/demo` (`prec clip demo typing --size 640x360 --fps 30`), which wrote a 102-frame master and its manifest in 11 s. Intel Macs are untested. Sound on macOS is absent: prec records the app's sound with PipeWire, so a clip made on a Mac is silent.
 
 ## Use
 

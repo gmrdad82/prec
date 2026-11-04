@@ -36,7 +36,7 @@ const CLIPPY: &str = "cargo clippy --locked --all-targets -- -D warnings";
 const PROBE: &str = "cargo nextest --version";
 const NEXTEST: &str = "cargo nextest run --workspace --bins --no-tests=pass";
 const TEST: &str = "cargo test --locked --bins";
-const SHELLCHECK_RUN: &str = "shellcheck bin/gate bin/docs-bundle bin/marks";
+const SHELLCHECK_RUN: &str = "shellcheck bin/gate bin/docs-bundle bin/marks bin/smoke";
 
 fn found(name: &str) -> PathBuf {
     let path = std::env::var_os("PATH").unwrap();
