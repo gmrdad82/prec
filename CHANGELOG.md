@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- `prec record` and `prec clip` capture the app's own sound on Linux with PipeWire's `pw-record` and `pw-dump`, on the streams of the app's own process tree, timestamped against the cast clock, with no change in the app. The sound is kept as `<stem>.wav` (48 kHz stereo, 16-bit) beside the cast, and the cast header's `x_terminal_renderer.audio` is `{"file", "sha256", "start", "rate", "channels"}`, where `start` is the WAV's first sample in seconds on the cast clock. An app that makes no sound, or only digital silence, gives no WAV and no `audio` key; so does a machine without `pw-record`, `pw-dump` or a PipeWire socket, and `prec doctor` says so. The pty gets a private runtime folder holding links to the audio sockets only, so it never sees the session's bus, and the variable stays out of the cast. This release stops at the WAV: clips are still silent.
+
 ### Removed
 
 - Breaking: `--rev` is gone and is refused as an unknown argument. prec records only the working tree; the per-commit source checkouts and cached binaries are gone, and the build tree and the shared cargo target dir stay.

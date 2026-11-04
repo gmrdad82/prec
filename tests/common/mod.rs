@@ -68,7 +68,8 @@ pub fn confine(c: &mut Command, cwd: &Path) {
     c.current_dir(cwd)
         .env("PITO_JOBS", "off")
         .env("PREC_CONFIG", "/dev/null")
-        .env("PREC_DIRECT", "1");
+        .env("PREC_DIRECT", "1")
+        .env_remove("XDG_RUNTIME_DIR");
 }
 
 pub fn confined(c: &mut Command, dir: &Path) {

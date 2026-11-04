@@ -119,6 +119,7 @@ pub struct Spec<'a> {
     pub typing: Duration,
     pub steps: &'a [Step],
     pub still: bool,
+    pub scratch: &'a Path,
 }
 
 struct Utf8 {
@@ -391,7 +392,7 @@ impl Session {
     }
 }
 
-pub fn record(spec: &Spec) -> Result<Vec<Event>, String> {
+pub fn record(spec: &Spec) -> Result<(Vec<Event>, Option<crate::audio::Mix>), String> {
     let pty = native_pty_system();
     let pair = pty
         .openpty(PtySize {
@@ -417,6 +418,10 @@ pub fn record(spec: &Spec) -> Result<Vec<Event>, String> {
         cmd.env(k, v);
     }
     cmd.cwd(spec.cwd);
+    let sockets = crate::audio::Sockets::prepare(spec.scratch);
+    if let Some(sockets) = &sockets {
+        cmd.env("XDG_RUNTIME_DIR", sockets.dir());
+    }
     let mut child =
         crate::paths::spawn_session(|| pair.slave.spawn_command(cmd), |c| c.process_id())
             .map_err(|e| format!("starting bash in the pty: {e}"))?;
@@ -430,6 +435,10 @@ pub fn record(spec: &Spec) -> Result<Vec<Event>, String> {
         .take_writer()
         .map_err(|e| format!("pty writer: {e}"))?;
     let start = Instant::now();
+    let audio = sockets
+        .as_ref()
+        .and(child.process_id())
+        .and_then(|pid| crate::audio::Audio::start(pid, start));
     let (tx, rx) = channel();
     let reader_thread = std::thread::spawn(move || {
         let mut buf = vec![0u8; 65536];
@@ -458,6 +467,7 @@ pub fn record(spec: &Spec) -> Result<Vec<Event>, String> {
     let result = drive(&mut s, spec);
     s.pump();
     let end = s.now();
+    let heard = audio.and_then(|a| a.finish(end));
     let groups: Vec<i32> = [
         s.pty.as_ref().and_then(|m| m.process_group_leader()),
         child.process_id().map(|p| p as i32),
@@ -496,7 +506,7 @@ pub fn record(spec: &Spec) -> Result<Vec<Event>, String> {
         kind: Kind::Marker,
         data: "end".into(),
     });
-    Ok(events)
+    Ok((events, heard))
 }
 
 fn drive(s: &mut Session, spec: &Spec) -> Result<(), String> {
@@ -738,7 +748,7 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-fn round6(v: f64) -> f64 {
+pub fn round6(v: f64) -> f64 {
     (v * 1e6).round() / 1e6
 }
 
@@ -1887,6 +1897,7 @@ mod tests {
             typing: Duration::ZERO,
             steps: &steps,
             still: false,
+            scratch: Path::new("."),
         };
         drive(&mut s, &spec).unwrap();
         let tail: Vec<&str> = s

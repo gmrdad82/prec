@@ -1,4 +1,5 @@
 mod app;
+mod audio;
 mod cache;
 mod cdp;
 mod compose;
