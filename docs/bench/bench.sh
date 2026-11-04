@@ -4,7 +4,7 @@ W=$(git rev-parse --show-toplevel)
 B=$W/tmp/bench
 cd "$W"
 mkdir -p "$B/vhs"
-export PREC_DIRECT=1 PITO_JOBS=off
+export PREC_DIRECT=1
 run() { if [ -n "${CPUS:-}" ]; then taskset -c "$CPUS" nice -n 10 "$@"; else nice -n 10 "$@"; fi; }
 now() { echo "$EPOCHREALTIME"; }
 secs() { awk "BEGIN{printf \"%.2f\", $2 - $1}"; }

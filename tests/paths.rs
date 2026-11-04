@@ -572,7 +572,6 @@ fn doctor(dir: &Path, env: &[(&str, &Path)]) -> Output {
     c.arg("doctor")
         .current_dir(dir)
         .env_remove("PREC_CONFIG")
-        .env("PITO_JOBS", "off")
         .env("PREC_DIRECT", "1")
         .env("XDG_CONFIG_HOME", dir.join("config"))
         .env("XDG_CACHE_HOME", dir.join("cache"))

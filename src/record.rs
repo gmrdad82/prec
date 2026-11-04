@@ -250,7 +250,6 @@ impl Session {
     }
 
     fn pump(&mut self) -> bool {
-        crate::jobs::progress(self.start.elapsed().as_secs() as usize);
         let mut fresh = false;
         loop {
             match self.rx.try_recv() {
@@ -265,7 +264,6 @@ impl Session {
     }
 
     fn await_output(&mut self, limit: Duration) -> bool {
-        crate::jobs::progress(self.start.elapsed().as_secs() as usize);
         match self.rx.recv_timeout(limit) {
             Ok((at, bytes)) => {
                 let mut fresh = self.absorb(at, &bytes);

@@ -44,7 +44,6 @@ cpus = "8-15"
 | `PREC_CHROMIUM` | the Chromium or Chrome binary |
 | `PREC_CACHE` | moves the [machine cache](manage-the-cache.md) |
 | `PREC_DIRECT=1` | runs everything unconfined, for tests |
-| `PITO_JOBS=off` | turns off the live [job record](job-records.md) |
 | `PITO_INVOKER` | the `caller` a manifest records, cleaned to a slug; default `manual` |
 | `NO_COLOR` | plain error output from the command line |
 

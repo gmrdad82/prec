@@ -5,7 +5,6 @@ use crate::encode;
 use crate::font;
 use crate::fps::Fps;
 use crate::home::Ns;
-use crate::jobs;
 use crate::paths;
 use crate::private;
 use crate::record::{self, Cast, Timeline};
@@ -65,21 +64,6 @@ impl Opts {
 }
 
 pub const AUDIO_FLAGS: &str = "--audio-offset and --audio-gain are for clip and render";
-
-pub fn stages(kind: &str, build: bool, record: bool, render: bool) -> Vec<&'static str> {
-    let mut out = Vec::new();
-    if record {
-        if build {
-            out.push("build");
-        }
-        out.push("record");
-    }
-    if render {
-        out.push("replay");
-        out.push(if kind == "still" { "derive" } else { "master" });
-    }
-    out
-}
 
 pub fn made() -> String {
     Local::now().to_rfc3339_opts(SecondsFormat::Secs, false)
@@ -629,10 +613,6 @@ fn prepare(resolved: Resolved, kind: &str, opts: &Opts, run_name: &str) -> Resul
         return Err(format!("shot {}: fps is for clips", opts.shot));
     }
     let out_root = paths::inside_tmp(&opts.out)?;
-    if opts.bin.is_none() {
-        jobs::stage("build", None, "steps");
-        jobs::note(&format!("{}@{}", opts.product, resolved.rev));
-    }
     let work = paths::scratch(&["run", run_name])?;
     paths::fresh(&work)?;
     let bin_dir = app::build(
@@ -865,7 +845,6 @@ fn record_prepared(
             "recording {} {} in a {}x{} pty…",
             opts.product, opts.shot, p.grid[0], p.grid[1]
         );
-        jobs::stage("record", None, "seconds");
         paths::settle();
         record::record(&record::Spec {
             grid: p.grid,
@@ -1055,7 +1034,6 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
         Some(&meta["app_theme"])
     };
     let choice: Choice = theme::resolve(&opts.theme, app_theme, &product)?;
-    jobs::context(choice.label.clone());
     let theme_json = choice.json.clone();
     let family = opts
         .font
@@ -1147,7 +1125,6 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
                 "replaying {product} {shot} to {:.2}s at {}x{}…",
                 at, pl.master_size[0], pl.master_size[1]
             );
-            jobs::stage("replay", None, "frames");
             rendered = replay::render(
                 &cast,
                 pl.master_size,
@@ -1169,10 +1146,8 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
                 "master: 16-bit sRGB PNG, lossless",
                 json!({"role": "master"}),
             )?);
-            let derived = pl.sizes.len() + web.len();
-            jobs::stage("derive", Some(derived), "outputs");
             let linear = OnceCell::new();
-            for (i, s) in pl.sizes.iter().enumerate() {
+            for s in &pl.sizes {
                 let p = stage.join(format!("{}.png", stem_of(*s, None)));
                 derive_png(&p, &img, &linear, *s)?;
                 files.push(encode::file_entry(
@@ -1181,7 +1156,6 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
                     "delivery: 8-bit sRGB PNG with an sRGB chunk",
                     json!({"size": [s[0], s[1]]}),
                 )?);
-                jobs::progress(i + 1);
             }
             let (w, h) = img.dimensions();
             for t in &web {
@@ -1195,7 +1169,6 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
                     json!({"role": "web", "size": [t.width, height], "web": t.px}),
                 )?);
             }
-            jobs::progress(derived);
             frames_record = json!({"still_at": (at * 1e6).round() / 1e6, "exact": true});
         }
         Some((n, order, fade, src, slot)) => {
@@ -1204,7 +1177,6 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
                 "replaying {product} {shot}: {n} frames at {}x{}@{}…",
                 pl.master_size[0], pl.master_size[1], pl.fps
             );
-            jobs::stage("replay", Some(n), "frames");
             rendered = replay::render(
                 &cast,
                 pl.master_size,
@@ -1221,7 +1193,6 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
                 .map(|&i| rendered.frames[i].as_path())
                 .collect();
             manifest_stem = stem_of(pl.master_size, Some(pl.fps));
-            jobs::stage("master", Some(paths_in.len()), "frames");
             let count = if opts.no_encode {
                 paths_in.len()
             } else {
@@ -1305,7 +1276,6 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
                 );
                 count
             };
-            jobs::progress(count);
             frames_record = json!({
                 "master": if opts.no_encode { Value::Null } else { json!(count) },
                 "seconds": pl.fps.seconds(count),
@@ -1545,21 +1515,6 @@ mod tests {
         assert!(bytes.contains("\"TOKEN\""), "{bytes}");
         assert!(!bytes.contains(secret), "{bytes}");
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn a_job_declares_the_stages_its_run_goes_through() {
-        assert_eq!(
-            stages("clip", true, true, true),
-            ["build", "record", "replay", "master"]
-        );
-        assert_eq!(
-            stages("still", false, true, true),
-            ["record", "replay", "derive"]
-        );
-        assert_eq!(stages("clip", true, true, false), ["build", "record"]);
-        assert_eq!(stages("clip", false, false, true), ["replay", "master"]);
-        assert_eq!(stages("still", false, false, true), ["replay", "derive"]);
     }
 
     #[test]

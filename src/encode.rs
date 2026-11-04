@@ -261,7 +261,6 @@ pub fn master(
                     mux.push(*id, &p).map_err(|e| named(&e))?;
                 }
             }
-            crate::jobs::progress(n + 1);
         }
         if let Some((bed, id)) = bed.as_mut() {
             for p in bed.finish().map_err(|e| named(&e))? {
