@@ -132,6 +132,17 @@ pub fn doctor() -> bool {
             .map(|p| p.to_string())
             .unwrap_or_else(|| "absent; apps pin their own clock through [env]".into()),
     );
+    let heard = cfg!(target_os = "linux") && crate::audio::tools_found();
+    line(
+        heard,
+        false,
+        "pw-record (optional)",
+        if heard {
+            "found with pw-dump; a clip carries the app's sound".into()
+        } else {
+            "absent or not Linux; clips are silent".into()
+        },
+    );
     let root = crate::cache::root();
     println!(
         "ok   {:<28} {} ({})",

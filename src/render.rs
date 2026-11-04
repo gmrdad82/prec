@@ -1,4 +1,5 @@
 use crate::app::{self, DEFAULT_FONT, Resolved, Terminal};
+use crate::audio;
 use crate::compose;
 use crate::encode;
 use crate::font;
@@ -548,6 +549,7 @@ struct Prep {
     typing: String,
     prompt: String,
     tape_path: PathBuf,
+    work: PathBuf,
 }
 
 impl Prep {
@@ -788,6 +790,7 @@ fn prepare(resolved: Resolved, kind: &str, opts: &Opts, run_name: &str) -> Resul
         typing,
         prompt,
         tape_path,
+        work,
     })
 }
 
@@ -836,7 +839,7 @@ fn record_prepared(
         cwd: p.cwd.clone(),
     };
     *TEARDOWN.lock().unwrap_or_else(|e| e.into_inner()) = p.terminal.teardown.as_deref().map(hook);
-    let recorded = (|| -> Result<Vec<record::Event>, String> {
+    let recorded = (|| -> Result<(Vec<record::Event>, Option<audio::Mix>), String> {
         if let Some(setup) = &p.terminal.setup {
             hook(setup).run(true)?;
         }
@@ -858,17 +861,18 @@ fn record_prepared(
             typing,
             steps: &steps,
             still: kind == "still",
+            scratch: &p.work,
         })
     })();
     tear_down(|| {});
-    let events = recorded?;
+    let (events, heard) = recorded?;
     let shown = Timeline::of(&events).shown();
     let closure = match closure_from_sets(&p.sets)? {
         Some(c) => c,
         None => p.shot.closure()?,
     };
     let meta = cast_meta(p, opts, kind, shown, &closure, &tape_text);
-    let cast = Cast {
+    let mut cast = Cast {
         cols: p.grid[0],
         rows: p.grid[1],
         meta,
@@ -882,6 +886,24 @@ fn record_prepared(
     };
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join(format!("{}-{kind}-{}.cast", opts.product, opts.shot));
+    let wav = path.with_extension("wav");
+    if let Some(heard) = &heard {
+        audio::write_wav(&wav, heard)?;
+        eprintln!(
+            "recorded {:.2}s of sound → {}",
+            heard.seconds(),
+            paths::shown(&wav)
+        );
+        cast.meta["audio"] = json!({
+            "file": wav.file_name().unwrap_or_default().to_string_lossy(),
+            "sha256": paths::hash_file(&wav)?,
+            "start": record::round6(heard.start),
+            "rate": audio::RATE,
+            "channels": audio::CHANNELS,
+        });
+    } else if wav.is_file() {
+        std::fs::remove_file(&wav).map_err(|e| format!("{}: {e}", wav.display()))?;
+    }
     record::write(&path, &cast)?;
     eprintln!(
         "recorded {:.2}s shown, {} events → {}",
@@ -1438,6 +1460,7 @@ mod tests {
             typing: "1ms".into(),
             prompt: "$ ".into(),
             tape_path: PathBuf::from("/t"),
+            work: PathBuf::from("/w"),
         };
         let meta = cast_meta(&p, &Opts::default(), "clip", 1.0, &app::Closure::Open, "");
         assert_eq!(meta["pass_env"], json!(["TOKEN"]));
