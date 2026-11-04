@@ -285,6 +285,7 @@ Everything reusable lives in one cache, shared by every repository: `${XDG_CACHE
 |---|---|---|
 | `work/<repo>/` | the build tree, where a clean tree builds at its HEAD | repo |
 | `target/<repo>/` | the repo's shared cargo target dir, so every build is incremental | repo |
+| `sockets/` | links to the audio sockets, only when the run's own path is too long to hold them; removed when the run ends | run |
 | `locks/` | one lock per entry, so a prune never removes an entry being built or used | |
 
 A `<repo>` key is the repository's name and a hash of its origin URL, so every checkout and worktree of one repository shares entries. A clean tree builds at its HEAD in the build tree and a dirty tree builds in place, both into the shared target dir; each run then copies the built binaries into its own scratch and runs them from there, so a second build never changes a binary a run is using. prec records only the working tree. The cache cleans itself: when a record or render starts, at most once a day, entries unused for 30 days are removed quietly, and an entry a run holds is never removed. prec downloads nothing.

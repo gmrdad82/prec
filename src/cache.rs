@@ -12,7 +12,7 @@ const OK: &str = ".ok";
 const NAME_CAP: usize = 64;
 const STAMP: &str = ".pruned";
 const DAY: u64 = 86400;
-const SECTIONS: [&str; 5] = ["git", "src", "work", "target", "bin"];
+const SECTIONS: [&str; 6] = ["git", "src", "work", "target", "bin", "sockets"];
 const NESTED: [&str; 2] = ["src", "bin"];
 
 static HELD: Mutex<Vec<File>> = Mutex::new(Vec::new());
@@ -486,6 +486,15 @@ mod tests {
         fs::write(d.join("payload"), b"x").unwrap();
         fs::write(d.join(USED), used.to_string()).unwrap();
         d
+    }
+
+    #[test]
+    fn a_socket_folder_a_killed_run_left_is_pruned_by_the_same_rule() {
+        let r = scratch_root("sockets");
+        let stale = mk(&r, "sockets/p1-0", NOW - 31 * DAY);
+        let fresh = mk(&r, "sockets/p2-0", NOW);
+        assert_eq!(prune_in(&r, NOW), ["sockets/p1-0"]);
+        assert!(!stale.exists() && fresh.exists());
     }
 
     fn shared(r: &Path, section: &str, name: &str) -> File {

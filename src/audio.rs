@@ -186,10 +186,11 @@ impl Graph {
                 let pid = n
                     .pid
                     .or_else(|| n.client.and_then(|c| clients.get(&c).copied()))?;
+                let serial = n.serial?;
                 n.announced = true;
                 Some(Change::Appeared {
                     id: *id,
-                    serial: n.serial?,
+                    serial,
                     pid,
                 })
             })
@@ -284,7 +285,8 @@ impl Sockets {
             (near, false)
         } else {
             let n = PLACED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            (host.join(format!("p{}-{n}", std::process::id())), true)
+            let name = format!("p{}-{n}", std::process::id());
+            (crate::cache::root().join("sockets").join(name), true)
         };
         let all = present.len();
         let present: Vec<&str> = present.into_iter().filter(|n| fits(&dir, n)).collect();
@@ -538,6 +540,22 @@ mod tests {
             ]
         );
         assert_eq!(g.apply(&dump), []);
+    }
+
+    #[test]
+    fn a_stream_seen_before_its_serial_is_announced_once_the_serial_comes() {
+        let mut g = Graph::default();
+        let bare = json!([{"id": 20, "type": "PipeWire:Interface:Node", "info": {"props": {"media.class": "Stream/Output/Audio", "pipewire.sec.pid": 4000}}}]);
+        assert_eq!(g.apply(&bare), []);
+        let full = json!([{"id": 20, "type": "PipeWire:Interface:Node", "info": {"props": {"object.serial": 21}}}]);
+        assert_eq!(
+            g.apply(&full),
+            [Change::Appeared {
+                id: 20,
+                serial: 21,
+                pid: 4000
+            }]
+        );
     }
 
     #[test]
