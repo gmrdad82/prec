@@ -15,6 +15,11 @@
 - Recording is silent on the machine. For each `record` or `clip`, prec starts its own `pipewire`, `wireplumber` and `pipewire-pulse` under a private runtime folder, home and configuration, with one null sink as the only output; no sound device, Bluetooth, camera or session bus is opened, and the session's PipeWire is never reached. The app's `XDG_RUNTIME_DIR` is that private folder, so Pulse apps are captured too. It needs `pipewire` and `wireplumber` (with `pw-record` and `pw-dump`), and `pipewire-pulse` for Pulse apps; without them, or when a daemon fails to start, the recording is silent with one line on stderr. The daemons add about 30 ms to a recording's start and stop on every exit path, including an interrupt. `prec doctor` names all four tools.
 - `PREC_AUDIO=off` starts no sound daemons, so the recording is silent.
 
+### Fixed
+
+- The claim of the same bytes: one prec version gives the same master from the same cast on any machine, and a new version can change it (pito-codecs 3.1.0 did), so the README and the guides no longer say "always", and the published hash is the one 2.0.0 writes.
+- `docs/bench/bench.sh` reads its masters with `pcod probe` instead of `ffprobe`, and `ONLY=1` runs just the re-render part.
+
 ### Removed
 
 - The job records: prec no longer writes the live record of a render, and `PITO_JOBS` and `PITO_JOBS_DIR` are ordinary variables it does not read. A dashboard reading `$XDG_RUNTIME_DIR/pito-jobs/` gets nothing from prec now.

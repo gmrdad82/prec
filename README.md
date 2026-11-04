@@ -4,20 +4,20 @@
 
 [![Version](https://img.shields.io/github/v/tag/gmrdad82/prec)](https://github.com/gmrdad82/prec/tags)
 
-prec records terminal apps into exact videos and stills, part of [PITO MD](https://pitomd.com). It is an alternative to [VHS](https://github.com/charmbracelet/vhs): you write a tape of keystrokes, and prec runs your app in a real pty, records the session once, then replays it frame by frame in headless Chromium at exactly 24, 30, 48, 60 or 120 fps or the NTSC rates 23.976, 29.97, 47.952 and 59.94 (as exact rationals such as 24000/1001), at any size up to 4K. The same recording always replays to the same bytes.
+prec records terminal apps into exact videos and stills, part of [PITO MD](https://pitomd.com). It is an alternative to [VHS](https://github.com/charmbracelet/vhs): you write a tape of keystrokes, and prec runs your app in a real pty, records the session once, then replays it frame by frame in headless Chromium at exactly 24, 30, 48, 60 or 120 fps or the NTSC rates 23.976, 29.97, 47.952 and 59.94 (as exact rationals such as 24000/1001), at any size up to 4K. One prec version replays the same recording to the same bytes.
 
 | | |
 |---|---|
 | Frames in a 10-second clip at 120 fps | **1,196**, every one (VHS v0.11.0 on the same tape: 214) |
-| Re-render a 10-second cast at 1080p 60 fps | **16.9 s**, without running the app again |
-| Two renders of one cast | **byte-identical** masters, same sha256 |
+| Re-render a 10-second cast at 1080p 60 fps | **9.4 s**, without running the app again |
+| Two renders of one cast | **byte-identical** masters, same sha256; one prec version gives the same bytes on any machine |
 | Sizes and rates | any size up to **3840x2160**, at **24, 30, 48, 60 or 120 fps**, or NTSC **24000/1001, 30000/1001, 48000/1001 and 60000/1001** |
 | Binary | **5.7 MB**, stripped, fat LTO, its H.264 encoder built in (2.4 MB as the release `.tar.gz`) |
-| Code | **10,912 lines** of Rust in `src/`, unit tests included; **18** direct dependencies |
-| Cold release build | **70.4 s** with 4 build jobs |
+| Code | **17,754 lines** of Rust in `src/`, unit tests included; **17** direct dependencies |
+| Cold release build | **70.4 s** with 4 build jobs (prec 1.2.0) |
 | Network | none: prec downloads nothing |
 
-Measured on 2026-10-16 on an AMD Ryzen 9 9950X (prec and VHS pinned to the same 24 threads), with prec 1.2.0 and VHS v0.11.0, from [docs/bench/bench.sh](docs/bench/bench.sh); see [Speed](#speed) for every number and how it was taken.
+Measured on an AMD Ryzen 9 9950X (prec and VHS pinned to the same 24 threads): the VHS comparison on 2026-10-16 with prec 1.2.0 and VHS v0.11.0, the re-render time on 2026-11-04 with prec 2.0.0, from [docs/bench/bench.sh](docs/bench/bench.sh); see [Speed](#speed) for every number and how it was taken.
 
 Got questions or doubts? Ping me on Discord: https://discord.gg/XsNcn3kYzn
 
@@ -49,9 +49,9 @@ VHS v0.11.0 captured in real time and wrote a 25 fps file at every setting, shor
 
 ### Record once, render many
 
-The session is kept as an [asciicast v2](docs/formats.md) cast. `prec render` replays a cast at another size, rate or theme without running the app again, and the same cast always gives the same bytes: in the benchmark, two 720p 30 fps renders of one cast wrote the same master, sha256 `4fab0be36a0ac519…`.
+The session is kept as an [asciicast v2](docs/formats.md) cast. `prec render` replays a cast at another size, rate or theme without running the app again, and one prec version gives the same bytes from the same cast on any machine. A new version can change them (its encoder or its colour handling may move), and the [CHANGELOG](CHANGELOG.md) says when. In the benchmark, two 720p 30 fps renders of one cast wrote the same master, sha256 `5bf7c84a3f09217a…`.
 
-<p align="center"><img src="docs/images/rerender.png" width="640" alt="Bars, lower is better: seconds to replay and encode a 10-second cast with prec 1.2.0: 720p 30 fps 9.2 s, 1080p 60 fps 16.9 s, 2160p 30 fps 27.8 s, 2160p 120 fps 48.6 s."></p>
+<p align="center"><img src="docs/images/rerender.png" width="640" alt="Bars, lower is better: seconds to replay and encode a 10-second cast with prec 2.0.0: 720p 30 fps 8.0 s, 1080p 60 fps 9.4 s, 2160p 30 fps 17.3 s, 2160p 120 fps 25.9 s."></p>
 
 ### Native pixels at every size
 
@@ -95,11 +95,11 @@ All numbers come from one run of [docs/bench/bench.sh](docs/bench/bench.sh) on 2
 
 VHS finishes sooner, because it keeps what it can capture in real time; prec records in real time, then replays and encodes every frame at CRF 14 with pito-codecs' H.264 encoder. A frame's moment that brings no new bytes reuses the previous frame, so a mostly still terminal replays faster than a busy one.
 
-Re-rendering the 30 fps recording's cast, with no app run: 720p 30 fps in 9.2 s (299 frames; the same render again took 9.8 s and wrote the same bytes), 1080p 60 fps in 16.9 s (598 frames), 2160p 30 fps in 27.8 s (299 frames) and 2160p 120 fps in 48.6 s (1,196 frames).
+Re-rendering the 30 fps recording's cast, with no app run, measured on 2026-11-04 with prec 2.0.0 by `ONLY=1 CPUS=4-15,20-31 docs/bench/bench.sh` (the re-render part alone, on a machine with a load average of about 9 on 32 threads): 720p 30 fps in 8.0 s (299 frames; the same render again took 8.0 s and wrote the same bytes), 1080p 60 fps in 9.4 s (598 frames), 2160p 30 fps in 17.3 s (299 frames) and 2160p 120 fps in 25.9 s (1,196 frames).
 
 A window that resizes gets a new backdrop for every grid it passes through, and prec writes each one as a fast-compressed 8-bit RGB PNG. Measured on 2026-10-23 at 1280x720 and 30 fps, against prec 1.5.2's default-compressed RGBA PNGs, over a cast that resizes 40x10 → 38x16 → 40x10 → 60x20 → 40x10 (37 backdrops; medians of 10 interleaved runs): each write takes 788 µs instead of 1,608 µs, and the files are 2.2 times smaller (613,266 bytes instead of 1,375,323). The masters are byte-identical, and the whole render stays within run-to-run noise (8.80 s against 8.63 s).
 
-Size and build: the Linux x86_64 binary is 5,935,688 bytes (5.7 MB; 2,508,494 bytes packed as the release's `.tar.gz`), built with fat LTO, one codegen unit and stripped; a cold `cargo build --release --locked` took 70.4 s with 4 build jobs. `src/` is 10,912 lines of Rust with its unit tests. prec has 18 direct dependencies and 95 crates in its Linux build; the xterm.js files, the VHS themes and pito-codecs' H.264 encoder are compiled in, so it runs no encoder of yours and reads nothing from the network.
+Size and build: the Linux x86_64 binary is 5,995,872 bytes (5.7 MB; 2,557,323 bytes packed as the release's `.tar.gz`), built with fat LTO, one codegen unit and stripped; a cold `cargo build --release --locked` took 70.4 s with 4 build jobs (measured with prec 1.2.0). `src/` is 17,754 lines of Rust with its unit tests. prec has 17 direct dependencies and 105 crates in its Linux build; the xterm.js files, the VHS themes and pito-codecs' H.264 encoder are compiled in, so it runs no encoder of yours and reads nothing from the network.
 
 ## Install
 

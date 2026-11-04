@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-Every render keeps its recording as `<stem>.cast`, an asciicast v2 file. `prec render` replays a cast at any size, rate or theme without building or running the app again, and the same cast with the same flags always gives the same bytes.
+Every render keeps its recording as `<stem>.cast`, an asciicast v2 file. `prec render` replays a cast at any size, rate or theme without building or running the app again, and one prec version gives the same bytes from the same cast with the same flags.
 
 ## Record only
 
@@ -47,12 +47,14 @@ A passed value is never printed, only its variable's name. `prec render` has the
 
 ## How long it takes
 
-Re-rendering the 10-second cast of the sample app's `tour` shot on an AMD Ryzen 9 9950X (24 threads, prec 1.2.0):
+Re-rendering the 10-second cast of the sample app's `tour` shot on an AMD Ryzen 9 9950X (24 threads, prec 2.0.0):
 
-![Bars, lower is better: seconds to replay and encode a 10-second cast with prec 1.2.0: 720p 30 fps 9.2 s, 1080p 60 fps 16.9 s, 2160p 30 fps 27.8 s, 2160p 120 fps 48.6 s.](../images/rerender.png)
+![Bars, lower is better: seconds to replay and encode a 10-second cast with prec 2.0.0: 720p 30 fps 8.0 s, 1080p 60 fps 9.4 s, 2160p 30 fps 17.3 s, 2160p 120 fps 25.9 s.](../images/rerender.png)
 
-Two 720p 30 fps renders of that cast wrote the same master, sha256 `4fab0be36a0ac519…`; the second took 9.8 s.
+Two 720p 30 fps renders of that cast wrote the same master, sha256 `5bf7c84a3f09217a…`; the second took 8.0 s.
 
 ## Same bytes every time
 
-A replay steps a virtual clock, not the wall clock, and the encoder's thread count is fixed because its output follows it. So a render's master doesn't depend on how busy the machine was or how many cores it has: keep the cast, and you can make the same master again later, or a 4K one, without the app or its data.
+A replay steps a virtual clock, not the wall clock, and the encoder's thread count is fixed because its output follows it. So a render's master doesn't depend on how busy the machine was or how many cores it has: keep the cast, and with the same prec version you can make the same master again later, or a 4K one, without the app or its data.
+
+A new prec version can change the bytes, for instance when its encoder is bumped; the CHANGELOG says when. A master from one version is not the master of another, so compare hashes within one version.
