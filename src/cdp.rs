@@ -59,6 +59,17 @@ pub fn chromium() -> String {
     ]
     .into_iter()
     .find_map(|c| crate::doctor::found_in(&path, c))
+    .or_else(|| {
+        [
+            ("/Applications/Chromium.app/Contents/MacOS", "Chromium"),
+            (
+                "/Applications/Google Chrome.app/Contents/MacOS",
+                "Google Chrome",
+            ),
+        ]
+        .into_iter()
+        .find_map(|(dir, c)| crate::doctor::found_in(std::ffi::OsStr::new(dir), c))
+    })
     .map(|p| p.display().to_string())
     .unwrap_or_else(|| "chromium".into())
 }
