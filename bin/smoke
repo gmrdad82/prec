@@ -22,8 +22,13 @@ start=$(date +%s)
   --size 640x360 \
   --fps 30 \
   --theme app \
-  --out tmp/out
+  --out tmp/out 2>&1 | tee "$scratch/said"
 end=$(date +%s)
+
+if grep -qE 'prec: audio: (a daemon stopped|no .* in time)' "$scratch/said"; then
+  echo "smoke: the sound daemons did not start" >&2
+  exit 1
+fi
 
 master=$(find "$scratch/tree/tmp/out" -name '*.mp4' | head -n 1)
 manifest=$(find "$scratch/tree/tmp/out" -name '*.json' | head -n 1)

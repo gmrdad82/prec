@@ -12,7 +12,7 @@ pub const RATE: u32 = 48_000;
 pub const CHANNELS: u16 = 2;
 
 const SOCKET_PATH_MAX: usize = 107;
-const LONGEST: &str = "pulse/native";
+const LONGEST: &str = "pipewire-0-manager";
 const DISABLE: &str = "PREC_AUDIO";
 const TOOLS: [&str; 4] = ["pipewire", "wireplumber", "pw-record", "pw-dump"];
 const PULSE: &str = "pipewire-pulse";
@@ -732,6 +732,13 @@ mod tests {
                 pid: 4000
             }]
         );
+    }
+
+    #[test]
+    fn a_private_folder_fits_only_if_pipewires_longest_socket_does() {
+        let room = SOCKET_PATH_MAX - "/pipewire-0-manager".len();
+        assert!(fits(Path::new(&"a".repeat(room))));
+        assert!(!fits(Path::new(&"a".repeat(room + 1))));
     }
 
     #[test]
