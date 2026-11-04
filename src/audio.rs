@@ -409,6 +409,7 @@ impl Sound {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         self.private.apply(&mut c);
+        die_with_prec(&mut c);
         let child = crate::paths::spawn(&mut c).map_err(|e| format!("{tool}: {e}"))?;
         self.kids.push(child);
         Ok(())
@@ -451,6 +452,19 @@ impl Sound {
         })
     }
 }
+
+#[cfg(target_os = "linux")]
+fn die_with_prec(c: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    unsafe {
+        c.pre_exec(|| {
+            nix::sys::prctl::set_pdeathsig(Signal::SIGTERM).map_err(std::io::Error::from)
+        });
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn die_with_prec(_: &mut Command) {}
 
 fn names_default_sink(dump: &[u8]) -> bool {
     serde_json::from_slice::<Value>(dump).is_ok_and(|v| {

@@ -317,7 +317,16 @@ fn a_session_with_a_home_namespace_still_reaches_the_private_sockets() {
 
 #[test]
 fn an_interrupt_stops_and_reaps_every_sound_process() {
-    let Some((dir, tone_file)) = setup("i") else {
+    sound_stops_when_prec_gets("i", "TERM", Some(143));
+}
+
+#[test]
+fn a_killed_prec_leaves_no_sound_process_behind() {
+    sound_stops_when_prec_gets("k", "KILL", None);
+}
+
+fn sound_stops_when_prec_gets(tag: &str, signal: &str, code: Option<i32>) {
+    let Some((dir, tone_file)) = setup(tag) else {
         return;
     };
     let app = app(&dir, "", &tone_file);
@@ -329,10 +338,12 @@ fn an_interrupt_stops_and_reaps_every_sound_process() {
     );
     let mut child = common::spawn(command(&dir, &app, "long"), &dir);
     let suffix = format!("/sockets/p{}-0/x", child.id());
+    let near = dir.to_string_lossy().into_owned();
     let mine = |p: &common::Proc| {
         p.env.iter().any(|e| {
-            e.strip_prefix("XDG_RUNTIME_DIR=")
-                .is_some_and(|v| v.ends_with(&suffix))
+            e.strip_prefix("XDG_RUNTIME_DIR=").is_some_and(|v| {
+                v.ends_with(&suffix) || (v.starts_with(&near) && v.ends_with("/x"))
+            })
         })
     };
     let named =
@@ -344,9 +355,9 @@ fn an_interrupt_stops_and_reaps_every_sound_process() {
     for daemon in ["pipewire", "wireplumber", "pipewire-pulse", "pw-dump"] {
         assert!(running(daemon), "{daemon} is not running");
     }
-    assert!(common::signal(child.id(), "TERM"));
+    assert!(common::signal(child.id(), signal));
     let status = common::exits(&mut child, &dir);
-    assert_eq!(status.code(), Some(143), "{}", common::said(&dir));
+    assert_eq!(status.code(), code, "{}", common::said(&dir));
     let left = common::gone(Duration::from_secs(15), || {
         common::procs().into_iter().filter(|p| mine(p)).collect()
     });

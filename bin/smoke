@@ -30,7 +30,6 @@ manifest=$(find "$scratch/tree/tmp/out" -name '*.json' | head -n 1)
 [ -s "$master" ] || { echo "smoke: no master" >&2; exit 1; }
 [ -s "$manifest" ] || { echo "smoke: no manifest" >&2; exit 1; }
 
-echo "smoke: $(basename "$master") in $((end - start)) s"
 frames=$(sed -n 's/^ *"master": *\([0-9][0-9]*\),*$/\1/p' "$manifest" | head -n 1)
 [ -n "$frames" ] && [ "$frames" -gt 0 ] || { echo "smoke: manifest has no frame count" >&2; exit 1; }
 
