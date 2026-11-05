@@ -382,7 +382,7 @@ impl Backdrop {
 fn save_fast(pm: &tiny_skia::Pixmap, path: &Path) -> Result<(), String> {
     let at = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
     let mut rgb = Vec::with_capacity(pm.width() as usize * pm.height() as usize * 3);
-    for p in pm.data().chunks_exact(4) {
+    for p in pm.data().as_chunks::<4>().0 {
         rgb.extend_from_slice(&p[..3]);
     }
     let file = std::fs::File::create(path).map_err(|e| at(&e))?;
@@ -1010,7 +1010,9 @@ mod tests {
     }
 
     fn opaque(rgb: &[u8]) -> Vec<u8> {
-        rgb.chunks_exact(3)
+        rgb.as_chunks::<3>()
+            .0
+            .iter()
             .flat_map(|p| [p[0], p[1], p[2], 255])
             .collect()
     }
@@ -1041,7 +1043,7 @@ mod tests {
                             let (win, _) = dev.anchored(largest, canvas);
                             let pm = compose::background(&dev, win, [10, 20, 30], ground).unwrap();
                             assert!(
-                                pm.data().chunks_exact(4).all(|p| p[3] == 255),
+                                pm.data().as_chunks::<4>().0.iter().all(|p| p[3] == 255),
                                 "window {window} size {size:?} ground {ground:?} largest {largest:?} canvas {canvas:?}"
                             );
                         }
@@ -1073,7 +1075,7 @@ mod tests {
     fn an_opaque_pixmap_round_trips_through_a_fast_png() {
         let dir = scratch("fast-round");
         let mut pm = tiny_skia::Pixmap::new(5, 3).unwrap();
-        for (i, p) in pm.data_mut().chunks_exact_mut(4).enumerate() {
+        for (i, p) in pm.data_mut().as_chunks_mut::<4>().0.iter_mut().enumerate() {
             p.copy_from_slice(&[
                 (i * 17) as u8,
                 (i * 31 + 7) as u8,

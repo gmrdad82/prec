@@ -13,7 +13,7 @@ prec records terminal apps into exact videos and stills, part of [PITO MD](https
 | Two renders of one cast | **byte-identical** masters, same sha256; one prec version gives the same bytes on any machine |
 | Sizes and rates | any size up to **3840x2160**, at **24, 30, 48, 60 or 120 fps**, or NTSC **24000/1001, 30000/1001, 48000/1001 and 60000/1001** |
 | Binary | **5.7 MB**, stripped, fat LTO, its H.264 encoder built in (2.4 MB as the release `.tar.gz`) |
-| Code | **17,786 lines** of Rust in `src/`, unit tests included; **17** direct dependencies |
+| Code | **17,789 lines** of Rust in `src/`, unit tests included; **17** direct dependencies |
 | Cold release build | **70.4 s** with 4 build jobs (prec 1.2.0) |
 | Network | none: prec downloads nothing |
 
@@ -99,7 +99,7 @@ Re-rendering the 30 fps recording's cast, with no app run, measured on 2026-11-0
 
 A window that resizes gets a new backdrop for every grid it passes through, and prec writes each one as a fast-compressed 8-bit RGB PNG. Measured on 2026-10-23 at 1280x720 and 30 fps, against prec 1.5.2's default-compressed RGBA PNGs, over a cast that resizes 40x10 → 38x16 → 40x10 → 60x20 → 40x10 (37 backdrops; medians of 10 interleaved runs): each write takes 788 µs instead of 1,608 µs, and the files are 2.2 times smaller (613,266 bytes instead of 1,375,323). The masters are byte-identical, and the whole render stays within run-to-run noise (8.80 s against 8.63 s).
 
-Size and build: the Linux x86_64 binary is 5,996,512 bytes (5.7 MB; 2,557,953 bytes packed as the release's `.tar.gz`), built with fat LTO, one codegen unit and stripped; a cold `cargo build --release --locked` took 70.4 s with 4 build jobs (measured with prec 1.2.0). `src/` is 17,786 lines of Rust with its unit tests. prec has 17 direct dependencies and 105 crates in its Linux build; the xterm.js files, the VHS themes and pito-codecs' H.264 encoder are compiled in, so it runs no encoder of yours and reads nothing from the network.
+Size and build: the Linux x86_64 binary is 5,996,512 bytes (5.7 MB; 2,557,953 bytes packed as the release's `.tar.gz`), built with fat LTO, one codegen unit and stripped; a cold `cargo build --release --locked` took 70.4 s with 4 build jobs (measured with prec 1.2.0). `src/` is 17,789 lines of Rust with its unit tests. prec has 17 direct dependencies and 105 crates in its Linux build; the xterm.js files, the VHS themes and pito-codecs' H.264 encoder are compiled in, so it runs no encoder of yours and reads nothing from the network.
 
 ## Install
 

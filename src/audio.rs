@@ -525,9 +525,11 @@ fn capture(out: impl Read, clock: Instant) -> Capture {
         start = start.min(at - got / RATE as f64);
     }
     let samples = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .take(bytes.len() / width * CHANNELS as usize)
-        .map(|b| i16::from_le_bytes([b[0], b[1]]))
+        .map(|b| i16::from_le_bytes(*b))
         .collect();
     Capture {
         start: if start.is_finite() { start } else { 0.0 },

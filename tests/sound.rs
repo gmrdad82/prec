@@ -138,7 +138,7 @@ fn heard(master: &Path) -> Vec<f32> {
         let data = &bytes[s.offset as usize..s.offset as usize + s.size as usize];
         let buf = dec.decode_frame(data).unwrap();
         assert_eq!(buf.channels, 2);
-        left.extend(buf.samples.chunks_exact(2).map(|f| f[0]));
+        left.extend(buf.samples.as_chunks::<2>().0.iter().map(|f| f[0]));
     }
     let skip = t.edits[0].media_time as usize;
     let len = t.edits[0].segment_duration as usize;

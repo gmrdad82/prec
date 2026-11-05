@@ -1113,12 +1113,11 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
     std::fs::create_dir_all(&stage).map_err(|e| format!("{}: {e}", stage.display()))?;
     let mut files: Vec<Value> = vec![];
     let mut encodes: Vec<Value> = vec![];
-    let frames_record;
     let manifest_stem;
     let rendered;
     let render_started = Instant::now();
     paths::settle();
-    match clip {
+    let frames_record = match clip {
         None => {
             let at = timeline.shots.last().copied().unwrap_or(timeline.end);
             eprintln!(
@@ -1169,7 +1168,7 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
                     json!({"role": "web", "size": [t.width, height], "web": t.px}),
                 )?);
             }
-            frames_record = json!({"still_at": (at * 1e6).round() / 1e6, "exact": true});
+            json!({"still_at": (at * 1e6).round() / 1e6, "exact": true})
         }
         Some((n, order, fade, src, slot)) => {
             poster_slot = Some(slot);
@@ -1276,7 +1275,7 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
                 );
                 count
             };
-            frames_record = json!({
+            json!({
                 "master": if opts.no_encode { Value::Null } else { json!(count) },
                 "seconds": pl.fps.seconds(count),
                 "exact": true,
@@ -1288,9 +1287,9 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
                 "dropped": 0,
                 "closure": closure.to_json(),
                 "render_seconds": (render_started.elapsed().as_secs_f64() * 10.0).round() / 10.0,
-            });
+            })
         }
-    }
+    };
     if let Some(src) = &heard {
         let staged = stage.join(&src.file);
         std::fs::write(&staged, src.bytes()).map_err(|e| format!("{}: {e}", staged.display()))?;
