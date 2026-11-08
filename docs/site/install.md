@@ -33,6 +33,16 @@ cargo install --locked --git https://github.com/gmrdad82/prec --tag vX.Y.Z prec
 
 `prec --version` prints `prec <x.y.z>`.
 
+## The agent skill
+
+Each release archive carries `skills/prec/`, a skill that teaches coding agents to set up and render with prec. To link it by hand, unpack the archive and run, for each agent you use (`~/.agents`, `~/.claude`, `~/.codex` or `~/.pi/agent`):
+
+```sh
+mkdir -p ~/.claude/skills && ln -sfn "$PWD/skills/prec" ~/.claude/skills/prec
+```
+
+From a clone, `bin/install` builds prec, puts it at `~/.local/opt/prec/prec`, links `~/.local/bin/prec` and links the skill into all four.
+
 ## Prerequisites
 
 prec drives tools you install yourself:

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+root=$PWD
+
+cargo build --release --locked --bin prec
+
+mkdir -p "$HOME/.local/opt/prec" "$HOME/.local/bin"
+install -m 755 target/release/prec "$HOME/.local/opt/prec/prec.new"
+mv -f "$HOME/.local/opt/prec/prec.new" "$HOME/.local/opt/prec/prec"
+ln -sfn "$HOME/.local/opt/prec/prec" "$HOME/.local/bin/prec"
+
+for home in "$HOME/.agents" "$HOME/.claude" "$HOME/.codex" "$HOME/.pi/agent"; do
+  mkdir -p "$home/skills"
+  ln -sfn "$root/skills/prec" "$home/skills/prec"
+done
+
+echo "installed $("$HOME/.local/bin/prec" --version)"
