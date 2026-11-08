@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## v2.2.0 — 2026-11-08
+
+### Added
+
+- prec ships an agent skill (`skills/prec`): your AI coding agent knows how to set up a recipe, write tapes, pick a theme, keep private data out and render clips and stills. `bin/install` links it into Claude Code, Codex, Pi and other agents' skill folders.
 
 ### Changed
 
