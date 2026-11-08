@@ -3,16 +3,77 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 root=$PWD
 
+opt="$HOME/.local/opt/prec"
+copy="$opt/skills/prec"
+marker=.prec-skill
+
+usage() {
+  echo "usage: bin/install [--uninstall]" >&2
+  exit 2
+}
+
+[ "$#" -le 1 ] || usage
+mode=install
+case "${1-}" in
+  "") ;;
+  --uninstall) mode=uninstall ;;
+  *) usage ;;
+esac
+
+homes=("$HOME/.agents/skills" "$HOME/.claude/skills")
+[ -d "$HOME/.codex" ] && homes+=("$HOME/.codex/skills")
+[ -d "$HOME/.pi" ] && homes+=("$HOME/.pi/agent/skills")
+
+ours() {
+  local link=$1 target
+  [ -L "$link" ] || return 1
+  target=$(readlink "$link")
+  [ "$target" = "$copy" ] || [ "$target" = "$root/skills/prec" ]
+}
+
+if [ "$mode" = uninstall ]; then
+  for dir in "$HOME/.agents/skills" "$HOME/.claude/skills" "$HOME/.codex/skills" "$HOME/.pi/agent/skills"; do
+    link=$dir/prec
+    if ours "$link"; then
+      rm -f "$link"
+    elif [ -e "$link" ] || [ -L "$link" ]; then
+      echo "left $link alone: it is not the prec skill this install placed"
+    fi
+  done
+  rm -rf "$copy"
+  rmdir "$opt/skills" 2>/dev/null || true
+  if [ "$(readlink "$HOME/.local/bin/prec" 2>/dev/null)" = "$opt/prec" ]; then
+    rm -f "$HOME/.local/bin/prec"
+  fi
+  rm -f "$opt/prec"
+  rmdir "$opt" 2>/dev/null || true
+  echo "uninstalled prec"
+  exit 0
+fi
+
 cargo build --release --locked --bin prec
 
-mkdir -p "$HOME/.local/opt/prec" "$HOME/.local/bin"
-install -m 755 target/release/prec "$HOME/.local/opt/prec/prec.new"
-mv -f "$HOME/.local/opt/prec/prec.new" "$HOME/.local/opt/prec/prec"
-ln -sfn "$HOME/.local/opt/prec/prec" "$HOME/.local/bin/prec"
+mkdir -p "$opt/skills" "$HOME/.local/bin"
+install -m 755 target/release/prec "$opt/prec.new"
+mv -f "$opt/prec.new" "$opt/prec"
+ln -sfn "$opt/prec" "$HOME/.local/bin/prec"
 
-for home in "$HOME/.agents" "$HOME/.claude" "$HOME/.codex" "$HOME/.pi/agent"; do
-  mkdir -p "$home/skills"
-  ln -sfn "$root/skills/prec" "$home/skills/prec"
+rm -rf "$opt/skills/prec.new"
+cp -R skills/prec "$opt/skills/prec.new"
+: >"$opt/skills/prec.new/$marker"
+rm -rf "$copy"
+mv "$opt/skills/prec.new" "$copy"
+
+for dir in "${homes[@]}"; do
+  mkdir -p "$dir"
+  link=$dir/prec
+  if [ -e "$link" ] || [ -L "$link" ]; then
+    if ! ours "$link"; then
+      echo "left $link alone: it is not the prec skill this install placed"
+      continue
+    fi
+  fi
+  ln -sfn "$copy" "$link"
 done
 
 echo "installed $("$HOME/.local/bin/prec" --version)"

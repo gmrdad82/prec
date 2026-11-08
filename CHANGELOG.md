@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- `bin/install` copies the skill beside the installed binary (`~/.local/opt/prec/skills/prec`) and links that copy, never the checkout, into `~/.agents/skills` and `~/.claude/skills`, plus `~/.codex/skills` and `~/.pi/agent/skills` only when `~/.codex` or `~/.pi` exists. A `prec` folder there that is not ours is left alone with one line. `bin/install --uninstall` removes the links, the copy and the binary it placed. Release archives carry `skills/prec/` beside the binary.
+
 ## v2.1.0 — 2026-11-04
 
 ### Added

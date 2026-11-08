@@ -35,13 +35,26 @@ cargo install --locked --git https://github.com/gmrdad82/prec --tag vX.Y.Z prec
 
 ## The agent skill
 
-Each release archive carries `skills/prec/`, a skill that teaches coding agents to set up and render with prec. To link it by hand, unpack the archive and run, for each agent you use (`~/.agents`, `~/.claude`, `~/.codex` or `~/.pi/agent`):
+Each Linux and macOS release archive carries `prec` and `skills/prec/`, a skill that teaches coding agents to set up and render with prec. `bin/install` from a clone builds prec, puts it at `~/.local/opt/prec/prec`, links `~/.local/bin/prec`, copies the skill to `~/.local/opt/prec/skills/prec` and links that copy into the agents' skill folders:
+
+| Agent | Skill folder | Created |
+| --- | --- | --- |
+| Claude Code | `~/.claude/skills` | always |
+| Codex | `~/.codex/skills` | only when `~/.codex` exists |
+| Pi | `~/.pi/agent/skills` | only when `~/.pi` exists |
+| Other agents (the shared folder) | `~/.agents/skills` | always |
+
+A `prec` folder there that is not prec's own link is left alone, with one line saying so. `bin/install --uninstall` removes the links, the copy and the binary it placed.
+
+To do the same by hand from a release archive, unpack it to `~/.local/opt/prec` and link the skill into each folder you use:
 
 ```sh
-mkdir -p ~/.claude/skills && ln -sfn "$PWD/skills/prec" ~/.claude/skills/prec
+mkdir -p ~/.local/opt/prec ~/.claude/skills
+tar -xz -C ~/.local/opt/prec -f prec-vX.Y.Z-linux-x86_64.tar.gz
+ln -sfn ~/.local/opt/prec/skills/prec ~/.claude/skills/prec
 ```
 
-From a clone, `bin/install` builds prec, puts it at `~/.local/opt/prec/prec`, links `~/.local/bin/prec` and links the skill into all four.
+There is no native Windows build, so there is no Windows skill copy.
 
 ## Prerequisites
 
