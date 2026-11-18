@@ -32,22 +32,7 @@ fn files_under(root: &Path, skip: &[&Path]) -> Vec<PathBuf> {
 }
 
 fn png_texts(path: &Path) -> Vec<String> {
-    let bytes = std::fs::read(path).unwrap();
-    let reader = png::Decoder::new(std::io::Cursor::new(bytes))
-        .read_info()
-        .unwrap();
-    let info = reader.info();
-    let mut texts = Vec::new();
-    for t in &info.uncompressed_latin1_text {
-        texts.push(format!("{}={}", t.keyword, t.text));
-    }
-    for t in &info.compressed_latin1_text {
-        texts.push(format!("{}={}", t.keyword, t.get_text().unwrap()));
-    }
-    for t in &info.utf8_text {
-        texts.push(format!("{}={}", t.keyword, t.get_text().unwrap()));
-    }
-    texts
+    common::picture::texts(path)
 }
 
 fn contains(hay: &[u8], needle: &str) -> bool {

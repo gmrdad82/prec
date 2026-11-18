@@ -11,6 +11,7 @@ mod fps;
 mod home;
 mod mask;
 mod paths;
+mod picture;
 mod private;
 mod record;
 mod render;

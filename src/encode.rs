@@ -1,9 +1,13 @@
 use crate::fps::Fps;
+use crate::picture::read_rgb8;
 use crate::sound::{self, Bed, Tune};
 use pito_codecs::filter::{ColorSpec, Order, Packed, packed_to_yuv};
 use pito_codecs::h264::{Color, Encoder, EncoderConfig, Preset, Profile};
 use pito_codecs::media::{Bitstream, Frame, Packet, PixelFormat, Rate, Rgba, TimeBase};
 use pito_codecs::mp4::{AvcConfig, Edit, Reader, SampleEntry, TrackConfig, TrackKind, Writer};
+use pito_codecs::png::{
+    Color as PngColor, Compression, Options as PngOptions, Picture, encode_picture,
+};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -12,7 +16,7 @@ use std::sync::{Condvar, Mutex};
 
 pub const COLOR_709: &str = "BT.709 primaries, transfer and matrix, limited range (SDR)";
 pub const LANCZOS: &str = "Lanczos3 in linear light";
-pub const CODECS: &str = "3.1.0";
+pub const CODECS: &str = "5.1.0";
 const THREADS: usize = 16;
 const CRF: u8 = 14;
 const B_FRAMES: u8 = 0;
@@ -192,6 +196,7 @@ pub fn master(
             threads: THREADS,
             bitstream: Bitstream::LengthPrefixed,
             color: Color::BT709,
+            sar: (1, 1),
         })
         .map_err(|e| named(&e))?;
         let avc = AvcConfig::parse(&enc.avcc()).map_err(|e| named(&e))?;
@@ -369,77 +374,34 @@ pub fn atomic_file(
 }
 
 pub fn poster(frame: &Path, output: &Path) -> Result<(), String> {
-    let img = image::open(frame)
-        .map_err(|e| format!("{}: {e}", frame.display()))?
-        .to_rgb8();
-    write_png8(output, [img.width(), img.height()], img.as_raw())
+    let img = read_rgb8(frame)?;
+    write_png8(output, [img.width, img.height], &img.data)
 }
 
-fn png_to<W: Write>(
-    out: W,
-    size: [u32; 2],
-    depth: png::BitDepth,
-    data: &[u8],
-) -> Result<(), String> {
-    let mut enc = png::Encoder::new(out, size[0], size[1]);
-    enc.set_color(png::ColorType::Rgb);
-    enc.set_depth(depth);
-    enc.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
-    let mut w = enc.write_header().map_err(|e| e.to_string())?;
-    w.write_image_data(data).map_err(|e| e.to_string())?;
-    w.finish().map_err(|e| e.to_string())
+fn png_to<W: Write>(mut out: W, size: [u32; 2], depth: u8, data: Vec<u8>) -> Result<(), String> {
+    let picture = Picture {
+        width: size[0],
+        height: size[1],
+        color: PngColor::Rgb,
+        depth,
+        data,
+    };
+    let options = PngOptions {
+        compression: Compression::Balanced,
+        srgb: Some(0),
+        ..PngOptions::default()
+    };
+    let bytes = encode_picture(&picture, &options).map_err(|e| e.to_string())?;
+    out.write_all(&bytes).map_err(|e| e.to_string())
 }
 
 pub fn write_png8(path: &Path, size: [u32; 2], rgb: &[u8]) -> Result<(), String> {
-    atomic_file(path, |w| png_to(w, size, png::BitDepth::Eight, rgb))
+    atomic_file(path, |w| png_to(w, size, 8, rgb.to_vec()))
 }
 
 pub fn write_png16(path: &Path, size: [u32; 2], rgb8: &[u8]) -> Result<(), String> {
     let wide: Vec<u8> = rgb8.iter().flat_map(|&v| [v, v]).collect();
-    atomic_file(path, |w| png_to(w, size, png::BitDepth::Sixteen, &wide))
-}
-
-fn to8(v: u16) -> u8 {
-    ((v as u32 * 255 + 32767) / 65535) as u8
-}
-
-fn lin(v: f32) -> f32 {
-    if v <= 0.04045 {
-        v / 12.92
-    } else {
-        ((v + 0.055) / 1.055).powf(2.4)
-    }
-}
-
-fn delin(v: f32) -> f32 {
-    let v = v.clamp(0.0, 1.0);
-    if v <= 0.003_130_8 {
-        v * 12.92
-    } else {
-        1.055 * v.powf(1.0 / 2.4) - 0.055
-    }
-}
-
-pub type Linear = image::ImageBuffer<image::Rgb<f32>, Vec<f32>>;
-
-pub fn linear(rgb8: &image::RgbImage) -> Linear {
-    let table: [f32; 256] = std::array::from_fn(|v| lin(v as f32 / 255.0));
-    let (w, h) = rgb8.dimensions();
-    let data = rgb8.as_raw().iter().map(|&v| table[v as usize]).collect();
-    Linear::from_raw(w, h, data).expect("linear image")
-}
-
-pub fn resize8(linear: &Linear, size: [u32; 2]) -> Vec<u8> {
-    image::imageops::resize(
-        linear,
-        size[0],
-        size[1],
-        image::imageops::FilterType::Lanczos3,
-    )
-    .into_raw()
-    .into_iter()
-    .map(|v| to8((delin(v) * 65535.0).round() as u16))
-    .collect()
+    atomic_file(path, |w| png_to(w, size, 16, wide))
 }
 
 pub fn file_entry(dir: &Path, path: &Path, what: &str, extra: Value) -> Result<Value, String> {
@@ -511,7 +473,7 @@ mod tests {
         std::fs::write(&target, b"previous").unwrap();
         let rgb: Vec<u8> = (0..64 * 64 * 3).map(|i| (i * 7 % 251) as u8).collect();
         let rgb16: Vec<u16> = rgb.iter().map(|&v| v as u16 * 257).collect();
-        assert!(png_to(Short(100), [64, 64], png::BitDepth::Eight, &rgb).is_err());
+        assert!(png_to(Short(100), [64, 64], 8, rgb.clone()).is_err());
         atomic_file(&target, |w| {
             w.write_all(b"half").map_err(|e| e.to_string())?;
             Err("disk full".to_string())
@@ -521,11 +483,45 @@ mod tests {
         assert_eq!(names(&dir), ["a.png"]);
         write_png8(&target, [64, 64], &rgb).unwrap();
         assert_ne!(std::fs::read(&target).unwrap(), b"previous");
-        assert_eq!(image::open(&target).unwrap().to_rgb8().into_raw(), rgb);
+        assert_eq!(read_rgb8(&target).unwrap().data, rgb);
         let big = dir.join("b.png");
         write_png16(&big, [64, 64], &rgb).unwrap();
-        assert_eq!(image::open(&big).unwrap().to_rgb16().into_raw(), rgb16);
+        assert_eq!(png16(&big), rgb16);
         assert_eq!(names(&dir), ["a.png", "b.png"]);
+    }
+
+    #[test]
+    fn a_16_bit_still_written_and_read_back_is_sample_for_sample_itself() {
+        let dir = work("sixteen-story");
+        let (w, h) = (96u32, 64u32);
+        let mut rgb = Vec::new();
+        for y in 0..h {
+            for x in 0..w {
+                let i = y * w + x;
+                rgb.extend_from_slice(&[
+                    (i % 256) as u8,
+                    ((i / 3 + y) % 256) as u8,
+                    (255 - (i * 5 + x) % 256) as u8,
+                ]);
+            }
+        }
+        for v in 0..=255u8 {
+            let at = (v as usize) * 3;
+            rgb[at] = v;
+            rgb[at + 1] = 255 - v;
+            rgb[at + 2] = v;
+        }
+        let path = dir.join("still.png");
+        write_png16(&path, [w, h], &rgb).unwrap();
+        let want: Vec<u16> = rgb.iter().map(|&v| v as u16 * 257).collect();
+        assert_eq!(png16(&path), want);
+        assert_eq!(png_info(&path), (16, [w, h], true));
+        assert_eq!(read_rgb8(&path).unwrap().data, rgb);
+        let again = dir.join("again.png");
+        let back = read_rgb8(&path).unwrap();
+        write_png16(&again, [back.width, back.height], &back.data).unwrap();
+        assert_eq!(png16(&again), want);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -653,13 +649,21 @@ mod tests {
         assert!(!temp_of(&target).exists());
     }
 
-    fn png_info(path: &Path) -> (png::BitDepth, [u32; 2], bool) {
+    fn png_info(path: &Path) -> (u8, [u32; 2], bool) {
         let bytes = std::fs::read(path).unwrap();
-        let r = png::Decoder::new(std::io::Cursor::new(bytes))
-            .read_info()
+        let info = pito_codecs::png::info(&bytes).unwrap();
+        assert_eq!(info.color, PngColor::Rgb);
+        let meta = pito_codecs::png::metadata(&bytes).unwrap();
+        (info.depth, [info.width, info.height], meta.srgb.is_some())
+    }
+
+    fn png16(path: &Path) -> Vec<u16> {
+        let bytes = std::fs::read(path).unwrap();
+        let picture = pito_codecs::png::Decoder::new()
+            .decode_picture(&bytes, pito_codecs::png::Transform::Identity)
             .unwrap();
-        let i = r.info();
-        (i.bit_depth, [i.width, i.height], i.srgb.is_some())
+        assert_eq!((picture.color, picture.depth), (PngColor::Rgb, 16));
+        picture.samples16()
     }
 
     #[test]
@@ -813,34 +817,17 @@ mod tests {
         let rgb: Vec<u8> = (0..16 * 8 * 3).map(|i| (i * 13 % 256) as u8).collect();
         let master = dir.join("m.png");
         write_png16(&master, [16, 8], &rgb).unwrap();
-        assert_eq!(png_info(&master), (png::BitDepth::Sixteen, [16, 8], true));
+        assert_eq!(png_info(&master), (16, [16, 8], true));
         let delivery = dir.join("d.png");
         write_png8(&delivery, [16, 8], &rgb).unwrap();
-        assert_eq!(png_info(&delivery), (png::BitDepth::Eight, [16, 8], true));
+        assert_eq!(png_info(&delivery), (8, [16, 8], true));
         let poster_png = dir.join("p.png");
         poster(&master, &poster_png).unwrap();
-        assert_eq!(png_info(&poster_png), (png::BitDepth::Eight, [16, 8], true));
-        assert_eq!(image::open(&poster_png).unwrap().to_rgb8().into_raw(), rgb);
+        assert_eq!(png_info(&poster_png), (8, [16, 8], true));
+        assert_eq!(read_rgb8(&poster_png).unwrap().data, rgb);
         let e = poster(&dir.join("gone.png"), &dir.join("q.png")).unwrap_err();
         assert!(e.contains("gone.png"), "{e}");
         assert!(!dir.join("q.png").exists());
-    }
-
-    #[test]
-    fn a_resize_in_linear_light_keeps_a_flat_colour_and_the_size_asked() {
-        for v in [0u8, 1, 30, 128, 254, 255] {
-            let img = image::RgbImage::from_pixel(20, 10, image::Rgb([v, v / 2, 255 - v]));
-            let out = resize8(&linear(&img), [7, 3]);
-            assert_eq!(out.len(), 7 * 3 * 3);
-            for px in out.chunks(3) {
-                assert_eq!(px, [v, v / 2, 255 - v], "{v}");
-            }
-        }
-        assert_eq!(to8(0), 0);
-        assert_eq!(to8(65535), 255);
-        assert_eq!(to8(257 * 100), 100);
-        assert_eq!(to8(257 * 100 + 128), 100);
-        assert_eq!(to8(257 * 100 + 129), 101);
     }
 
     #[test]

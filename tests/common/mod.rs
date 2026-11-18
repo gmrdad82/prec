@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod picture;
 pub mod video;
 
 use serde_json::{Value, json};

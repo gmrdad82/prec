@@ -1,5 +1,6 @@
 mod common;
 
+use common::picture::{png_info, rgb8, rgb16};
 use common::{paint, tree, video};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -95,19 +96,8 @@ fn every_file_is_what_the_manifest_says(m: &Value, dir: &Path) {
     assert!(left.is_empty(), "{left:?}");
 }
 
-fn png_info(path: &Path) -> (png::BitDepth, [u32; 2], bool) {
-    let bytes = std::fs::read(path).unwrap();
-    let r = png::Decoder::new(std::io::Cursor::new(bytes))
-        .read_info()
-        .unwrap();
-    let i = r.info();
-    (i.bit_depth, [i.width, i.height], i.srgb.is_some())
-}
-
 fn pixel(path: &Path, x: u32, y: u32) -> [u8; 3] {
-    let img = image::open(path).unwrap().to_rgb8();
-    let p = img.get_pixel(x, y);
-    [p[0], p[1], p[2]]
+    rgb8(path).pixel(x, y)
 }
 
 fn hex(s: &str) -> [u8; 3] {
@@ -188,22 +178,15 @@ fn a_still_writes_a_16_bit_master_and_8_bit_deliveries_on_the_theme_background()
 
     let master = dir.join(entry(&manifest, "master")["file"].as_str().unwrap());
     assert_eq!(master, dir.join("demo-still-covstill-320x180.master.png"));
-    assert_eq!(
-        png_info(&master),
-        (png::BitDepth::Sixteen, [320, 180], true)
-    );
-    let wide = image::open(&master).unwrap().to_rgb16();
-    let corner = wide.get_pixel(0, 0);
-    assert_eq!(
-        [corner[0], corner[1], corner[2]],
-        BG.map(|v| v as u16 * 257)
-    );
+    assert_eq!(png_info(&master), (16, [320, 180], true));
+    let wide = rgb16(&master);
+    assert_eq!(wide.pixel(0, 0), BG.map(|v| v as u16 * 257));
     for (name, size) in [
         ("demo-still-covstill-320x180.png", [320, 180]),
         ("demo-still-covstill-160x90.png", [160, 90]),
     ] {
         let p = dir.join(name);
-        assert_eq!(png_info(&p), (png::BitDepth::Eight, size, true), "{name}");
+        assert_eq!(png_info(&p), (8, size, true), "{name}");
         for (x, y) in [(0, 0), (size[0] - 1, size[1] - 1)] {
             assert!(distance(pixel(&p, x, y), BG) <= 1, "{name} ({x}, {y})");
         }
@@ -220,11 +203,16 @@ fn a_still_writes_a_16_bit_master_and_8_bit_deliveries_on_the_theme_background()
         BG
     );
     assert_eq!(
-        image::open(dir.join("demo-still-covstill-320x180.png"))
-            .unwrap()
-            .to_rgb8()
-            .into_raw(),
-        image::open(&master).unwrap().to_rgb8().into_raw()
+        rgb8(&dir.join("demo-still-covstill-320x180.png")).data,
+        rgb8(&master).data
+    );
+    assert_eq!(
+        rgb16(&master).data,
+        rgb8(&dir.join("demo-still-covstill-320x180.png"))
+            .data
+            .iter()
+            .map(|&v| v as u16 * 257)
+            .collect::<Vec<u16>>()
     );
     let cast = dir.join(entry(&manifest, "cast")["file"].as_str().unwrap());
     assert_eq!(cast, dir.join("demo-still-covstill-320x180.cast"));
@@ -640,7 +628,7 @@ fn a_clip_writes_its_master_poster_and_manifest_at_a_film_rate() {
     );
 
     let poster = dir.join(format!("{stem}.poster.png"));
-    assert_eq!(png_info(&poster), (png::BitDepth::Eight, [320, 180], true));
+    assert_eq!(png_info(&poster), (8, [320, 180], true));
     assert_eq!(pixel(&poster, 0, 0), BG);
     assert_eq!(entry(&manifest, "poster")["frame"].as_u64(), Some(0));
     let encodes = manifest["encodes"].as_array().unwrap();
