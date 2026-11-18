@@ -1,5 +1,6 @@
 mod common;
 
+use common::picture::rgb8;
 use common::{paint, tree, video};
 use pito_codecs::h264::{Color, Encoder, EncoderConfig, Preset, Profile};
 use pito_codecs::media::{Bitstream, Frame, PixelFormat, Rate, TimeBase};
@@ -78,9 +79,7 @@ fn entry<'a>(m: &'a Value, role: &str) -> &'a Value {
 }
 
 fn poster_px(m: &Value, dir: &Path) -> [u8; 3] {
-    let poster = image::open(role(m, dir, "poster")).unwrap().to_rgb8();
-    let p = poster.get_pixel(SIZE[0] / 2, SIZE[1] / 2);
-    [p[0], p[1], p[2]]
+    rgb8(&role(m, dir, "poster")).pixel(SIZE[0] / 2, SIZE[1] / 2)
 }
 
 fn stamp(path: &Path, key: &str, value: Value) {
@@ -694,6 +693,7 @@ fn encoded(path: &Path, frames: &[Frame], size: [u32; 2]) {
         threads: 1,
         bitstream: Bitstream::LengthPrefixed,
         color: Color::BT709,
+        sar: (1, 1),
     })
     .unwrap();
     let avc = AvcConfig::parse(&enc.avcc()).unwrap();

@@ -1,5 +1,6 @@
 mod common;
 
+use common::picture::rgb8;
 use common::video;
 
 use serde_json::{Value, json};
@@ -251,9 +252,9 @@ fn a_still_taken_after_a_resize_shows_the_smaller_window() {
         .find(|f| f["role"] == "master")
         .and_then(|f| f["file"].as_str())
         .unwrap();
-    let img = image::open(out.join(master)).unwrap().to_rgb8();
-    assert_eq!(img.dimensions(), (SIZE[0], SIZE[1]));
-    let e = edges(img.as_raw(), SIZE);
+    let img = rgb8(&out.join(master));
+    assert_eq!([img.width, img.height], SIZE);
+    let e = edges(&img.data, SIZE);
     let full = SIZE[0] - 2 * e.left;
     let small = e.right - e.left;
     assert!(small * 10 < full * 7, "{small} of {full}");

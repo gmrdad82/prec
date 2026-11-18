@@ -9,10 +9,16 @@ these third-party files, compiled in, each under its own MIT licence below:
   vendored as published; assets/xterm/VERSIONS lists their sha256.
 - assets/vhs-themes.json: the built-in theme set of VHS v0.11.0
   (https://github.com/charmbracelet/vhs), extracted verbatim.
-- pito-codecs 3.1.0 (https://github.com/gmrdad82/pito-codecs, tag v3.1.0,
-  commit 082c1889a56147dc61f7d5fc01ec80f6af161c38), compiled in with its
-  h264, mp4, filter and png parts to encode clip masters; its MIT licence and
-  the notices of the work it adapts are copied verbatim at the end of this file.
+- pito-codecs 5.1.0 (https://github.com/gmrdad82/pito-codecs, tag v5.1.0,
+  commit b7de0baf3617b75f2251b402188268cfdd278f33), compiled in with its
+  h264, mp4, aac, filter and png parts to encode clip masters and to read and
+  write PNG stills; its MIT licence and the notices of the work it adapts are
+  copied verbatim after this list.
+- src/picture.rs: the Lanczos3 resampling of image 0.25.10
+  (https://github.com/image-rs/image, src/imageops/sample.rs: the kernel, the
+  weights per output sample, and the vertical pass before the horizontal one),
+  by The image-rs Developers, MIT OR Apache-2.0, taken here under the MIT
+  terms, which are copied at the end of this file.
 
 The images in docs/images/ illustrate the README and the docs bundle. The
 GIFs record.gif and typing.gif are recorded by prec from this repository's own
@@ -124,7 +130,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
------ pito-codecs 3.1.0 LICENSE
+----- pito-codecs 5.1.0 LICENSE
 
 MIT License
 
@@ -148,7 +154,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
------ pito-codecs 3.1.0 NOTICE
+----- pito-codecs 5.1.0 NOTICE
 
 Parts of this package are adapted from FilmCraft
 (https://github.com/storytold/filmcraft, tag v0.6.0, commit 2ff3f5e266838700c292a35aaf762e3d4dcef980),
@@ -188,7 +194,7 @@ Adapted modules (one line per module, filled in by each task):
 - src/gpu/nvenc/: from crates/platform/src/nvenc (ffi, session, device, HEVC).
 - src/gpu/videotoolbox/: from crates/platform/src/videotoolbox.rs and videotoolbox_encode.rs.
 - src/gpu/media_foundation/: from crates/platform/src/media_foundation and crates/platform/src/annexb.rs.
-- src/filter/: the EBU R128 meter (K-weighting filters, gating histogram, loudness range) and the true-peak polyphase oversampler from crates/audio-dsp; the rest is new, the spectrogram in src/filter/spectrum.rs included, with its colour stops sampled from matplotlib's inferno colour map (CC0 1.0, Nathaniel J. Smith and Stefan van der Walt) and its 5x7 glyphs taken from this package's bench charts.
+- src/loudness.rs and src/filter/: the EBU R128 meter (K-weighting filters, gating, loudness range) and the Kaiser polyphase oversampler of the limiter from crates/audio-dsp; the true-peak interpolator, gating and loudness range of `LoudnessMeter::ebur128` follow ebur128 0.1.10, credited below; the rest is new, the spectrogram in src/filter/spectrum.rs included, with its colour stops sampled from matplotlib's inferno colour map (CC0 1.0, Nathaniel J. Smith and Stefan van der Walt) and its 5x7 glyphs taken from this package's bench charts.
 - src/vp9/: the VP9 decoder from crates/vp9 (header and superframe parsing, boolean decoder, probability adaptation, tiles, prediction, transforms, loop filter, frame threading); the shared Frame and Packet front and the bit reader (from crates/bitstream) are adapted.
 - src/opus/: the decoder (SILK, CELT, hybrid, multistream, OpusHead) from crates/opus; the range encoder, the FFT butterflies and the Ogg reader and writer are new.
 - src/mkv/: the Matroska and WebM reader (EBML, lacing, Cues, damage resync) from crates/matroska; the writer, remux and MP4 to MKV are reworked or new.
@@ -1550,3 +1556,58 @@ which carries this notice:
     Sun Microsystems, Inc.
     2550 Garcia Avenue
     Mountain View, California 94043
+
+The true-peak interpolator, the gating and the loudness range of
+`LoudnessMeter::ebur128` in src/loudness.rs follow ebur128 0.1.10 (https://github.com/sdroege/ebur128,
+src/interp.rs, src/true_peak.rs and src/history.rs), a Rust port of
+libebur128, licensed MIT; the meter then reads the same numbers as that crate, which
+apps use today. Its notice:
+
+Copyright (c) 2011 Jan Kokemüller
+Copyright (c) 2020 Sebastian Dröge <sebastian@centricular.com>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+----- image 0.25.10 LICENSE-MIT
+
+MIT License
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.

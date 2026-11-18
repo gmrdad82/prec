@@ -6,6 +6,7 @@ use crate::font;
 use crate::fps::Fps;
 use crate::home::Ns;
 use crate::paths;
+use crate::picture;
 use crate::private;
 use crate::record::{self, Cast, Timeline};
 use crate::replay::{self, Look, Take};
@@ -1133,12 +1134,10 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
                 work,
             )?;
             let still = rendered.frames.first().ok_or("the replay took no still")?;
-            let img = image::open(still)
-                .map_err(|e| format!("{}: {e}", still.display()))?
-                .to_rgb8();
+            let img = picture::read_rgb8(still)?;
             manifest_stem = stem_of(pl.master_size, None);
             let master_path = stage.join(format!("{manifest_stem}.master.png"));
-            encode::write_png16(&master_path, pl.master_size, img.as_raw())?;
+            encode::write_png16(&master_path, pl.master_size, &img.data)?;
             files.push(encode::file_entry(
                 &stage,
                 &master_path,
@@ -1156,7 +1155,7 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
                     json!({"size": [s[0], s[1]]}),
                 )?);
             }
-            let (w, h) = img.dimensions();
+            let (w, h) = (img.width, img.height);
             for t in &web {
                 let height = ((h as f64 * t.width as f64 / w as f64).round() as u32).max(1);
                 let p = stage.join(format!("{}.png", t.name));
@@ -1403,14 +1402,14 @@ pub fn render_cast(cast_path: &Path, opts: &Opts) -> Result<PathBuf, String> {
 
 fn derive_png(
     path: &Path,
-    img: &image::RgbImage,
-    linear: &OnceCell<encode::Linear>,
+    img: &picture::Rgb8,
+    linear: &OnceCell<picture::Linear>,
     size: [u32; 2],
 ) -> Result<(), String> {
-    if size == [img.width(), img.height()] {
-        return encode::write_png8(path, size, img.as_raw());
+    if size == [img.width, img.height] {
+        return encode::write_png8(path, size, &img.data);
     }
-    let rgb = encode::resize8(linear.get_or_init(|| encode::linear(img)), size);
+    let rgb = picture::resize8(linear.get_or_init(|| picture::linear(img)), size);
     encode::write_png8(path, size, &rgb)
 }
 
@@ -2311,19 +2310,28 @@ mod tests {
     #[test]
     fn a_derived_png_at_the_master_size_is_the_master_and_a_smaller_one_is_resampled() {
         let w = work("derive");
-        let img =
-            image::RgbImage::from_fn(40, 20, |x, y| image::Rgb([x as u8 * 6, y as u8 * 12, 77]));
+        let mut data = Vec::new();
+        for y in 0..20u32 {
+            for x in 0..40u32 {
+                data.extend_from_slice(&[x as u8 * 6, y as u8 * 12, 77]);
+            }
+        }
+        let img = picture::Rgb8 {
+            width: 40,
+            height: 20,
+            data,
+        };
         let linear = OnceCell::new();
         let same = w.join("same.png");
         derive_png(&same, &img, &linear, [40, 20]).unwrap();
         assert!(linear.get().is_none());
-        assert_eq!(image::open(&same).unwrap().to_rgb8(), img);
+        assert_eq!(picture::read_rgb8(&same).unwrap(), img);
         let small = w.join("small.png");
         derive_png(&small, &img, &linear, [20, 10]).unwrap();
         assert!(linear.get().is_some());
-        let got = image::open(&small).unwrap().to_rgb8();
-        assert_eq!(got.dimensions(), (20, 10));
-        assert!(got.pixels().all(|p| p[2] == 77));
+        let got = picture::read_rgb8(&small).unwrap();
+        assert_eq!((got.width, got.height), (20, 10));
+        assert!(got.data.chunks(3).all(|p| p[2] == 77));
         assert!(derive_png(&w.join("gone/x.png"), &img, &linear, [20, 10]).is_err());
         assert_eq!(listed(&w), ["same.png", "small.png"]);
     }

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- prec moves to pito-codecs 5.1.0 and reads and writes every PNG with it, so the `png` and `image` crates are gone from the build and 14 crates leave Cargo.lock: stills, posters and frames decode to the same samples as before at 8 and 16 bits and a clip encodes from the same frames, while PNG file bytes differ because the compressor does, and the resize that `image` did runs in prec's own code with the same samples.
+
 ## v2.2.0 — 2026-11-08
 
 ### Added

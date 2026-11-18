@@ -2,8 +2,10 @@ use crate::cdp::Browser;
 use crate::compose::{self, Layout};
 use crate::fps::Fps;
 use crate::paths;
+use crate::picture;
 use crate::record::{self, Cast, Event, Kind, Timeline};
 use base64::Engine;
+use pito_codecs::png::{Color, Compression, Options, Picture, encode_picture};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -385,27 +387,29 @@ fn save_fast(pm: &tiny_skia::Pixmap, path: &Path) -> Result<(), String> {
     for p in pm.data().as_chunks::<4>().0 {
         rgb.extend_from_slice(&p[..3]);
     }
-    let file = std::fs::File::create(path).map_err(|e| at(&e))?;
-    let mut enc = png::Encoder::new(std::io::BufWriter::new(file), pm.width(), pm.height());
-    enc.set_color(png::ColorType::Rgb);
-    enc.set_depth(png::BitDepth::Eight);
-    enc.set_compression(png::Compression::Fast);
-    let mut w = enc.write_header().map_err(|e| at(&e))?;
-    w.write_image_data(&rgb).map_err(|e| at(&e))?;
-    w.finish().map_err(|e| at(&e))
+    let picture = Picture {
+        width: pm.width(),
+        height: pm.height(),
+        color: Color::Rgb,
+        depth: 8,
+        data: rgb,
+    };
+    let options = Options {
+        compression: Compression::Fast,
+        ..Options::default()
+    };
+    let bytes = encode_picture(&picture, &options).map_err(|e| at(&e))?;
+    std::fs::write(path, bytes).map_err(|e| at(&e))
 }
 
 fn corners(png: &[u8], rect: [u32; 4]) -> Result<[u8; 3], String> {
-    let img = image::load_from_memory(png)
-        .map_err(|e| e.to_string())?
-        .to_rgb8();
+    let img = picture::decode_rgb8(png)?;
     let [x, y, w, h] = rect;
     let pick = |px: u32, py: u32| {
-        let p = img.get_pixel(
-            px.min(img.width().saturating_sub(1)),
-            py.min(img.height().saturating_sub(1)),
-        );
-        [p[0], p[1], p[2]]
+        img.pixel(
+            px.min(img.width.saturating_sub(1)),
+            py.min(img.height.saturating_sub(1)),
+        )
     };
     let c = [
         pick(x + 1, y + 1),
@@ -432,14 +436,11 @@ fn family_css(family: &str) -> String {
 }
 
 fn check_size(png: &[u8], size: [u32; 2]) -> Result<(), String> {
-    let img = image::load_from_memory(png).map_err(|e| e.to_string())?;
-    if img.width() != size[0] || img.height() != size[1] {
+    let drew = picture::size_of_png(png)?;
+    if drew != size {
         return Err(format!(
             "chromium drew {}x{}, not {}x{}",
-            img.width(),
-            img.height(),
-            size[0],
-            size[1]
+            drew[0], drew[1], size[0], size[1]
         ));
     }
     Ok(())
@@ -751,11 +752,16 @@ mod tests {
 
     #[test]
     fn the_page_background_is_the_colour_most_corners_agree_on() {
-        let mut img = image::RgbImage::from_pixel(10, 10, image::Rgb([9, 9, 9]));
-        img.put_pixel(1, 1, image::Rgb([200, 0, 0]));
-        let mut png = vec![];
-        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
-            .unwrap();
+        let mut data: Vec<u8> = std::iter::repeat_n([9u8, 9, 9], 100).flatten().collect();
+        data[(10 + 1) * 3..(10 + 1) * 3 + 3].copy_from_slice(&[200, 0, 0]);
+        let picture = Picture {
+            width: 10,
+            height: 10,
+            color: Color::Rgb,
+            depth: 8,
+            data,
+        };
+        let png = encode_picture(&picture, &Options::default()).unwrap();
         assert_eq!(corners(&png, [0, 0, 10, 10]).unwrap(), [9, 9, 9]);
         assert_eq!(corners(&png, [0, 0, 400, 400]).unwrap(), [9, 9, 9]);
         assert!(check_size(&png, [10, 10]).is_ok());
@@ -995,17 +1001,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d.dir);
     }
 
-    fn decoded(path: &Path) -> (png::ColorType, png::BitDepth, [u32; 2], Vec<u8>) {
-        let file = std::io::BufReader::new(std::fs::File::open(path).unwrap());
-        let mut r = png::Decoder::new(file).read_info().unwrap();
-        let mut buf = vec![0; r.output_buffer_size().unwrap()];
-        let info = r.next_frame(&mut buf).unwrap();
-        buf.truncate(info.buffer_size());
+    fn decoded(path: &Path) -> (Color, u8, [u32; 2], Vec<u8>) {
+        let bytes = std::fs::read(path).unwrap();
+        let picture = pito_codecs::png::Decoder::new()
+            .decode_picture(&bytes, pito_codecs::png::Transform::Identity)
+            .unwrap();
         (
-            info.color_type,
-            info.bit_depth,
-            [info.width, info.height],
-            buf,
+            picture.color,
+            picture.depth,
+            [picture.width, picture.height],
+            picture.data,
         )
     }
 
@@ -1063,8 +1068,8 @@ mod tests {
             let path = dir.join(format!("bg-{window}.png"));
             save_fast(&pm, &path).unwrap();
             let (color, depth, size, bytes) = decoded(&path);
-            assert_eq!(color, png::ColorType::Rgb);
-            assert_eq!(depth, png::BitDepth::Eight);
+            assert_eq!(color, Color::Rgb);
+            assert_eq!(depth, 8);
             assert_eq!(size, [pm.width(), pm.height()]);
             assert_eq!(opaque(&bytes), pm.data(), "window {window}");
         }
@@ -1108,8 +1113,8 @@ mod tests {
             let mut d = backdrop(window, &format!("rgb-file-{window}"));
             let name = d.file([8, 2], [40, 20]).unwrap();
             let (color, depth, size, bytes) = decoded(&d.dir.join(&name));
-            assert_eq!(color, png::ColorType::Rgb);
-            assert_eq!(depth, png::BitDepth::Eight);
+            assert_eq!(color, Color::Rgb);
+            assert_eq!(depth, 8);
             assert_eq!(size, [64, 36]);
             let (win, _) = d.dev.anchored(d.largest, [40, 20]);
             let pm = compose::background(&d.dev, win, d.bg, d.ground).unwrap();
