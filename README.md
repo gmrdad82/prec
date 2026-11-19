@@ -145,6 +145,23 @@ On Debian or Ubuntu: `sudo apt install chromium fontconfig fonts-noto-cjk git`. 
 
 prec runs inside your app's git repository and reads `render/terminal.toml` at its top (or `--app-dir`). Everything it writes lands under that repository's `tmp/`.
 
+`prec` alone prints every command on one page; `prec --help` and `prec <command> --help` give every flag:
+
+```text
+$ prec
+prec 2.3.0: records a terminal app in a pty and replays it frame by frame into exact clips and stills
+
+  prec shots <app> [--app-dir <dir>]                        list an app's terminal shots
+  prec clip <app> <shot> [--size <size>] [--fps <fps>]      render a clip: H.264 master with the app's sound, poster and manifest
+  prec still <app> <shot> [--size <size>] [--web <widths>]  render a still: a 16-bit master and 8-bit PNG deliveries
+  prec record <app> <shot>                                  record a shot's session in a pty into a cast, without rendering
+  prec render <cast> [--size <size>] [--theme <name>]       render a recorded cast at any size, fps and theme, without the app
+  prec themes [--all]                                       list the themes
+  prec doctor                                               check the machine for everything a render needs
+  prec <command> --help                                     every flag of one command
+  prec --version                                            the version
+```
+
 ```sh
 prec shots myapp
 prec clip  myapp tour --size 1080p --fps 60
