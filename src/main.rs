@@ -540,7 +540,53 @@ where
     Ok(Cli::try_parse_from(&args)?.command)
 }
 
+const SUMMARY: [(&str, &str); 9] = [
+    (
+        "prec shots <app> [--app-dir <dir>]",
+        "list an app's terminal shots",
+    ),
+    (
+        "prec clip <app> <shot> [--size <size>] [--fps <fps>]",
+        "render a clip: H.264 master with the app's sound, poster and manifest",
+    ),
+    (
+        "prec still <app> <shot> [--size <size>] [--web <widths>]",
+        "render a still: a 16-bit master and 8-bit PNG deliveries",
+    ),
+    (
+        "prec record <app> <shot>",
+        "record a shot's session in a pty into a cast, without rendering",
+    ),
+    (
+        "prec render <cast> [--size <size>] [--theme <name>]",
+        "render a recorded cast at any size, fps and theme, without the app",
+    ),
+    ("prec themes [--all]", "list the themes"),
+    (
+        "prec doctor",
+        "check the machine for everything a render needs",
+    ),
+    ("prec <command> --help", "every flag of one command"),
+    ("prec --version", "the version"),
+];
+
+fn summary() -> String {
+    let width = SUMMARY.iter().map(|(l, _)| l.len()).max().unwrap_or(0) + 2;
+    let mut s = format!(
+        "prec {}: records a terminal app in a pty and replays it frame by frame into exact clips and stills\n\n",
+        env!("CARGO_PKG_VERSION")
+    );
+    for (left, right) in SUMMARY {
+        s.push_str(&format!("  {left:<width$}{right}\n"));
+    }
+    s
+}
+
 fn main() {
+    if std::env::args_os().len() == 1 {
+        print!("{}", summary());
+        return;
+    }
     let command = parse_from(std::env::args_os()).unwrap_or_else(|e| e.exit());
     if let Err(e) = config::load() {
         eprintln!("prec: {e}");
@@ -841,6 +887,43 @@ mod tests {
                 format!("prec {}\n", env!("CARGO_PKG_VERSION"))
             );
         }
+    }
+
+    #[test]
+    fn the_summary_names_every_command_once_in_one_column() {
+        let s = summary();
+        let lines: Vec<&str> = s.lines().collect();
+        assert!(
+            lines[0].starts_with(&format!("prec {}: ", env!("CARGO_PKG_VERSION"))),
+            "{s}"
+        );
+        assert_eq!(lines[1], "");
+        let body = &lines[2..];
+        let column = body[0].len() - body[0].trim_start().len()
+            + SUMMARY[0].0.len()
+            + body[0][2 + SUMMARY[0].0.len()..]
+                .chars()
+                .take_while(|c| *c == ' ')
+                .count();
+        for (line, (left, right)) in body.iter().zip(SUMMARY) {
+            assert_eq!(&line[2..2 + left.len()], left);
+            assert_eq!(&line[column..], right, "{line}");
+            assert_eq!(line.as_bytes()[column - 1], b' ', "{line}");
+        }
+        assert_eq!(body.len(), SUMMARY.len());
+        for c in Cli::command().get_subcommands() {
+            let name = c.get_name();
+            if name == "help" {
+                continue;
+            }
+            let at = format!("  prec {name} ");
+            assert_eq!(
+                body.iter().filter(|l| l.starts_with(&at)).count(),
+                1,
+                "{name}: {s}"
+            );
+        }
+        assert!(!s.contains("error:") && !s.contains("Usage:"), "{s}");
     }
 
     #[test]

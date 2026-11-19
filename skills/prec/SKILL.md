@@ -29,9 +29,10 @@ Read the matching guide before starting:
 
 ## Command Discovery
 
-The CLI's help is the source of truth for flags; do not guess them.
+The CLI's help is the source of truth for flags; do not guess them. Bare `prec` prints one line per command with its main arguments.
 
 ```sh
+prec
 prec --help
 prec <command> --help
 prec themes --all

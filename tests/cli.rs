@@ -78,13 +78,6 @@ fn short(head: &str, usage: Option<&str>) -> String {
 fn unparsed() -> Vec<(Vec<&'static str>, String)> {
     vec![
         (
-            vec![],
-            short(
-                "error: 'prec' requires a subcommand but one was not provided\n  [subcommands: shots, clip, still, record, render, themes, doctor, help]",
-                Some("Usage: prec <COMMAND>"),
-            ),
-        ),
-        (
             vec!["tui"],
             short(
                 "error: unrecognized subcommand 'tui'",
@@ -245,12 +238,51 @@ fn in_a_terminal_the_error_is_coloured_as_clap_colours_it_and_plain_with_no_colo
     );
     assert!(said.contains("try '\x1b[1m--help\x1b[0m'."), "{said:?}");
     let cases = unparsed();
-    let expected = &cases[1].1;
+    let expected = &cases[0].1;
     assert_eq!(&plain(&said), expected);
     let (bare, code) = in_terminal(&dir, &["tui"], true);
     assert_eq!(code, 2, "{bare:?}");
     assert!(!bare.contains('\x1b'), "{bare:?}");
     assert_eq!(&bare, expected);
+}
+
+#[test]
+fn bare_prec_prints_the_summary_with_exit_0() {
+    let dir = setup("bare");
+    let o = run(&mut prec(&dir, &[]));
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert!(o.stderr.is_empty(), "{}", err(&o));
+    let said = out(&o);
+    let lines: Vec<&str> = said.lines().collect();
+    let head = format!("prec {}: ", env!("CARGO_PKG_VERSION"));
+    assert!(lines[0].starts_with(&head), "{said}");
+    assert!(
+        !said
+            .lines()
+            .any(|l| l.starts_with("error:") || l.contains("Usage:")),
+        "{said}"
+    );
+    let body: Vec<&str> = lines[2..].to_vec();
+    assert!(body.iter().all(|l| l.starts_with("  prec ")), "{said}");
+    let column = |l: &str| {
+        let gap = 2 + l[2..].find("  ").unwrap();
+        gap + l[gap..].len() - l[gap..].trim_start().len()
+    };
+    let first = column(body[0]);
+    for l in &body {
+        assert_eq!(column(l), first, "{said}");
+    }
+    for c in [
+        "shots", "clip", "still", "record", "render", "themes", "doctor",
+    ] {
+        let at = format!("  prec {c} ");
+        assert_eq!(
+            body.iter().filter(|l| l.starts_with(&at)).count(),
+            1,
+            "{c}: {said}"
+        );
+    }
+    assert!(said.contains("  prec --version"), "{said}");
 }
 
 #[test]

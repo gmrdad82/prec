@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.3.0 — 2026-11-19
+
+### Changed
+
+- Bare `prec` prints the estate's summary on stdout with exit 0, as bare `dispatch` and `p99` do: a first line `prec <version>: <what it does>`, then one line per command with its main arguments and a short description in one column. It used to print clap's missing-subcommand error with exit 2. `prec --help` and `prec <command> --help` keep the full help. The README, the docs' command-line page and the skill show it.
+
 ## v2.2.1 — 2026-11-18
 
 ### Fixed
