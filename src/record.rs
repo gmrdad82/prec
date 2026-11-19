@@ -1558,7 +1558,7 @@ mod tests {
             ("missing", "null", "null"),
         ] {
             let (p, got) = read_text(
-                name,
+                &format!("resize-{name}"),
                 &format!("{head}[0.0, \"m\", \"show\"]\n[0.5, \"r\", {data}]\n"),
             );
             assert_eq!(
