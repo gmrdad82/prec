@@ -1,10 +1,14 @@
 # Changelog
 
-## v2.3.1 — unreleased
+## v2.3.1 — 2026-11-20
 
 ### Added
 
 - `prec skill install`, `prec skill status` and `prec skill uninstall`. The skill ships inside the program and `install` writes it as real files, not a link, into `~/.claude/skills/prec` and `~/.agents/skills/prec`, and into Codex's and Pi's skill folders when `~/.codex` or `~/.pi` exists; an old link is replaced. `status` says installed or not, and whether it matches this version. `bin/install` calls it, and `bin/install --uninstall` calls `prec skill uninstall`.
+
+### Fixed
+
+- The prec skill matches the command line again: every command, flag, default and refusal it names is checked against the help, the missing flags and recipe keys are in, and a unit test fails when the skill and the command line drift apart.
 
 ## v2.3.0 — 2026-11-19
 
