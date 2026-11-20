@@ -347,7 +347,12 @@ fn toml_error(path: &Path, text: &str, e: &toml::de::Error) -> String {
 pub fn load(dir: &Path) -> Result<(Terminal, String), String> {
     let path = dir.join("render/terminal.toml");
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let t: Terminal = toml::from_str(&text).map_err(|e| toml_error(&path, &text, &e))?;
+    let t = parse(&text, &path)?;
+    Ok((t, paths::hash_bytes(text.as_bytes())))
+}
+
+pub fn parse(text: &str, path: &Path) -> Result<Terminal, String> {
+    let t: Terminal = toml::from_str(text).map_err(|e| toml_error(path, text, &e))?;
     if t.frame != "window" && t.frame != "bare" {
         return Err(format!("{}: frame is window or bare", path.display()));
     }
@@ -375,7 +380,7 @@ pub fn load(dir: &Path) -> Result<(Terminal, String), String> {
             ));
         }
     }
-    Ok((t, paths::hash_bytes(text.as_bytes())))
+    Ok(t)
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
