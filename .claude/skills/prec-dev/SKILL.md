@@ -29,13 +29,13 @@ prec records an app's TUI or CLI in a pty to an asciicast `.cast`, replays it fr
 
 - A piece runs in its own git worktree on `dispatch/<id>-<slug>`, branched from `main`. Commit there: signed (`commit.gpgsign` is set), staged by name (never `git add -A`), message ending with the `Co-Authored-By:` trailer for the agent and model.
 - Merge into `main` locally from the main checkout, which is the first line of `git worktree list`: `git merge --no-ff dispatch/<id>-<slug>` there. A piece never pushes, tags or releases, and never rewrites history.
-- A worktree has only tracked files. `AGENTS.md`, `CLAUDE.md`, `HANDOVER.md`, `prompts/` and `dev/` are gitignored, so read `AGENTS.md` in the main checkout, and run the quick check there as `bin/gate --fast` itself.
+- A worktree has only tracked files. `AGENTS.md`, `CLAUDE.md`, `HANDOVER.md`, `prompts/` and `dev/` are gitignored and exist only in the main checkout, so read `AGENTS.md` there. Run the quick check in your own worktree, on your commit, as `bin/gate --fast` (it ends with `fast gate: green`); never build in the main checkout for a piece. `AGENTS.md` names the main checkout's `dev/gate.sh --fast`: that wrapper only runs `bin/gate --fast` and prints `gate: green (fast)`, and a worktree has no `dev/`.
 - Work another repository needs is not done here: report it back for that repository's own session.
 - A user-visible change adds a line to `CHANGELOG.md` under the next version's `## vX.Y.Z — unreleased` heading (add the heading when the top one is dated).
 
 ## Critical rules
 
-- **Quick check while working, full suite only on request.** `bin/gate --fast` ends with `fast gate: green`; nothing merges without it. No integration tests, GPU or heavy runs, goldens or media unless the plan asks; name the files you did not run in your report.
+- **Quick check while working, full suite only on request.** `bin/gate --fast`, run in your worktree, ends with `fast gate: green`; nothing merges without it. No integration tests, GPU or heavy runs, goldens or media unless the plan asks; name the files you did not run in your report.
 - **prec writes only** under the caller's `--out` (default `tmp/renders`), `tmp/`, and the cache (`${XDG_CACHE_HOME:-~/.cache}/prec/`), never in an app's repo, and renders only the repository it runs in (`tests/source.rs` holds the refusal).
 - **Chromium is headless only and starts through `paths::confined`.** prec opens no window and no compositor, and its sound never reaches the session's PipeWire.
 - **Determinism is the contract.** Encoder threads stay fixed at 16, CPU-only, fps are exact rationals, and a manifest field is never renamed or repurposed (`docs/formats.md`). Anything that moves master bytes gets a CHANGELOG line.
@@ -48,10 +48,10 @@ prec records an app's TUI or CLI in a pty to an asciicast `.cast`, replays it fr
 
 | Command | What it does |
 | --- | --- |
-| `bin/gate --fast` | the quick check: ShellCheck (if installed), `cargo fmt --check`, clippy with `-D warnings`, unit tests (nextest if installed, else `cargo test --bins`) |
+| `bin/gate --fast` | the quick check, in your worktree: ShellCheck (if installed), `cargo fmt --check`, clippy with `-D warnings`, unit tests (nextest if installed, else `cargo test --bins`) |
 | `bin/gate` | the same lint, then `cargo test --locked --bins`; no green line |
 | `bin/gate --render` | `cargo test --locked --tests`: every integration test, through Chromium, needs a systemd user session; the full suite |
-| `cargo test --locked --test <name>` | one integration file alone, e.g. `--test source` or `--test gate` (no Chromium) |
+| `cargo test --locked --test <name>` | one integration file alone, e.g. `--test source` (runs prec, no Chromium, green). `--test gate` is also Chromium-free but red on `main` (see Known pitfalls), so it is no baseline |
 | `cargo build --release --locked --bin prec` | the binary at `target/release/prec`; `prec` on the PATH is the installed release, not your change |
 | `target/release/prec doctor` | checks Chromium, fonts, git, config, cache, encoder |
 | `PREC_AUDIO=off target/release/prec clip demo typing --app-dir examples/demo --size 720p --fps 30` | a draft render into `tmp/renders/`: one size, one theme, 30 fps |
@@ -68,10 +68,10 @@ A release is cut by the maintainer's own script (not tracked) from a clean `main
 
 ## Known pitfalls
 
-- `tests/gate.rs` pins `bin/gate`'s exact steps, ShellCheck file list included: change one, change the other, then run `cargo test --locked --test gate`.
+- `tests/gate.rs` pins `bin/gate`'s exact steps, ShellCheck file list included: change one, change the other, then run `cargo test --locked --test gate`. That test is red on `main` today: `bin/gate` shellchecks `bin/install` and `SHELLCHECK_RUN` in `tests/gate.rs` does not (compare `grep shellcheck bin/gate` with it). `bin/gate --fast` never runs the test, so the red is not yours and not a regression; the fix is adding `bin/install` to `SHELLCHECK_RUN`, left for a piece that asks for it.
 - `skills/prec/*.md` are checked against the real command line by `src/skill.rs` in the unit tests: a new or renamed flag, command, `PREC_` variable, recipe key or tape step needs its skill text, and a new skill file needs an entry in `src/agent_skill.rs`'s file list. The README tables and `docs/site/` need the same edit; bare `prec` and `--help` text feed the docs bundle.
 - The encoder version (`pito-codecs`) is in `Cargo.toml`, `README.md`, `docs/site/install.md` and `docs/site/guides/how-it-renders.md`: bump them together.
-- `.public-allow` and `.gitleaksignore` list the few lines a public scan waives (the vendored xterm files, two neutral-home test lines): a new fixture that trips `public-check` is waived there with its reason, never disguised.
+- `.public-allow` (68 lines) and `.gitleaksignore` (2) hold what the public-file scan (`public-check`, the maintainer's tool, not in this repo) waives, each line with its reason. Only 4 `.public-allow` lines are live (`<path>:<line> <reason>`): `assets/xterm/xterm.js:1` and `assets/xterm/addon-canvas.js:1` for vendored minified code, and a made-up neutral home in `tests/environment.rs` and `tests/paths.rs`. The other 64 are `commit/<sha>:<path>:<line>` entries that waive a line of an old commit (a made-up home path or email in a test, since replaced), so a scan of history stays green: history is waived there, never rewritten. A new fixture that trips the scan gets a live `<path>:<line> <reason>` line, never a disguise; a live entry names a line number, so an edit above it moves the entry with it. `.gitleaksignore` holds only the two xterm files (`<path>:<rule>:<line>`).
 - A second recording of the same shot waits for the first (exclusive per tree); replays run at once.
 - Integration tests leave their scratch under the tree's `tmp/` (gitignored); keep any new scratch there.
 
