@@ -16,6 +16,8 @@ mod private;
 mod record;
 mod render;
 mod replay;
+#[cfg(test)]
+mod skill;
 mod sound;
 mod tape;
 mod theme;

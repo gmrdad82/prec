@@ -12,14 +12,15 @@ prec themes --all
 ```
 
 `prec themes` lists `app`, the curated light and dark pairs (catppuccin, tokyo-night, gruvbox,
-solarized, github, one-half, nord), the installed Omarchy themes; `--all` adds every built-in
-scheme. Names with spaces are quoted: `--theme "Catppuccin Latte"`.
+solarized, github, one-half, nord), a few single schemes and the installed Omarchy themes;
+`--all` adds every built-in scheme. Names with spaces are quoted: `--theme "Catppuccin Latte"`.
 
 ## Several themes from one recording
 
-`--themes "Catppuccin Latte,Catppuccin Mocha"` records once and renders once per theme. Each
-theme other than the app's adds its slug to the file names (`...-catppuccin-latte-1920x1080.png`),
-and the manifest's `theme` records the scheme and its colours.
+`--themes "Catppuccin Latte,Catppuccin Mocha"` records once and renders once per theme, printing
+one manifest per theme. Each theme other than the app's adds its slug to the file names
+(`demo-clip-typing-catppuccin-latte-1280x720-30fps.json`), and the manifest's `theme` records the
+scheme and its colours.
 
 ## The app's own palette
 
