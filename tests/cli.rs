@@ -273,7 +273,7 @@ fn bare_prec_prints_the_summary_with_exit_0() {
         assert_eq!(column(l), first, "{said}");
     }
     for c in [
-        "shots", "clip", "still", "record", "render", "themes", "doctor",
+        "shots", "clip", "still", "record", "render", "themes", "doctor", "skill",
     ] {
         let at = format!("  prec {c} ");
         assert_eq!(
@@ -294,7 +294,7 @@ fn help_prints_the_whole_help_on_stdout_with_exit_0() {
     let help = out(&long);
     assert!(help.contains("\nUsage: prec <COMMAND>\n"), "{help}");
     for c in [
-        "shots", "clip", "still", "record", "render", "themes", "doctor", "help",
+        "shots", "clip", "still", "record", "render", "themes", "doctor", "skill", "help",
     ] {
         assert!(help.contains(&format!("\n  {c} ")), "{c}: {help}");
     }

@@ -149,7 +149,7 @@ prec runs inside your app's git repository and reads `render/terminal.toml` at i
 
 ```text
 $ prec
-prec 2.3.0: records a terminal app in a pty and replays it frame by frame into exact clips and stills
+prec 2.3.1: records a terminal app in a pty and replays it frame by frame into exact clips and stills
 
   prec shots <app> [--app-dir <dir>]                        list an app's terminal shots
   prec clip <app> <shot> [--size <size>] [--fps <fps>]      render a clip: H.264 master with the app's sound, poster and manifest
@@ -158,6 +158,7 @@ prec 2.3.0: records a terminal app in a pty and replays it frame by frame into e
   prec render <cast> [--size <size>] [--theme <name>]       render a recorded cast at any size, fps and theme, without the app
   prec themes [--all]                                       list the themes
   prec doctor                                               check the machine for everything a render needs
+  prec skill install|status|uninstall                       write the prec skill for coding agents, say if it is installed, or remove it
   prec <command> --help                                     every flag of one command
   prec --version                                            the version
 ```
@@ -231,6 +232,7 @@ The placeholders are `{tmp}` (the repository's `tmp/`), `{scratch}` (this run's 
 | `render <cast>` | replays a cast at a chosen size, fps and theme |
 | `themes [--all]` | the curated pairs, your installed Omarchy themes, and with `--all` every built-in scheme |
 | `doctor` | checks Chromium, the fonts, git, the config and the cache, and names the built-in encoder |
+| `skill install\|status\|uninstall` | writes the agent skill as files into the agents' skill folders, says whether it is installed and matches this version, or removes it |
 
 Flags for `clip`, `still` and `record`:
 

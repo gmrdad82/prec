@@ -35,24 +35,18 @@ cargo install --locked --git https://github.com/gmrdad82/prec --tag vX.Y.Z prec
 
 ## The agent skill
 
-Each Linux and macOS release archive carries `prec` and `skills/prec/`, a skill that teaches coding agents to set up and render with prec. `bin/install` from a clone builds prec, puts it at `~/.local/opt/prec/prec`, links `~/.local/bin/prec`, copies the skill to `~/.local/opt/prec/skills/prec` and links that copy into the agents' skill folders:
+The skill teaches coding agents to set up and render with prec. It ships inside the program: `prec skill install` writes it as real files, not a link, into each agent's skill folder, and replaces a link an older install made:
 
 | Agent | Skill folder | Created |
 | --- | --- | --- |
-| Claude Code | `~/.claude/skills` | always |
-| Codex | `~/.codex/skills` | only when `~/.codex` exists |
-| Pi | `~/.pi/agent/skills` | only when `~/.pi` exists |
-| Other agents (the shared folder) | `~/.agents/skills` | always |
+| Claude Code | `~/.claude/skills/prec` | always |
+| Codex | `~/.codex/skills/prec` | only when `~/.codex` exists |
+| Pi | `~/.pi/agent/skills/prec` | only when `~/.pi` exists |
+| Other agents (the shared folder) | `~/.agents/skills/prec` | always |
 
-A `prec` folder there that is not prec's own link is left alone, with one line saying so. `bin/install --uninstall` removes the links, the copy and the binary it placed.
+`prec skill status` says for each folder whether the skill is installed and whether it matches this version of prec; after an upgrade, `prec skill install` refreshes it. `prec skill uninstall` removes the folders, leaving alone a `prec` folder that is not prec's skill.
 
-To do the same by hand from a release archive, unpack it to `~/.local/opt/prec` and link the skill into each folder you use:
-
-```sh
-mkdir -p ~/.local/opt/prec ~/.claude/skills
-tar -xz -C ~/.local/opt/prec -f prec-vX.Y.Z-linux-x86_64.tar.gz
-ln -sfn ~/.local/opt/prec/skills/prec ~/.claude/skills/prec
-```
+`bin/install` from a clone builds prec, puts it at `~/.local/opt/prec/prec`, links `~/.local/bin/prec` and runs `prec skill install`. `bin/install --uninstall` runs `prec skill uninstall` and removes the binary it placed.
 
 There is no native Windows build, so there is no Windows skill copy.
 
