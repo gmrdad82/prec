@@ -1,3 +1,4 @@
+mod agent_skill;
 mod app;
 mod audio;
 mod cache;
@@ -296,6 +297,23 @@ enum Kind {
     },
     #[command(about = "Check the machine for everything a render needs")]
     Doctor,
+    #[command(
+        subcommand,
+        about = "Install the prec skill for coding agents, or say whether it is installed"
+    )]
+    Skill(SkillCmd),
+}
+
+#[derive(Subcommand)]
+enum SkillCmd {
+    #[command(
+        about = "Write the skill as files into the Claude, Agents, Codex and Pi skill folders, replacing an old link"
+    )]
+    Install,
+    #[command(about = "Say whether the skill is installed and matches this version")]
+    Status,
+    #[command(about = "Remove the prec skill folders and links this machine has")]
+    Uninstall,
 }
 
 fn opts(s: &Shot, theme: &str, made: &str) -> render::Opts {
@@ -495,6 +513,15 @@ fn run(command: Kind) -> Result<(), String> {
             }
             Ok(())
         }
+        Kind::Skill(cmd) => {
+            let said = match cmd {
+                SkillCmd::Install => agent_skill::run(true)?,
+                SkillCmd::Status => agent_skill::run(false)?,
+                SkillCmd::Uninstall => agent_skill::remove()?,
+            };
+            print!("{said}");
+            Ok(())
+        }
         Kind::Doctor => {
             if doctor::doctor() {
                 Ok(())
@@ -542,7 +569,7 @@ where
     Ok(Cli::try_parse_from(&args)?.command)
 }
 
-const SUMMARY: [(&str, &str); 9] = [
+const SUMMARY: [(&str, &str); 10] = [
     (
         "prec shots <app> [--app-dir <dir>]",
         "list an app's terminal shots",
@@ -567,6 +594,10 @@ const SUMMARY: [(&str, &str); 9] = [
     (
         "prec doctor",
         "check the machine for everything a render needs",
+    ),
+    (
+        "prec skill install|status|uninstall",
+        "write the prec skill for coding agents, say if it is installed, or remove it",
     ),
     ("prec <command> --help", "every flag of one command"),
     ("prec --version", "the version"),

@@ -52,6 +52,11 @@ prec themes
 - `prec record <app> <shot>` records only and prints the cast's path.
 - `prec render <cast>` replays a cast without the app.
 - `prec themes [--all]` lists themes.
+- `prec skill install` writes this skill as files into `~/.claude/skills/prec` and
+  `~/.agents/skills/prec` (and Codex's and Pi's when those tools are installed), replacing an old
+  link.
+- `prec skill status` says whether it is installed and matches this prec.
+- `prec skill uninstall` removes it.
 
 ## Flags
 

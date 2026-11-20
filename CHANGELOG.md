@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.3.1 — unreleased
+
+### Added
+
+- `prec skill install`, `prec skill status` and `prec skill uninstall`. The skill ships inside the program and `install` writes it as real files, not a link, into `~/.claude/skills/prec` and `~/.agents/skills/prec`, and into Codex's and Pi's skill folders when `~/.codex` or `~/.pi` exists; an old link is replaced. `status` says installed or not, and whether it matches this version. `bin/install` calls it, and `bin/install --uninstall` calls `prec skill uninstall`.
+
 ## v2.3.0 — 2026-11-19
 
 ### Changed
