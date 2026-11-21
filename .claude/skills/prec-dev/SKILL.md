@@ -1,6 +1,6 @@
 ---
 name: prec-dev
-description: "Develop prec itself, the deterministic terminal recorder and renderer in this repository: its Rust source, tests, bin/ scripts, docs and the skill it ships. Triggers: prec repo, bin/gate, bin/smoke, bin/install, bin/docs-bundle, the quick check, fast gate, src/replay.rs, record.rs, render.rs, encode.rs, paths.rs, tests/, skills/prec, Cargo.toml, CHANGELOG, a piece or branch for prec, a prec release. Excludes using prec to record, render or screenshot an app, or writing a render/terminal.toml or a .tape (that is prec's own user skill, skills/prec here, installed with `prec skill install`)."
+description: "Develop prec itself, the deterministic terminal recorder and renderer in this repository: its Rust source, tests, bin/ scripts, docs and the skill it ships. Triggers: prec repo, bin/gate, bin/smoke, bin/install, the local install, bin/docs-bundle, the quick check, fast gate, src/replay.rs, record.rs, render.rs, encode.rs, paths.rs, tests/, skills/prec, Cargo.toml, CHANGELOG, a piece or branch for prec, a prec release. Excludes using prec to record, render or screenshot an app, or writing a render/terminal.toml or a .tape (that is prec's own user skill, skills/prec here, installed with `prec skill install`)."
 ---
 
 # prec-dev
@@ -57,12 +57,14 @@ prec records an app's TUI or CLI in a pty to an asciicast `.cast`, replays it fr
 | `PREC_AUDIO=off target/release/prec clip demo typing --app-dir examples/demo --size 720p --fps 30` | a draft render into `tmp/renders/`: one size, one theme, 30 fps |
 | `bin/smoke target/release/prec` | records the demo at 640x360 with that binary; prints `smoke: <master>, <n> frames, <s> s` |
 | `bin/docs-bundle [--bin PATH] [--out DIR]` | builds `docs-vX.Y.Z.tar.gz` from `docs/site/`, the binary's `--help`, `docs/formats.md` and the changelog; refuses a binary whose version differs from `Cargo.toml`, a page without frontmatter, an image missing from `docs/images/` or `NOTICE` |
-| `bin/install [--uninstall]` | builds release, installs under `~/.local/opt/prec`, links `~/.local/bin/prec`, runs `prec skill install`; it changes the home folder, so only when asked |
+| `bin/install [--uninstall]` | updates the local install of prec from this checkout: see Local install under Release |
 | `bin/marks` | refreshes `docs/images/pitomd-wordmark.svg` from the brand checkout named by `PITO_ASSETS` |
 
 Each tool's `--help` is the source of truth (`prec <command> --help`; bare `prec` prints every command). Config, cache and sound switches: `PREC_CONFIG`, `PREC_CACHE`, `PREC_CHROMIUM`, `PREC_DIRECT=1` (unconfined, for tests), `PREC_AUDIO=off`.
 
 ## Release
+
+**Local install:** after a release, or a build you will use, run `bin/install` from the checkout whose code you want installed (a clean `main` at the release tag, or your worktree for a build you will use). It is the repo's own installer; prec has no `update` command. It runs `cargo build --release --locked --bin prec`, installs the binary at `~/.local/opt/prec/prec`, links it at `~/.local/bin/prec`, and runs `prec skill install`, which writes the user skill (`skills/prec`) into `~/.claude/skills/prec` and `~/.agents/skills/prec`, plus `~/.codex/skills/prec` and `~/.pi/agent/skills/prec` when `~/.codex` or `~/.pi` exists. prec has no window app, so that is all of it. `bin/install --help` prints the usage and exits 2 without installing; `bin/install --uninstall` removes it all. Check with `prec --version` and `prec skill status`.
 
 A release is cut by the maintainer's own script (not tracked) from a clean `main` whose `CHANGELOG.md` has the version's dated section and whose `Cargo.toml` version matches `prec --version`. It ships the Linux and macOS tarballs, `docs-vX.Y.Z.tar.gz` (`bin/docs-bundle`) and `SHA256SUMS`, and runs `public-check` and `bin/smoke` first. A piece does none of this unless its plan is a release.
 
