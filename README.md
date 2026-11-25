@@ -103,7 +103,7 @@ Size and build: the Linux x86_64 binary is 5,996,512 bytes (5.7 MB; 2,557,953 by
 
 ## Install
 
-prec runs on Linux (x86_64), on Windows through WSL, and on macOS (Apple Silicon). Each [release](https://github.com/gmrdad82/prec/releases/latest) carries a Linux and a macOS binary with a `SHA256SUMS` file. On macOS the binary is built on an Apple Silicon Mac and checked with `bin/smoke`; Intel Macs are untested.
+prec runs on Linux (x86_64), on Windows through WSL, and on macOS (Apple Silicon). Each [release](https://github.com/gmrdad82/prec/releases/latest) carries a Linux and a macOS binary with a `SHA256SUMS` file. On macOS the binary is built on an Apple Silicon Mac and checked with `bin/smoke`.
 
 **Linux and WSL:**
 
@@ -139,7 +139,7 @@ On Debian or Ubuntu: `sudo apt install chromium fontconfig fonts-noto-cjk git`. 
 
 `prec doctor` checks all of it and says what is missing.
 
-**Tested on macOS:** on 2026-11-04, on macOS 26.6.2 (Apple Silicon) with Google Chrome 156, `fontconfig` from Homebrew and the JetBrainsMono Nerd Font cask, the release binary built there ran `prec doctor` and then `bin/smoke`: a draft clip of `examples/demo` (`prec clip demo typing --size 640x360 --fps 30`), which wrote a 102-frame master and its manifest in 11 s. Intel Macs are untested. Sound on macOS is absent: prec records the app's sound with PipeWire, so a clip made on a Mac is silent.
+**Tested on macOS:** on 2026-11-04, on macOS 26.6.2 (Apple Silicon) with Google Chrome 156, `fontconfig` from Homebrew and the JetBrainsMono Nerd Font cask, the release binary built there ran `prec doctor` and then `bin/smoke`: a draft clip of `examples/demo` (`prec clip demo typing --size 640x360 --fps 30`), which wrote a 102-frame master and its manifest in 11 s. Sound on macOS is absent: prec records the app's sound with PipeWire, so a clip made on a Mac is silent.
 
 ## Use
 
