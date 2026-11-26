@@ -30,6 +30,7 @@ prec records an app's TUI or CLI in a pty to an asciicast `.cast`, replays it fr
 - A piece runs in its own git worktree on `dispatch/<id>-<slug>`, branched from `main`. Commit there: signed (`commit.gpgsign` is set), staged by name (never `git add -A`), message ending with the `Co-Authored-By:` trailer for the agent and model.
 - Merge into `main` locally from the main checkout, which is the first line of `git worktree list`: `git merge --no-ff dispatch/<id>-<slug>` there. A piece never pushes, tags or releases, and never rewrites history.
 - A worktree has only tracked files. `AGENTS.md`, `CLAUDE.md`, `HANDOVER.md`, `prompts/` and `dev/` are gitignored and exist only in the main checkout, so read `AGENTS.md` there. Run the quick check in your own worktree, on your commit, as `bin/gate --fast` (it ends with `fast gate: green`); never build in the main checkout for a piece. `AGENTS.md` names the main checkout's `dev/gate.sh --fast`: that wrapper only runs `bin/gate --fast` and prints `gate: green (fast)`, and a worktree has no `dev/`.
+- Open work lives on its P99 board (space pito, project prec): `p99 cards --space pito --json`, filed with `p99 card new --space pito --project prec --agent`. There is no `prompts/RESUME.md`.
 - Work another repository needs is not done here: report it back for that repository's own session.
 - A user-visible change adds a line to `CHANGELOG.md` under the next version's `## vX.Y.Z — unreleased` heading (add the heading when the top one is dated).
 
